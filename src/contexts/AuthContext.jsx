@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import {
   login as loginApi,
   register as registerApi,
@@ -9,6 +9,7 @@ import {
   updateProfile as updateProfileApi,
 } from "@/api/auth";
 
+let authInitializationStarted = false;
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
@@ -21,6 +22,8 @@ export function AuthProvider({ children }) {
   const [adminExists, setAdminExists] = useState(null);
   const [adminLoading, setAdminLoading] = useState(true);
   const [adminError, setAdminError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const adminStatusFetching = useRef(false);
 
   const setToken = (token) => {
     if (token) {
@@ -40,15 +43,20 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const clearAuth = () => {
+    setToken(null);
+    setUserAndPersist(null);
+    setAdminExists(null);
+    setAdminError("");
+    setAuthError("");
+  };
+
   const loadUser = async () => {
     const token = localStorage.getItem("token");
     if (!token) {
       setUserAndPersist(null);
-      setLoading(false);
       return;
     }
-
-    setLoading(true);
 
     try {
       const response = await getMe();
@@ -69,62 +77,70 @@ export function AuthProvider({ children }) {
         setToken(null);
         setUserAndPersist(null);
       }
-    } finally {
-      setLoading(false);
     }
   };
 
   const loadAdminStatus = async () => {
+    if (adminStatusFetching.current) {
+      return;
+    }
+
+    adminStatusFetching.current = true;
+    setAdminLoading(true);
+    setAdminError("");
+
     try {
       const response = await adminExistsApi();
       if (response && typeof response.exists !== "undefined") {
         setAdminExists(response.exists === true);
-        setAdminError("");
       } else {
         setAdminError("Unexpected admin status response from server.");
         setAdminExists(null);
       }
     } catch (error) {
       console.error("Failed to load admin status", error);
-      setAdminError(error.data?.message || error.message || "Failed to check admin existence");
+      setAdminError(error.data?.message || error.message || "Unable to check admin status.");
       setAdminExists(null);
-
-      // Retry once for transient network issues
-      try {
-        const retry = await adminExistsApi();
-        if (retry && typeof retry.exists !== "undefined") {
-          setAdminExists(retry.exists === true);
-          setAdminError("");
-        }
-      } catch (err) {
-        console.error("Retry admin status failed", err);
-      }
     } finally {
+      adminStatusFetching.current = false;
       setAdminLoading(false);
     }
   };
 
   const refreshAdminStatus = async () => {
-    setAdminLoading(true);
-    setAdminError("");
+    if (adminLoading || adminStatusFetching.current) return;
     await loadAdminStatus();
   };
 
   useEffect(() => {
+    if (authInitializationStarted) return;
+    authInitializationStarted = true;
+
     const initAuth = async () => {
+      setLoading(true);
       await loadUser();
       await loadAdminStatus();
+      setLoading(false);
     };
 
     initAuth();
   }, []);
 
   const login = async ({ identifier, password }) => {
+    if (loginLoading) {
+      throw new Error("Login is already in progress.");
+    }
+
     setAuthError("");
-    const response = await loginApi({ identifier, password });
-    setToken(response.token);
-    setUserAndPersist(response.user);
-    return response;
+    setLoginLoading(true);
+    try {
+      const response = await loginApi({ identifier, password });
+      setToken(response.token);
+      setUserAndPersist(response.user);
+      return response;
+    } finally {
+      setLoginLoading(false);
+    }
   };
 
   const register = async (payload) => {
@@ -152,8 +168,10 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
-    setToken(null);
-    setUserAndPersist(null);
+    clearAuth();
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", "/login");
+    }
   };
 
   const value = {
@@ -168,6 +186,7 @@ export function AuthProvider({ children }) {
     updateProfile,
     logout,
     refreshAdminStatus,
+    loginLoading,
     authError,
     setAuthError,
   };

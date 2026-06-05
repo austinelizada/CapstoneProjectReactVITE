@@ -13,6 +13,7 @@ import {
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import { calculateEstimate } from "../../lib/estimator";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   getProducts,
   createProduct as createProductApi,
@@ -104,6 +105,9 @@ function Products() {
 
   const [editingProduct, setEditingProduct] =
     useState(null);
+
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   const [modalError, setModalError] =
     useState("");
@@ -272,6 +276,10 @@ function Products() {
 
     const openModal = (product = null) => {
       setModalError("");
+      if (!isAdmin) {
+        setModalError("Only administrators can manage products.");
+        return;
+      }
       if (product) {
         setEditingProduct(product);
         setNewProduct({
@@ -410,6 +418,11 @@ function Products() {
   };
 
   const saveProduct = async () => {
+    if (!isAdmin) {
+      setModalError("Only administrators can save products.");
+      return;
+    }
+
     // Validation
     if (!newProduct.product_type) {
       setModalError("Product type is required.");
@@ -618,12 +631,18 @@ function Products() {
 
               <button
                 onClick={() => openModal()}
-                className="inline-flex items-center justify-center rounded-2xl bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                disabled={!isAdmin}
+                className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition ${isAdmin ? "bg-red-600 hover:bg-red-700" : "bg-gray-300 cursor-not-allowed"}`}
               >
                 <Plus size={18} className="mr-2" />
                 Add Product
               </button>
             </div>
+            {!isAdmin && (
+              <p className="mt-3 text-sm text-yellow-700">
+                Product creation and editing are available only to admin users.
+              </p>
+            )}
 
             <div className="grid gap-4 mt-4 lg:grid-cols-3">
               <select
@@ -710,20 +729,24 @@ function Products() {
                       </div>
 
                       <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex flex-wrap gap-3">
-                          <button
-                            onClick={() => openModal(product)}
-                            className="rounded-2xl border border-red-200 bg-red-600 px-4 py-3 text-sm font-semibold text-white hover:bg-red-700"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => deleteProduct(product.id)}
-                            className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-100"
-                          >
-                            Delete
-                          </button>
-                        </div>
+                        {isAdmin ? (
+                          <div className="flex flex-wrap gap-3">
+                            <button
+                              onClick={() => openModal(product)}
+                              className="rounded-2xl border border-red-200 bg-red-600 px-4 py-3 text-sm font-semibold text-white hover:bg-red-700"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => deleteProduct(product.id)}
+                              className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-500">Admin-only actions are hidden for your account.</p>
+                        )}
                       </div>
                     </div>
                   </div>

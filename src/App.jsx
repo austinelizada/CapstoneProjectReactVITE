@@ -70,7 +70,7 @@ function App() {
           <Route
             path="/product"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute roles={["admin"]}>
                 <Product />
               </ProtectedRoute>
             }

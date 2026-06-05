@@ -162,6 +162,7 @@ router.post("/register", async (req, res) => {
  * Check whether an admin user exists in the system
  */
 router.get("/admin-exists", async (req, res) => {
+  console.info("[auth] GET /api/auth/admin-exists");
   try {
     const adminCount = await Admin.countDocuments({});
     const legacyAdminCount = await User.countDocuments({ role: "admin" });
@@ -322,6 +323,7 @@ router.post("/create-admin", async (req, res) => {
  * Login user
  */
 router.post("/login", async (req, res) => {
+  console.info("[auth] POST /api/auth/login");
   try {
     const { identifier, password } = req.body;
 

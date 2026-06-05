@@ -23,6 +23,10 @@ function AdminCreationModal() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (saving) {
+      return;
+    }
+
     setError("");
     setAuthError("");
 
@@ -60,7 +64,7 @@ function AdminCreationModal() {
     }
   };
 
-  if (adminLoading || adminExists === true) {
+  if (adminLoading || adminExists !== false) {
     return null;
   }
 

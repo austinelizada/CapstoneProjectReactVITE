@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
@@ -12,9 +13,21 @@ import { connectMongo } from "./config/db.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, ".env") });
 
+const requiredEnvs = ["MONGO_URI", "JWT_SECRET"];
+for (const envName of requiredEnvs) {
+  if (!process.env[envName]) {
+    console.error(`✗ Missing required environment variable: ${envName}`);
+    process.exit(1);
+  }
+}
+
 const app = express();
 
-// Middleware
+app.use((req, res, next) => {
+  console.info(`[api] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 app.use(
   cors({
     origin: true,
@@ -34,17 +47,38 @@ app.use("/api/uploads", uploadRoutes);
 // Serve uploaded files
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-// Health check
+const getHealthModel = () => {
+  const readyStates = [
+    "disconnected",
+    "connected",
+    "connecting",
+    "disconnecting",
+    "uninitialized",
+  ];
+  const mongoState = mongoose.connection.readyState;
+  const dbConnected = mongoState === 1;
+  return {
+    status: dbConnected ? "online" : "offline",
+    dbConnected,
+    databaseState: readyStates[mongoState] || "unknown",
+    timestamp: new Date().toISOString(),
+    message: dbConnected
+      ? "Backend and database are connected"
+      : "Backend is running but the database is unavailable",
+  };
+};
+
 app.get("/", (req, res) => {
-  res.json({
-    message: "Backend is running",
-    status: "connected",
-  });
+  return res.json({ ...getHealthModel(), message: "Backend is running" });
+});
+
+app.get("/api/health", (req, res) => {
+  return res.json(getHealthModel());
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error("[error]", err);
   res.status(err.status || 500).json({
     success: false,
     message: err.message || "Internal server error",
@@ -59,7 +93,15 @@ app.use((req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = parseInt(process.env.PORT, 10) || 5000;
+
+const shutdown = (reason, error) => {
+  console.error(`✗ Shutdown: ${reason}`);
+  if (error) {
+    console.error(error);
+  }
+  process.exit(1);
+};
 
 connectMongo()
   .then(() => {
@@ -70,6 +112,23 @@ connectMongo()
     });
   })
   .catch((error) => {
-    console.error("✗ MongoDB connection error:", error.message);
-    process.exit(1);
+    shutdown("MongoDB connection error", error);
   });
+
+process.on("uncaughtException", (error) => {
+  shutdown("Uncaught exception", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  shutdown("Unhandled promise rejection", reason instanceof Error ? reason : new Error(String(reason)));
+});
+
+process.on("SIGINT", () => {
+  console.log("✱ Received SIGINT, shutting down gracefully.");
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  console.log("✱ Received SIGTERM, shutting down gracefully.");
+  process.exit(0);
+});

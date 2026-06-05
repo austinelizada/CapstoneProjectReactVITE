@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 
+mongoose.set("strictQuery", true);
+
 const getCleanMongoUri = (uri) =>
   uri
     .trim()
@@ -24,6 +26,7 @@ export async function connectMongo() {
   const rawUri = process.env.MONGO_URI;
   const uri = getCleanMongoUri(rawUri || "");
   const validUri = validateMongoUri(uri);
+  console.info("[db] Connecting to MongoDB using URI:", validUri.replace(/(mongodb\+srv:\/\/[^@]+@)/, "mongodb+srv://***@"));
   return mongoose.connect(validUri, {
     autoIndex: true,
   });

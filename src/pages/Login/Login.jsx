@@ -12,7 +12,7 @@ import logo from "../../assets/images/ACGCLOGO1.png";
 function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, authError, setAuthError } = useAuth();
+  const { login, authError, setAuthError, loginLoading } = useAuth();
 
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -33,6 +33,10 @@ function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (loginLoading) {
+      return;
+    }
 
     if (!formData.identifier || !formData.password) {
       setError("Please enter your email/username and password.");
@@ -197,9 +201,10 @@ function Login() {
 
                 <button
                   type="submit"
-                  className="w-full py-4 rounded-2xl text-white font-bold text-xl bg-gradient-to-r from-red-600 via-red-700 to-slate-800 hover:scale-[1.02] transition shadow-xl shadow-red-500/20"
+                  disabled={loginLoading}
+                  className={`w-full py-4 rounded-2xl text-white font-bold text-xl bg-gradient-to-r from-red-600 via-red-700 to-slate-800 transition shadow-xl shadow-red-500/20 ${loginLoading ? "opacity-60 cursor-not-allowed hover:scale-100" : "hover:scale-[1.02]"}`}
                 >
-                  Login
+                  {loginLoading ? "Logging in..." : "Login"}
                 </button>
 
                 {/* BACK BUTTON */}

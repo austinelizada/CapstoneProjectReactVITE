@@ -25,8 +25,7 @@ export async function apiFetch(path, options = {}) {
     ...options.headers,
   };
 
-  // If body is not FormData, default to JSON content-type
-  if (!(options.body instanceof FormData)) {
+  if (!(options.body instanceof FormData) && options.body !== undefined) {
     headers["Content-Type"] = "application/json";
   }
 
@@ -51,7 +50,7 @@ export async function apiFetch(path, options = {}) {
       if (isLast) {
         const message =
           fetchError?.message === "Failed to fetch"
-            ? `Unable to connect to backend at ${API_BASE}. Please ensure the server is running and retry.`
+            ? "Unable to connect to the server. Please ensure the backend is running and try again later."
             : fetchError?.message || "Network error while connecting to the API.";
         const error = new Error(message);
         error.cause = fetchError;
