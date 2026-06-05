@@ -27,7 +27,7 @@ const getDefaultInspection = () => ({
   inspection_date: new Date().toISOString().split("T")[0],
   notes: "",
   items: [
-    { id: Date.now() + Math.random(), product_id: "", name: "", width: "", height: "", qty: 1, unit_price: 0, area: 0, unit: "sqft", estimation_mode: "auto" },
+    { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, unit_price: 0, area: 0, unit: "sqft", estimation_mode: "auto" },
   ],
   payment_terms: "",
   estimation_mode: "auto",
@@ -181,7 +181,8 @@ function SiteInspection() {
 
     const itemErrors = payload.items?.map((item) => {
       const rowErrors = {};
-      if (!item.product_id) rowErrors.product_id = "Select a product.";
+      const normalizedProductId = normalizeProductId(item.product_id);
+      if (!normalizedProductId) rowErrors.product_id = "Select a product.";
       if (!item.name?.trim()) rowErrors.name = "Description is required.";
       if (Number(item.width) <= 0) rowErrors.width = "Width must be greater than zero.";
       if (Number(item.height) <= 0) rowErrors.height = "Height must be greater than zero.";
@@ -378,17 +379,18 @@ const buildInspectionPayload = async (payload) => {
   };
 
   const handleItemProductChange = (id, productId) => {
-    const selectedProduct = products.find((product) => product._id === productId);
+    const normalizedProductId = normalizeProductId(productId);
+    const selectedProduct = products.find((product) => String(product._id || product.id) === normalizedProductId);
     setNewInspection((prev) => ({
       ...prev,
       items: prev.items.map((item) => {
         if (item.id !== id) return item;
         const updated = {
           ...item,
-          product_id: productId,
-          name: selectedProduct?.name || "",
-          unit_price: selectedProduct?.unit_price || 0,
-          unit: selectedProduct?.unit || item.unit,
+          product_id: normalizedProductId,
+          name: selectedProduct?.name || item.name || "",
+          unit_price: selectedProduct?.unit_price || item.unit_price || 0,
+          unit: selectedProduct?.unit || item.unit || "sqft",
         };
         const width = Number(updated.width) || 0;
         const height = Number(updated.height) || 0;
@@ -432,17 +434,18 @@ const buildInspectionPayload = async (payload) => {
   };
 
   const handleEditItemProductChange = (id, productId) => {
-    const selectedProduct = products.find((product) => product._id === productId);
+    const normalizedProductId = normalizeProductId(productId);
+    const selectedProduct = products.find((product) => String(product._id || product.id) === normalizedProductId);
     setEditInspection((prev) => ({
       ...prev,
       items: (prev.items || []).map((item) => {
         if (item.id !== id) return item;
         const updated = {
           ...item,
-          product_id: productId,
-          name: selectedProduct?.name || "",
-          unit_price: selectedProduct?.unit_price || 0,
-          unit: selectedProduct?.unit || item.unit,
+          product_id: normalizedProductId,
+          name: selectedProduct?.name || item.name || "",
+          unit_price: selectedProduct?.unit_price || item.unit_price || 0,
+          unit: selectedProduct?.unit || item.unit || "sqft",
         };
         const width = Number(updated.width) || 0;
         const height = Number(updated.height) || 0;
@@ -458,7 +461,7 @@ const buildInspectionPayload = async (payload) => {
       ...prev,
       items: [
         ...prev.items,
-        { id: Date.now() + Math.random(), product_id: "", name: "", width: "", height: "", qty: 1, area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto" },
+        { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto" },
       ],
     }));
   };
@@ -468,7 +471,7 @@ const buildInspectionPayload = async (payload) => {
       ...prev,
       items: [
         ...(prev.items || []),
-        { id: Date.now() + Math.random(), product_id: "", name: "", width: "", height: "", qty: 1, area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto", manual_estimated_total: "" },
+        { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto", manual_estimated_total: "" },
       ],
     }));
   };
@@ -607,12 +610,22 @@ const buildInspectionPayload = async (payload) => {
   const handleEdit = (orderId) => {
     const inspection = inspections.find((i) => (i._id || i.id) === orderId);
     if (inspection) {
-      const customerName = inspection.customer
-        ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim()
-        : inspection.customer_name || "";
+      // Try to extract customer name from multiple sources
+      let customerName = "";
+      if (inspection.customer?.first_name || inspection.customer?.last_name) {
+        customerName = `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim();
+      } else if (inspection.customer_name) {
+        customerName = inspection.customer_name;
+      } else if (inspection.customer?.email) {
+        // Fallback: use email if no name available
+        customerName = inspection.customer.email;
+      } else if (inspection.customer_email) {
+        customerName = inspection.customer_email;
+      }
+      
       const phone = inspection.customer?.phone || inspection.customer_phone || "";
       const customerEmail = inspection.customer?.email || inspection.customer_email || "";
-      const siteAddress = inspection.shipping_address || "";
+const siteAddress = inspection.shipping_address || inspection.customer?.street_address || formatCustomerAddress(inspection.customer) || "";
       const orderType = inspection.order_type || "online_order";
 
       setEditInspection({
@@ -629,18 +642,22 @@ const buildInspectionPayload = async (payload) => {
         inspection_status: inspection.inspection_status || "pending",
         items: (inspection.items || []).map((item) => {
           const normalizedProductId = normalizeProductId(item.product_id);
-          const area = item.area || calculateItemArea(item);
+          const area = item.area !== undefined && item.area !== null ? item.area : calculateItemArea(item);
+          const qty = item.quantity !== undefined && item.quantity !== null ? item.quantity : item.qty || 1;
+          const estimationMode = item.estimation_mode || (item.manual_estimated_total !== undefined ? "manual" : "auto");
           return {
             ...item,
             id: item.id || item._id || `${Date.now()}-${Math.random()}`,
             product_id: normalizedProductId,
-            qty: item.quantity || item.qty || 1,
-            width: item.width || "",
-            height: item.height || "",
+            qty,
+            quantity: qty,
+            width: item.width !== undefined && item.width !== null ? String(item.width) : "",
+            height: item.height !== undefined && item.height !== null ? String(item.height) : "",
             area,
-            unit_price: item.unit_price || 0,
-            estimation_mode: item.estimation_mode || "auto",
-            manual_estimated_total: item.manual_estimated_total ?? "",
+            unit_price: item.unit_price !== undefined && item.unit_price !== null ? item.unit_price : 0,
+            unit: item.unit || item.product_id?.unit || "sqft",
+            estimation_mode: estimationMode,
+            manual_estimated_total: item.manual_estimated_total ?? (estimationMode === "manual" ? String(item.estimated_price || "") : ""),
           };
         }),
         customerId: inspection.customer?._id || null,
@@ -761,28 +778,48 @@ const buildInspectionPayload = async (payload) => {
     setSavingEdit(true);
     try {
       const payload = {
+        customer_name: editInspection.customerName || undefined,
+        customer_email: editInspection.customerEmail || undefined,
+        customer_phone: editInspection.phone || undefined,
         inspection_date: editInspection.inspection_date || undefined,
         inspection_notes: editInspection.inspection_notes || undefined,
         issues_found: editInspection.issues_found || undefined,
         inspection_status: editInspection.inspection_status || undefined,
         shipping_address: editInspection.siteAddress || undefined,
         payment_terms: editInspection.payment_terms || undefined,
-        items: (editInspection.items || []).map((item) => ({
-          product_id: item.product_id ? (item.product_id._id || item.product_id) : null,
-          name: item.name || "",
-          quantity: Number(item.qty) || 1,
-          unit_price: deriveUnitPriceForPayload(item),
-          width: Number(item.width) || 0,
-          height: Number(item.height) || 0,
-          area: Number(item.area) || 0,
-          estimated_price: item.estimation_mode === "manual"
-            ? Number(item.manual_estimated_total) || calculateRowSubtotal(item)
-            : calculateRowSubtotal(item),
-          is_estimate: true,
-          unit: item.unit || "sqft",
-        })),
+        items: (editInspection.items || []).map((item) => {
+          const normalizedProductId = normalizeProductId(item.product_id);
+          // Preserve original product_id if normalization fails; only use null as last resort
+          const finalProductId = normalizedProductId || item.product_id || item._id || null;
+          return {
+            product_id: finalProductId,
+            name: item.name || "",
+            quantity: Number(item.qty) || Number(item.quantity) || 1,
+            unit_price: deriveUnitPriceForPayload(item),
+            width: Number(item.width) || 0,
+            height: Number(item.height) || 0,
+            area: Number(item.area) || 0,
+            estimated_price: item.estimation_mode === "manual"
+              ? Number(item.manual_estimated_total) || calculateRowSubtotal(item)
+              : calculateRowSubtotal(item),
+            is_estimate: true,
+            unit: item.unit || "sqft",
+          };
+        }),
         total_amount: computeEditTotals().totalEstimate,
       };
+
+      // Validate that all items have product_id before sending
+      const itemsWithoutProductId = payload.items.filter((item) => !item.product_id || !item.name);
+      if (itemsWithoutProductId.length > 0) {
+        const errorMsg = itemsWithoutProductId
+          .map((item, idx) => `Row ${idx + 1}: ${!item.product_id ? "Missing product" : "Missing name"}`)
+          .join("; ");
+        toast.error(`Cannot save inspection: ${errorMsg}`);
+        setSavingEdit(false);
+        return;
+      }
+
       const res = await updateOrderInspection(editInspection.id, payload);
       toast.success("Inspection saved");
       // update local inspections list with returned order
@@ -791,8 +828,16 @@ const buildInspectionPayload = async (payload) => {
       }
       setEditInspection(null);
     } catch (err) {
-      console.error("Failed to save inspection edit", err);
-      window.alert(err?.data?.message || err?.message || "Failed to save inspection.");
+      console.error("Failed to save inspection edit", err, err?.data);
+      // Extract detailed error message from backend response
+      const details = err?.data?.details;
+      const detailMessage = Array.isArray(details)
+        ? details.filter(Boolean).join("; ")
+        : typeof details === "string"
+        ? details
+        : null;
+      const errorMessage = detailMessage || err?.data?.message || err?.message || "Failed to save inspection.";
+      window.alert(errorMessage);
     } finally {
       setSavingEdit(false);
     }
@@ -1269,6 +1314,7 @@ const buildInspectionPayload = async (payload) => {
                       value={newInspection.payment_terms}
                       onChange={(e) => handleInspectionFieldChange("payment_terms", e.target.value)}
                     >
+                      <option value="">Select Payment Terms</option>
                       <option value="50%_down_payment">50% Down Payment</option>
                       <option value="full_payment">Full Payment</option>
                     </select>
@@ -1301,7 +1347,7 @@ const buildInspectionPayload = async (payload) => {
                             >
                               <option value="">Select product</option>
                               {products.map((product) => (
-                                <option key={product._id} value={product._id}>
+                                <option key={String(product._id || product.id)} value={String(product._id || product.id)}>
                                   {product.name}
                                 </option>
                               ))}
@@ -1601,6 +1647,7 @@ const buildInspectionPayload = async (payload) => {
                       onChange={(e) => handleEditChange('payment_terms', e.target.value)}
                       className="w-full border rounded-xl p-3"
                     >
+                      <option value="">Select Payment Terms</option>
                       <option value="50%_down_payment">50% Down Payment</option>
                       <option value="full_payment">Full Payment</option>
                     </select>
@@ -1635,7 +1682,7 @@ const buildInspectionPayload = async (payload) => {
                             >
                               <option value="">Select product</option>
                               {products.map((product) => (
-                                <option key={product._id} value={product._id}>
+                                <option key={String(product._id || product.id)} value={String(product._id || product.id)}>
                                   {product.name}
                                 </option>
                               ))}
@@ -1712,19 +1759,22 @@ const buildInspectionPayload = async (payload) => {
                     </div>
                   </div>
                   <div className="space-y-3">
-                    {(editInspection.items || []).map((item, idx) => (
-                      <div key={idx} className="rounded-2xl border bg-white p-4">
-                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                          <div>
-                            <div className="font-semibold text-gray-700">{item.name || item.product_id?.name || 'Item'}</div>
-                            <div className="text-sm text-gray-500">Qty: {item.quantity || 1}</div>
-                          </div>
-                          <div className="text-sm text-gray-500">
-                            Area: {(Number(item.area) || 0).toLocaleString()} sq ft
+                    {(editInspection.items || []).map((item, idx) => {
+                      const displayProductName = item.name || products.find((p) => String(p._id || p.id) === normalizeProductId(item.product_id))?.name || 'Item';
+                      return (
+                        <div key={idx} className="rounded-2xl border bg-white p-4">
+                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                            <div>
+                              <div className="font-semibold text-gray-700">{displayProductName}</div>
+                              <div className="text-sm text-gray-500">Qty: {item.qty || item.quantity || 1}</div>
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              Area: {(Number(item.area) || 0).toLocaleString()} sq ft
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 

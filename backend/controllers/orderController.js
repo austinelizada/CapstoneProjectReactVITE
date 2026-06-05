@@ -52,6 +52,14 @@ const buildAddressFromUser = (user) => {
   );
 };
 
+const normalizeProductId = (productId) => {
+  if (!productId) return null;
+  if (typeof productId === "object") {
+    return String(productId._id || productId.id || productId);
+  }
+  return String(productId);
+};
+
 const sanitizeOrderItems = (items = []) => {
   return (items || []).map((item) => {
     const quantity = Number(item.quantity) || 1;
@@ -62,9 +70,11 @@ const sanitizeOrderItems = (items = []) => {
     const estimated_price = item.is_estimate
       ? Number(item.estimated_price) || area * unit_price
       : 0;
+    const estimation_mode = item.estimation_mode === "manual" ? "manual" : "auto";
+    const manual_estimated_total = Number(item.manual_estimated_total) || 0;
 
     return {
-      product_id: item.product_id || item._id || null,
+      product_id: normalizeProductId(item.product_id) || normalizeProductId(item._id) || null,
       name: item.name,
       quantity,
       unit_price,
@@ -73,6 +83,8 @@ const sanitizeOrderItems = (items = []) => {
       height,
       area,
       estimated_price,
+      estimation_mode,
+      manual_estimated_total,
       notes: item.notes || "",
       is_estimate: Boolean(item.is_estimate),
     };
@@ -80,10 +92,7 @@ const sanitizeOrderItems = (items = []) => {
 };
 
 const generateTrackingNumber = () => {
-  return `ACGC-${Date.now().toString(36).toUpperCase()}-${Math.random()
-    .toString(36)
-    .substring(2, 8)
-    .toUpperCase()}`;
+  return `TRK-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 };
 
 export const listOrders = async (req, res) => {
@@ -272,38 +281,64 @@ export const updateOrderInspection = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { inspection_status, inspection_date, inspection_notes, issues_found, shipping_address, payment_terms, items, total_amount } = req.body;
+    const { inspection_status, inspection_date, inspection_notes, issues_found, shipping_address, payment_terms, items, total_amount, customer_name, customer_email, customer_phone } = req.body;
 
-    const order = await Order.findById(orderId);
-    if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
-    }
+    const updateData = {
+      status: "site_inspection",
+    };
 
-    if (inspection_status) order.inspection_status = inspection_status;
-    if (inspection_date) order.inspection_date = inspection_date;
-    if (inspection_notes) order.inspection_notes = inspection_notes;
-    if (issues_found !== undefined) order.issues_found = issues_found;
-    if (shipping_address !== undefined) order.shipping_address = normalizeAddress(shipping_address || "");
-    if (payment_terms !== undefined) order.payment_terms = payment_terms || "";
+    if (inspection_status !== undefined) updateData.inspection_status = inspection_status;
+    if (inspection_date !== undefined) updateData.inspection_date = inspection_date;
+    if (inspection_notes !== undefined) updateData.inspection_notes = inspection_notes;
+    if (issues_found !== undefined) updateData.issues_found = issues_found;
+    if (shipping_address !== undefined) updateData.shipping_address = normalizeAddress(shipping_address || "");
+    if (payment_terms !== undefined) updateData.payment_terms = payment_terms || "";
+    if (customer_name !== undefined) updateData.customer_name = customer_name || "";
+    if (customer_email !== undefined) updateData.customer_email = customer_email || "";
+    if (customer_phone !== undefined) updateData.customer_phone = customer_phone || "";
     if (Array.isArray(items)) {
       const sanitizedItems = sanitizeOrderItems(items);
       const invalidItem = sanitizedItems.find((item) => !item.product_id || !item.name);
       if (invalidItem) {
         return res.status(400).json({ success: false, message: "Invalid item data in inspection update." });
       }
-      order.items = sanitizedItems;
+      updateData.items = sanitizedItems;
     }
     if (total_amount !== undefined) {
-      order.total_amount = Number(total_amount) || order.total_amount;
+      updateData.total_amount = Number(total_amount) || 0;
     }
 
-    order.status = "site_inspection_scheduled";
-    await order.save();
+    const order = await Order.findByIdAndUpdate(orderId, updateData, {
+      new: true,
+      runValidators: true,
+      context: "query",
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
 
     res.json({ success: true, order });
   } catch (error) {
+    console.error("Update inspection payload:", JSON.stringify(req.body, null, 2));
+    console.error("Update inspection data:", JSON.stringify(updateData, null, 2));
+    console.error("Update inspection error name:", error.name);
     console.error("Update inspection error:", error);
-    res.status(500).json({ success: false, message: "Unable to update inspection", error: error.message });
+    if (error.name === "ValidationError" || error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Inspection update failed validation",
+        details: error.name === "ValidationError"
+          ? Object.values(error.errors).map((err) => err.message)
+          : [error.message],
+      });
+    }
+    res.status(500).json({
+      success: false,
+      message: error.message || "Unable to update inspection",
+      error: error.name,
+      details: error.stack || error.errors || null,
+    });
   }
 };
 
@@ -321,10 +356,10 @@ export const generateContract = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    order.contract_status = "generated";
+    order.contract_status = "sent";
     order.contract_terms = contract_terms || "";
     order.contract_amount = Number(contract_amount) || order.total_amount;
-    order.status = "contract_pending_approval";
+    order.status = "contract_sent";
 
     await order.save();
 

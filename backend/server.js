@@ -5,10 +5,12 @@ import authRoutes from "./routes/auth.js";
 import productRoutes from "./routes/products.js";
 import uploadRoutes from "./routes/uploads.js";
 import path from "path";
+import { fileURLToPath } from "url";
 import orderRoutes from "./routes/orders.js";
 import { connectMongo } from "./config/db.js";
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 const app = express();
 

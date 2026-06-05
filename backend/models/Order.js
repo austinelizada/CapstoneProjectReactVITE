@@ -40,6 +40,16 @@ const OrderItemSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    estimation_mode: {
+      type: String,
+      enum: ["auto", "manual"],
+      default: "auto",
+    },
+    manual_estimated_total: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     estimated_price: {
       type: Number,
       default: 0,

@@ -64,12 +64,26 @@ export async function apiFetch(path, options = {}) {
     }
   }
 
-  const data = await response.json().catch(() => ({}));
+  let data = {};
+  let rawText = "";
+  try {
+    rawText = await response.text();
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch (parseError) {
+    data = {};
+  }
 
   if (!response.ok) {
-    const error = new Error(data.message || "API request failed");
+    const errorMessage =
+      data.message ||
+      data.error ||
+      (typeof data.details === "string" ? data.details : data.details?.message) ||
+      rawText ||
+      "API request failed";
+    const error = new Error(errorMessage);
     error.response = response;
     error.data = data;
+    error.rawText = rawText;
     throw error;
   }
 
