@@ -15,6 +15,7 @@ import { getProducts } from "@/api/products";
 import { searchCustomers } from "@/api/users";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import ContractModal from "../../components/ContractModal";
 
 const getDefaultInspection = () => ({
   customerId: null,
@@ -61,6 +62,9 @@ function SiteInspection() {
   const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
   const [customerSearchError, setCustomerSearchError] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [contractData, setContractData] = useState(null);
+  const [contractInspection, setContractInspection] = useState(null);
   const today = new Date().toISOString().split("T")[0];
 
   const fetchSiteInspections = async () => {
@@ -588,20 +592,52 @@ const buildInspectionPayload = async (payload) => {
     setViewInspection(inspection);
   };
 
+  const generateContractData = (inspection) => {
+    if (!inspection) return null;
+
+    // Calculate total from items
+    const subtotal = (inspection.items || []).reduce((sum, item) => {
+      return sum + ((item.unit_price || 0) * (item.qty || 1));
+    }, 0);
+
+    // Generate unique contract number
+    const contractNumber = `ACGC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
+    const trackingNumber = `TRK-${inspection._id?.slice(-4).toUpperCase() || Math.random().toString(36).substring(2, 8).toUpperCase()}-GL5`;
+    const contractDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+
+    return {
+      contractNumber,
+      trackingNumber,
+      contractDate,
+      status: "PENDING",
+      subtotal,
+    };
+  };
+
   const handleGenerateContract = async (orderId) => {
     if (!orderId) return;
     try {
       setGeneratingId(orderId);
-      const res = await generateContract(orderId);
-      // If backend returns a contract URL, open it
-      if (res && res.url) {
-        window.open(res.url, "_blank");
-      } else {
-        window.alert(res?.message || "Contract generated successfully.");
+      
+      // Find the inspection from the list
+      const inspection = inspections.find((i) => (i._id || i.id) === orderId);
+      if (!inspection) {
+        toast.error("Inspection not found");
+        return;
       }
+
+      // Generate contract data
+      const contract = generateContractData(inspection);
+      
+      // Set state to show contract modal
+      setContractInspection(inspection);
+      setContractData(contract);
+      setShowContractModal(true);
+      
+      toast.success("Contract generated successfully!");
     } catch (err) {
       console.error("Generate contract failed", err);
-      window.alert(err?.data?.message || err?.message || "Failed to generate contract.");
+      toast.error(err?.data?.message || err?.message || "Failed to generate contract.");
     } finally {
       setGeneratingId(null);
     }
@@ -1804,6 +1840,14 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
           )}
 
         </main>
+
+        {/* Contract Modal */}
+        <ContractModal
+          isOpen={showContractModal}
+          onClose={() => setShowContractModal(false)}
+          inspection={contractInspection}
+          contractData={contractData}
+        />
       </div>
     </div>
   );

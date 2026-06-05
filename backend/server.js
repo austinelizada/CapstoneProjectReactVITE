@@ -13,12 +13,18 @@ import { connectMongo } from "./config/db.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, ".env") });
 
-const requiredEnvs = ["MONGO_URI", "JWT_SECRET"];
+const requiredEnvs = ["JWT_SECRET"];
 for (const envName of requiredEnvs) {
   if (!process.env[envName]) {
     console.error(`✗ Missing required environment variable: ${envName}`);
     process.exit(1);
   }
+}
+
+if (!process.env.MONGO_URI) {
+  console.warn(
+    "[env] MONGO_URI not set. The backend will attempt to connect to local MongoDB at mongodb://127.0.0.1:27017/reactvite"
+  );
 }
 
 const app = express();

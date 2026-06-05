@@ -10,7 +10,7 @@ const getCleanMongoUri = (uri) =>
 
 const validateMongoUri = (uri) => {
   if (!uri) {
-    throw new Error("Missing MONGO_URI in .env");
+    throw new Error("Missing MongoDB URI. Provide MONGO_URI in .env or run local MongoDB on 127.0.0.1:27017.");
   }
 
   if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
@@ -22,9 +22,18 @@ const validateMongoUri = (uri) => {
   return uri;
 };
 
+const getMongoUri = () => {
+  const rawUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/reactvite";
+  if (!process.env.MONGO_URI) {
+    console.warn(
+      "[db] MONGO_URI not set. Falling back to local MongoDB at mongodb://127.0.0.1:27017/reactvite"
+    );
+  }
+  return getCleanMongoUri(rawUri);
+};
+
 export async function connectMongo() {
-  const rawUri = process.env.MONGO_URI;
-  const uri = getCleanMongoUri(rawUri || "");
+  const uri = getMongoUri();
   const validUri = validateMongoUri(uri);
   console.info("[db] Connecting to MongoDB using URI:", validUri.replace(/(mongodb\+srv:\/\/[^@]+@)/, "mongodb+srv://***@"));
   return mongoose.connect(validUri, {
