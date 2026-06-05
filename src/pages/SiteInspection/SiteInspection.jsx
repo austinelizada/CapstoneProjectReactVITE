@@ -12,14 +12,17 @@ import toast, { Toaster } from 'react-hot-toast';
 
 import { getAdminOrders, generateContract, updateOrderInspection, updateOrderStatus, createInspection } from "@/api/orders";
 import { getProducts } from "@/api/products";
+import { searchCustomers } from "@/api/users";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 
 const getDefaultInspection = () => ({
+  customerId: null,
   customerName: "",
+  customerEmail: "",
   phone: "",
   productName: "",
-  order_type: "residential",
+  order_type: "online_order",
   siteAddress: "",
   inspection_date: new Date().toISOString().split("T")[0],
   notes: "",
@@ -53,6 +56,12 @@ function SiteInspection() {
   const [submitting, setSubmitting] = useState(false);
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
+  const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
+  const [customerSearchError, setCustomerSearchError] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const today = new Date().toISOString().split("T")[0];
 
   const fetchSiteInspections = async () => {
     setInspectionsLoading(true);
@@ -75,11 +84,68 @@ function SiteInspection() {
   const resetNewInspectionForm = () => {
     setNewInspection(getDefaultInspection());
     setErrors({});
+    setCustomerSearch("");
+    setCustomerSuggestions([]);
+    setCustomerSearchError("");
+    setSelectedCustomer(null);
   };
 
   const closeNewInspectionModal = () => {
     setShowModal(false);
     resetNewInspectionForm();
+  };
+
+  const formatCustomerAddress = (customer) => {
+    if (!customer) return "";
+    return [customer.street_address, customer.city, customer.province, customer.zip_code]
+      .filter(Boolean)
+      .join(", ");
+  };
+
+  const handleClientNameInput = (value) => {
+    setCustomerSearch(value);
+    setSelectedCustomer(null);
+    setCustomerSearchError("");
+    setCustomerSuggestions([]);
+    setNewInspection((prev) => ({
+      ...prev,
+      customerName: value,
+      customerEmail: "",
+      order_type: value.trim() ? "walk_in_customer" : "online_order",
+      customerId: null,
+    }));
+  };
+
+  const handleCustomerSelect = (customer) => {
+    const fullName = `${customer.first_name || ""} ${customer.last_name || ""}`.trim() || customer.email || "";
+    setSelectedCustomer(customer);
+    setCustomerSearch(fullName);
+    setCustomerSuggestions([]);
+    setCustomerSearchError("");
+    setNewInspection((prev) => ({
+      ...prev,
+      customerId: customer._id,
+      customerName: fullName,
+      customerEmail: customer.email || "",
+      phone: customer.phone || "",
+      siteAddress: formatCustomerAddress(customer),
+      order_type: "online_order",
+    }));
+  };
+
+  const clearSelectedCustomer = () => {
+    setSelectedCustomer(null);
+    setCustomerSearch("");
+    setCustomerSuggestions([]);
+    setNewInspection((prev) => ({
+      ...prev,
+      customerId: null,
+      customerName: "",
+      customerEmail: "",
+      phone: "",
+      siteAddress: "",
+      order_type: "walk_in_customer",
+    }));
   };
 
   const filterInspections = (list) => {
@@ -131,10 +197,26 @@ function SiteInspection() {
     return nextErrors;
   };
 
+  const normalizeProductId = (productId) => {
+    if (typeof productId === "object" && productId !== null) {
+      return String(productId._id || productId.id || productId);
+    }
+    return productId ? String(productId) : "";
+  };
+
+  const calculateItemArea = (item) => {
+    const width = Number(item.width) || 0;
+    const height = Number(item.height) || 0;
+    const qty = Number(item.quantity || item.qty) || 1;
+    const sqft = (width * height * qty) / 144;
+    return Math.round(sqft * 100) / 100;
+  };
+
   const calculateRowSubtotal = (item) => {
-    const area = Number(item.area) || 0;
+    const area = Number(item.area) || calculateItemArea(item);
     const qty = Number(item.qty) || 1;
-    const product = products.find((p) => (p._id || p.id) === item.product_id) || null;
+    const normalizedProductId = normalizeProductId(item.product_id);
+    const product = products.find((p) => String(p._id || p.id) === normalizedProductId) || null;
 
     if (!product) {
       return Math.round(area * (Number(item.unit_price) || 0) * 100) / 100;
@@ -171,7 +253,8 @@ function SiteInspection() {
   };
 
   const deriveUnitPriceForPayload = (item) => {
-    const product = products.find((p) => (p._id || p.id) === item.product_id) || null;
+    const normalizedProductId = normalizeProductId(item.product_id);
+    const product = products.find((p) => String(p._id || p.id) === normalizedProductId) || null;
     if (!product) return Number(item.unit_price) || 0;
     const pricingMethod = product.pricing_method || "";
     switch (pricingMethod) {
@@ -189,7 +272,8 @@ function SiteInspection() {
   };
 
   const formatRateLabel = (item) => {
-    const product = products.find((p) => (p._id || p.id) === item.product_id) || null;
+    const normalizedProductId = normalizeProductId(item.product_id);
+    const product = products.find((p) => String(p._id || p.id) === normalizedProductId) || null;
     if (!product) return `₱${(Number(item.unit_price) || 0).toLocaleString()}`;
     const pricingMethod = product.pricing_method || "";
     const perSqft = Number(product.price_per_sqft) || 0;
@@ -212,6 +296,8 @@ function SiteInspection() {
 
 const buildInspectionPayload = async (payload) => {
     return {
+      customer_id: payload.customerId || null,
+      customer_email: payload.customerEmail || "",
       items: (payload.items || []).map((item) => ({
         _id: null,
         product_id: item.product_id || null,
@@ -226,8 +312,8 @@ const buildInspectionPayload = async (payload) => {
         estimated_price: calculateRowSubtotal(item),
       })),
       shipping_address: payload.siteAddress,
-      order_type: payload.order_type === "residential" ? "online_order" : "online_order",
-      notes: payload.notes,
+      order_type: payload.order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
+      inspection_notes: payload.notes,
       payment_terms: payload.payment_terms,
       customer_name: payload.customerName,
       customer_phone: payload.phone,
@@ -313,6 +399,60 @@ const buildInspectionPayload = async (payload) => {
     }));
   };
 
+  const handleEditItemFieldChange = (id, field, value) => {
+    setEditInspection((prev) => ({
+      ...prev,
+      items: (prev.items || []).map((item) => {
+        if (item.id !== id) return item;
+        const updated = { ...item, [field]: value };
+        const width = Number(updated.width) || 0;
+        const height = Number(updated.height) || 0;
+        const qty = Number(updated.qty) || 1;
+        const sqft = (width * height * qty) / 144;
+        return { ...updated, area: Math.round(sqft * 100) / 100 };
+      }),
+    }));
+  };
+
+  const handleEditToggleEstimationMode = (id, mode) => {
+    setEditInspection((prev) => ({
+      ...prev,
+      items: (prev.items || []).map((item) => {
+        if (item.id !== id) return item;
+        return { ...item, estimation_mode: mode === "manual" ? "manual" : "auto", manual_estimated_total: mode === "manual" ? item.manual_estimated_total : "" };
+      }),
+    }));
+  };
+
+  const handleEditManualTotalChange = (id, value) => {
+    setEditInspection((prev) => ({
+      ...prev,
+      items: (prev.items || []).map((item) => (item.id === id ? { ...item, manual_estimated_total: value } : item)),
+    }));
+  };
+
+  const handleEditItemProductChange = (id, productId) => {
+    const selectedProduct = products.find((product) => product._id === productId);
+    setEditInspection((prev) => ({
+      ...prev,
+      items: (prev.items || []).map((item) => {
+        if (item.id !== id) return item;
+        const updated = {
+          ...item,
+          product_id: productId,
+          name: selectedProduct?.name || "",
+          unit_price: selectedProduct?.unit_price || 0,
+          unit: selectedProduct?.unit || item.unit,
+        };
+        const width = Number(updated.width) || 0;
+        const height = Number(updated.height) || 0;
+        const qty = Number(updated.qty) || 1;
+        const sqft = (width * height * qty) / 144;
+        return { ...updated, area: Math.round(sqft * 100) / 100, estimation_mode: item.estimation_mode || "auto" };
+      }),
+    }));
+  };
+
   const addItemRow = () => {
     setNewInspection((prev) => ({
       ...prev,
@@ -323,8 +463,22 @@ const buildInspectionPayload = async (payload) => {
     }));
   };
 
+  const addEditItemRow = () => {
+    setEditInspection((prev) => ({
+      ...prev,
+      items: [
+        ...(prev.items || []),
+        { id: Date.now() + Math.random(), product_id: "", name: "", width: "", height: "", qty: 1, area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto", manual_estimated_total: "" },
+      ],
+    }));
+  };
+
   const removeItemRow = (id) => {
     setNewInspection((prev) => ({ ...prev, items: prev.items.filter((it) => it.id !== id) }));
+  };
+
+  const removeEditItemRow = (id) => {
+    setEditInspection((prev) => ({ ...prev, items: (prev.items || []).filter((it) => it.id !== id) }));
   };
 
   const computeTotals = () => {
@@ -338,10 +492,62 @@ const buildInspectionPayload = async (payload) => {
     return { totalArea, totalEstimate };
   };
 
+  const computeEditTotals = () => {
+    if (!editInspection?.items) {
+      return { totalArea: 0, totalEstimate: 0 };
+    }
+    const totalArea = (editInspection.items || []).reduce((sum, item) => sum + (Number(item.area) || 0), 0);
+    const totalEstimate = Math.round(
+      (editInspection.items || []).reduce((sum, item) => {
+        if (item.estimation_mode === "manual") return sum + (Number(item.manual_estimated_total) || calculateRowSubtotal(item));
+        return sum + calculateRowSubtotal(item);
+      }, 0) * 100
+    ) / 100;
+    return { totalArea, totalEstimate };
+  };
+
   useEffect(() => {
     fetchSiteInspections();
     fetchProducts();
   }, []);
+
+  useEffect(() => {
+    if (selectedCustomer) {
+      setCustomerSuggestions([]);
+      return;
+    }
+
+    const query = customerSearch.trim();
+    if (!query) {
+      setCustomerSuggestions([]);
+      return;
+    }
+
+    setCustomerSearchLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await searchCustomers(query);
+        setCustomerSuggestions(result.customers || []);
+      } catch (error) {
+        console.error("Customer search failed", error);
+        setCustomerSearchError(error?.message || "Unable to search customers");
+      } finally {
+        setCustomerSearchLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [customerSearch, selectedCustomer]);
+
+  // Ensure form is reset whenever the New Inspection modal opens
+  useEffect(() => {
+    if (showModal) {
+      resetNewInspectionForm();
+    }
+    // only run when showModal changes
+  }, [showModal]);
 
   const submitNewInspection = async () => {
     const validationErrors = validateInspectionPayload(newInspection);
@@ -401,12 +607,43 @@ const buildInspectionPayload = async (payload) => {
   const handleEdit = (orderId) => {
     const inspection = inspections.find((i) => (i._id || i.id) === orderId);
     if (inspection) {
+      const customerName = inspection.customer
+        ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim()
+        : inspection.customer_name || "";
+      const phone = inspection.customer?.phone || inspection.customer_phone || "";
+      const customerEmail = inspection.customer?.email || inspection.customer_email || "";
+      const siteAddress = inspection.shipping_address || "";
+      const orderType = inspection.order_type || "online_order";
+
       setEditInspection({
         id: orderId,
+        customerName,
+        customerEmail,
+        phone,
+        siteAddress,
+        order_type: orderType,
+        payment_terms: inspection.payment_terms || "",
         inspection_date: inspection.inspection_date ? inspection.inspection_date.split("T")[0] : "",
         inspection_notes: inspection.inspection_notes || "",
         issues_found: inspection.issues_found || "",
         inspection_status: inspection.inspection_status || "pending",
+        items: (inspection.items || []).map((item) => {
+          const normalizedProductId = normalizeProductId(item.product_id);
+          const area = item.area || calculateItemArea(item);
+          return {
+            ...item,
+            id: item.id || item._id || `${Date.now()}-${Math.random()}`,
+            product_id: normalizedProductId,
+            qty: item.quantity || item.qty || 1,
+            width: item.width || "",
+            height: item.height || "",
+            area,
+            unit_price: item.unit_price || 0,
+            estimation_mode: item.estimation_mode || "auto",
+            manual_estimated_total: item.manual_estimated_total ?? "",
+          };
+        }),
+        customerId: inspection.customer?._id || null,
       });
     } else {
       // fallback: open an empty editor
@@ -507,6 +744,20 @@ const buildInspectionPayload = async (payload) => {
 
   const saveEdit = async () => {
     if (!editInspection || !editInspection.id) return;
+    const validationErrors = validateInspectionPayload(editInspection);
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      const firstKey = Object.keys(validationErrors)[0];
+      const firstError = validationErrors[firstKey];
+      if (Array.isArray(firstError)) {
+        const rowError = firstError.find((err) => err && Object.values(err).length > 0);
+        toast.error(rowError ? Object.values(rowError)[0] : "Please fix the form errors.");
+      } else {
+        toast.error(firstError);
+      }
+      return;
+    }
+
     setSavingEdit(true);
     try {
       const payload = {
@@ -514,6 +765,23 @@ const buildInspectionPayload = async (payload) => {
         inspection_notes: editInspection.inspection_notes || undefined,
         issues_found: editInspection.issues_found || undefined,
         inspection_status: editInspection.inspection_status || undefined,
+        shipping_address: editInspection.siteAddress || undefined,
+        payment_terms: editInspection.payment_terms || undefined,
+        items: (editInspection.items || []).map((item) => ({
+          product_id: item.product_id ? (item.product_id._id || item.product_id) : null,
+          name: item.name || "",
+          quantity: Number(item.qty) || 1,
+          unit_price: deriveUnitPriceForPayload(item),
+          width: Number(item.width) || 0,
+          height: Number(item.height) || 0,
+          area: Number(item.area) || 0,
+          estimated_price: item.estimation_mode === "manual"
+            ? Number(item.manual_estimated_total) || calculateRowSubtotal(item)
+            : calculateRowSubtotal(item),
+          is_estimate: true,
+          unit: item.unit || "sqft",
+        })),
+        total_amount: computeEditTotals().totalEstimate,
       };
       const res = await updateOrderInspection(editInspection.id, payload);
       toast.success("Inspection saved");
@@ -668,7 +936,7 @@ const buildInspectionPayload = async (payload) => {
               </div>
 
               <button
-                onClick={() => setShowModal(true)}
+                onClick={() => { resetNewInspectionForm(); setShowModal(true); }}
                 className="inline-flex items-center justify-center rounded-2xl bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
               >
                 <Plus size={18} className="mr-2" />
@@ -888,16 +1156,60 @@ const buildInspectionPayload = async (payload) => {
 
                 <div className="grid md:grid-cols-2 gap-6">
 
-                  <div>
+                  <div className="relative">
                   <label className="block font-medium text-gray-700 mb-2">Client Name</label>
                     <input
                       type="text"
-                      placeholder="Client Name"
+                      placeholder="Search customer or enter name"
                       className="border rounded-xl p-3 w-full"
-                      value={newInspection.customerName}
-                      onChange={(e) => handleInspectionFieldChange("customerName", e.target.value)}
+                      value={customerSearch || newInspection.customerName}
+                      onChange={(e) => handleClientNameInput(e.target.value)}
+                      disabled={Boolean(selectedCustomer)}
                     />
+                    {selectedCustomer && (
+                      <button
+                        type="button"
+                        onClick={clearSelectedCustomer}
+                        className="mt-2 text-sm text-blue-600"
+                      >
+                        Change customer
+                      </button>
+                    )}
+                    {customerSearchLoading && !selectedCustomer && (
+                      <p className="mt-2 text-sm text-gray-500">Searching customers...</p>
+                    )}
+                    {customerSearchError && <p className="mt-2 text-sm text-red-600">{customerSearchError}</p>}
+                    {customerSuggestions.length > 0 && !selectedCustomer && (
+                      <div className="absolute z-30 mt-2 w-full rounded-2xl border bg-white shadow-lg max-h-72 overflow-y-auto">
+                        {customerSuggestions.map((customer) => {
+                          const label = `${customer.first_name || ""} ${customer.last_name || ""}`.trim() || customer.email || customer.phone || "Unnamed";
+                          return (
+                            <button
+                              key={customer._id}
+                              type="button"
+                              onClick={() => handleCustomerSelect(customer)}
+                              className="w-full text-left px-4 py-3 hover:bg-gray-100"
+                            >
+                              <div className="font-semibold">{label}</div>
+                              <div className="text-sm text-gray-500">{customer.email || customer.phone || formatCustomerAddress(customer)}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     {errors.customerName && <p className="mt-2 text-sm text-red-600">{errors.customerName}</p>}
+                  </div>
+
+                  <div>
+                  <label className="block font-medium text-gray-700 mb-2">Email Address</label>
+                    <input
+                      type="email"
+                      placeholder="Email Address"
+                      className="border rounded-xl p-3 w-full"
+                      value={newInspection.customerEmail}
+                      onChange={(e) => handleInspectionFieldChange("customerEmail", e.target.value)}
+                      readOnly={Boolean(selectedCustomer)}
+                    />
                   </div>
 
                   <div>
@@ -908,6 +1220,7 @@ const buildInspectionPayload = async (payload) => {
                       className="border rounded-xl p-3 w-full"
                       value={newInspection.phone}
                       onChange={(e) => handleInspectionFieldChange("phone", e.target.value)}
+                      readOnly={Boolean(selectedCustomer)}
                     />
                     {errors.phone && <p className="mt-2 text-sm text-red-600">{errors.phone}</p>}
                   </div>
@@ -918,6 +1231,7 @@ const buildInspectionPayload = async (payload) => {
                       type="date"
                       className="border rounded-xl p-3 w-full"
                       value={newInspection.inspection_date}
+                      min={today}
                       onChange={(e) => handleInspectionFieldChange("inspection_date", e.target.value)}
                     />
                     {errors.inspection_date && <p className="mt-2 text-sm text-red-600">{errors.inspection_date}</p>}
@@ -929,30 +1243,31 @@ const buildInspectionPayload = async (payload) => {
                       className="border rounded-xl p-3 w-full"
                       value={newInspection.order_type}
                       onChange={(e) => handleInspectionFieldChange("order_type", e.target.value)}
+                      disabled={Boolean(selectedCustomer)}
                     >
-                      <option value="residential">Online Customer</option>
-                      <option value="commercial">Walk-in Customer</option>
+                      <option value="online_order">Online Customer</option>
+                      <option value="walk_in_customer">Walk-in Customer</option>
                     </select>
                   </div>
 
-   	          	<div>
-                  <label className="block font-medium text-gray-700 mb-2">Site Address</label>
-                    <input
-                      type="text"
-                      placeholder="Site Address"
-                      className="border rounded-xl p-3 w-full"
-                      value={newInspection.site_address}
-                      onChange={(e) => handleInspectionFieldChange("site_adress", e.target.value)}
-                    />
-                    {errors.site_address && <p className="mt-2 text-sm text-red-600">{errors.site_address}</p>}
-                  </div>
+                            <div>
+                              <label className="block font-medium text-gray-700 mb-2">Site Address</label>
+                                <input
+                                  type="text"
+                                  placeholder="Site Address"
+                                  className="border rounded-xl p-3 w-full"
+                                  value={newInspection.siteAddress}
+                                  onChange={(e) => handleInspectionFieldChange("siteAddress", e.target.value)}
+                                />
+                                {errors.siteAddress && <p className="mt-2 text-sm text-red-600">{errors.siteAddress}</p>}
+                              </div>
                   
 		              <div>
                     <label className="block font-medium text-gray-700 mb-2">Payment Terms</label>
                     <select
                       className="border rounded-xl p-3 w-full"
-                      value={newInspection.order_type}
-                      onChange={(e) => handleInspectionFieldChange("order_type", e.target.value)}
+                      value={newInspection.payment_terms}
+                      onChange={(e) => handleInspectionFieldChange("payment_terms", e.target.value)}
                     >
                       <option value="50%_down_payment">50% Down Payment</option>
                       <option value="full_payment">Full Payment</option>
@@ -1103,13 +1418,7 @@ const buildInspectionPayload = async (payload) => {
                       Close
                     </button>
                     <button
-                      onClick={() => { setEditInspection({
-                        id: (viewInspection._id || viewInspection.id),
-                        inspection_date: viewInspection.inspection_date ? viewInspection.inspection_date.split("T")[0] : "",
-                        inspection_notes: viewInspection.inspection_notes || "",
-                        issues_found: viewInspection.issues_found || "",
-                        inspection_status: viewInspection.inspection_status || "pending",
-                      }); setViewInspection(null); }}
+                      onClick={() => { handleEdit(viewInspection._id || viewInspection.id); setViewInspection(null); }}
                       className="px-4 py-2 bg-orange-500 text-white rounded-xl"
                     >
                       Edit
@@ -1118,11 +1427,42 @@ const buildInspectionPayload = async (payload) => {
                 </div>
 
                 <div className="space-y-4">
-                  <div>
-                    <h3 className="font-semibold">Client</h3>
-                    <p>{viewInspection.customer ? `${viewInspection.customer.first_name || ''} ${viewInspection.customer.last_name || ''}`.trim() : 'Customer'}</p>
-                    <p className="text-sm text-gray-500">{viewInspection.customer?.email}</p>
-                    <p className="text-sm text-gray-500">{viewInspection.customer?.phone}</p>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <h3 className="font-semibold">Client</h3>
+                      <p className="text-lg font-medium">
+                        {viewInspection.customer
+                          ? `${viewInspection.customer.first_name || ''} ${viewInspection.customer.last_name || ''}`.trim()
+                          : viewInspection.customer_name || 'Customer'}
+                      </p>
+                      <p className="text-sm text-gray-500">{viewInspection.customer?.email || viewInspection.customer_email || '—'}</p>
+                      <p className="text-sm text-gray-500">{viewInspection.customer?.phone || viewInspection.customer_phone || '—'}</p>
+                    </div>
+
+                    <div>
+                      <h3 className="font-semibold">Order Details</h3>
+                      <div className="space-y-2 text-sm text-gray-700">
+                        <div>
+                          <span className="font-semibold">Order Type: </span>
+                          {viewInspection.order_type === 'walk_in_customer' ? 'Walk-in Customer' : 'Online Customer'}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Payment Terms: </span>
+                          {viewInspection.payment_terms === '50%_down_payment'
+                            ? '50% Down Payment'
+                            : viewInspection.payment_terms === 'full_payment'
+                              ? 'Full Payment'
+                              : viewInspection.payment_terms || '—'}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Total Amount: </span>
+                          {viewInspection.total_amount ? `₱${Number(viewInspection.total_amount).toLocaleString()}` : '—'}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Created:</span> {viewInspection.createdAt ? new Date(viewInspection.createdAt).toLocaleString() : '—'}
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -1132,11 +1472,25 @@ const buildInspectionPayload = async (payload) => {
 
                   <div>
                     <h3 className="font-semibold">Items</h3>
-                    <ul className="list-disc pl-6">
+                    <div className="space-y-3">
                       {(viewInspection.items || []).map((it, idx) => (
-                        <li key={idx}>{it.name || it.product_id?.name || 'Item'} — qty: {it.quantity || 1}</li>
+                        <div key={idx} className="rounded-2xl border bg-gray-50 p-4">
+                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                            <div>
+                              <p className="font-semibold text-gray-700">{it.name || it.product_id?.name || 'Item'}</p>
+                              <p className="text-sm text-gray-500">Qty: {it.quantity || 1}</p>
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {it.width || it.height ? `${it.width || 0} x ${it.height || 0}` : 'Dimensions unavailable'}
+                            </div>
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-sm text-gray-600">
+                            <div>Area: {(Number(it.area) || 0).toLocaleString()} sq ft</div>
+                            <div>Est. Total: {it.estimated_price ? `₱${Number(it.estimated_price).toLocaleString()}` : '₱0'}</div>
+                          </div>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   </div>
 
                   <div>
@@ -1162,9 +1516,12 @@ const buildInspectionPayload = async (payload) => {
           {/* EDIT INSPECTION MODAL */}
           {editInspection && (
             <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
-              <div className="bg-white w-full max-w-3xl rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-2xl font-bold">Edit Inspection</h2>
+              <div className="bg-white w-full max-w-4xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
+                  <div>
+                    <h2 className="text-2xl font-bold">Edit Site Inspection</h2>
+                    <p className="text-sm text-gray-500 mt-1">Review customer details and update inspection schedule.</p>
+                  </div>
                   <button
                     onClick={() => setEditInspection(null)}
                     className="text-3xl"
@@ -1173,66 +1530,224 @@ const buildInspectionPayload = async (payload) => {
                   </button>
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-4">
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium">Scheduled Site Inspection Date</span>
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block font-medium text-gray-700 mb-2">Client Name</label>
+                    <input
+                      type="text"
+                      value={editInspection.customerName || ""}
+                      readOnly
+                      className="border rounded-xl p-3 w-full bg-gray-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-gray-700 mb-2">Email Address</label>
+                    <input
+                      type="email"
+                      value={editInspection.customerEmail || ""}
+                      readOnly
+                      className="border rounded-xl p-3 w-full bg-gray-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-gray-700 mb-2">Phone Number</label>
+                    <input
+                      type="text"
+                      value={editInspection.phone || ""}
+                      readOnly
+                      className="border rounded-xl p-3 w-full bg-gray-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-gray-700 mb-2">Site Inspection Date</label>
                     <input
                       type="date"
-                      value={editInspection.inspection_date}
+                      value={editInspection.inspection_date || ""}
                       onChange={(e) => handleEditChange('inspection_date', e.target.value)}
                       className="w-full border rounded-xl p-3"
+                      min={today}
                     />
-                  </label>
+                  </div>
 
-                  <label className="space-y-2">
-                    <span className="text-sm font-medium">Status</span>
+                  <div>
+                    <label className="block font-medium text-gray-700 mb-2">Customer Type</label>
                     <select
-                      value={editInspection.inspection_status}
-                      onChange={(e) => handleEditChange('inspection_status', e.target.value)}
+                      value={editInspection.order_type || "online_order"}
+                      className="w-full border rounded-xl p-3 bg-gray-100"
+                      disabled
+                    >
+                      <option value="online_order">Online Customer</option>
+                      <option value="walk_in_customer">Walk-in Customer</option>
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block font-medium text-gray-700 mb-2">Site Address</label>
+                    <input
+                      type="text"
+                      value={editInspection.siteAddress || ""}
+                      onChange={(e) => handleEditChange('siteAddress', e.target.value)}
+                      className="border rounded-xl p-3 w-full"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block font-medium text-gray-700 mb-2">Payment Terms</label>
+                    <select
+                      value={editInspection.payment_terms || ""}
+                      onChange={(e) => handleEditChange('payment_terms', e.target.value)}
                       className="w-full border rounded-xl p-3"
                     >
-                      <option value="pending">Pending</option>
-                      <option value="completed">Completed</option>
-                      <option value="needs_follow_up">Needs follow up</option>
+                      <option value="50%_down_payment">50% Down Payment</option>
+                      <option value="full_payment">Full Payment</option>
                     </select>
-                  </label>
+                  </div>
                 </div>
 
-                <label className="block mt-4">
-                  <span className="text-sm font-medium">Inspection Notes</span>
+                <div className="mt-6">
+                  <label className="block font-medium text-gray-700 mb-2">Inspection Notes</label>
                   <textarea
                     rows="4"
-                    value={editInspection.inspection_notes}
+                    value={editInspection.inspection_notes || ""}
                     onChange={(e) => handleEditChange('inspection_notes', e.target.value)}
-                    className="w-full border rounded-xl p-3 mt-2"
+                    className="w-full border rounded-xl p-3"
                   />
-                </label>
+                </div>
 
-                <label className="block mt-4">
-                  <span className="text-sm font-medium">Issues Found</span>
-                  <textarea
-                    rows="3"
-                    value={editInspection.issues_found}
-                    onChange={(e) => handleEditChange('issues_found', e.target.value)}
-                    className="w-full border rounded-xl p-3 mt-2"
-                  />
-                </label>
+                <div className="mt-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold">Measurements</h3>
+                    <button type="button" onClick={addEditItemRow} className="px-3 py-1 bg-red-600 text-white rounded">+ Add Row</button>
+                  </div>
+                  <div className="space-y-3">
+                    {(editInspection.items || []).map((it, index) => {
+                      const rowSubtotal = calculateRowSubtotal(it);
+                      return (
+                        <div key={it.id} className="py-5 mt-4 grid grid-cols-10 gap-2 items-center">
+                          <div className="col-span-3">
+                            <select
+                              className="w-full border rounded p-2"
+                              value={it.product_id || ""}
+                              onChange={(e) => handleEditItemProductChange(it.id, e.target.value)}
+                            >
+                              <option value="">Select product</option>
+                              {products.map((product) => (
+                                <option key={product._id} value={product._id}>
+                                  {product.name}
+                                </option>
+                              ))}
+                            </select>
+                            {productsLoading && <p className="text-xs text-gray-500 mt-1">Loading products...</p>}
+                          </div>
+                          <input
+                            className="col-span-2 border rounded p-2"
+                            placeholder="W"
+                            value={it.width}
+                            onChange={(e) => handleEditItemFieldChange(it.id, 'width', e.target.value)}
+                          />
+                          <input
+                            className="col-span-2 border rounded p-2"
+                            placeholder="H"
+                            value={it.height}
+                            onChange={(e) => handleEditItemFieldChange(it.id, 'height', e.target.value)}
+                          />
+                          <div className="col-span-2 border rounded p-2 bg-gray-50 flex items-center">
+                            <div className="text-sm">{formatRateLabel(it)}</div>
+                          </div>
 
-                <div className="flex justify-end gap-3 mt-6">
-                  <button
-                    onClick={() => setEditInspection(null)}
-                    className="px-6 py-3 bg-gray-200 rounded-xl"
-                    disabled={savingEdit}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={saveEdit}
-                    className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700"
-                    disabled={savingEdit}
-                  >
-                    {savingEdit ? 'Saving...' : 'Save Changes'}
-                  </button>
+                          <button type="button" className="col-span-1 text-red-600" onClick={() => removeEditItemRow(it.id)}>Remove</button>
+
+                          <div className="col-span-12 mt-2 grid grid-cols-3 gap-2">
+                            <div className="p-4 bg-red-100 rounded text-sm">
+                              <div className="text-sm text-gray-700">Total Area</div>
+                              <div className="font-bold text-gray-700">{it.area || 0} sq ft</div>
+                            </div>
+                            <div className="p-3 bg-yellow-100 rounded text-sm">
+                              <div className="text-medium text-gray-700">Estimation Mode</div>
+                              <div className="mt-1">
+                                <select
+                                  value={it.estimation_mode || 'auto'}
+                                  onChange={(e) => handleEditToggleEstimationMode(it.id, e.target.value)}
+                                  className="w-full border rounded p-1 text-sm text-gray-700 bg-white font-bold"
+                                >
+                                  <option value="auto">Auto</option>
+                                  <option value="manual">Manual</option>
+                                </select>
+                              </div>
+                            </div>
+                            <div className="p-3 bg-green-100 rounded text-sm">
+                              <div className="text-sm text-gray-700">Estimated Total</div>
+                              {it.estimation_mode === 'manual' ? (
+                                <div className="mt-2">
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={it.manual_estimated_total ?? ''}
+                                    onChange={(e) => handleEditManualTotalChange(it.id, e.target.value.replace(/[^0-9]/g, ''))}
+                                    className="w-full border rounded p-1 text-sm font-bold"
+                                    placeholder="Enter amount"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="p-2 text-sm font-bold text-gray-700">₱{rowSubtotal.toLocaleString()}</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="mt-6 bg-gray-50 rounded-3xl p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="font-semibold">Measurements</h3>
+                      <p className="text-sm text-gray-500">Review item data from this inspection.</p>
+                    </div>
+                    <div className="text-right text-sm text-gray-600">
+                      Total Area: {computeEditTotals().totalArea.toLocaleString()} sq ft
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {(editInspection.items || []).map((item, idx) => (
+                      <div key={idx} className="rounded-2xl border bg-white p-4">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="font-semibold text-gray-700">{item.name || item.product_id?.name || 'Item'}</div>
+                            <div className="text-sm text-gray-500">Qty: {item.quantity || 1}</div>
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            Area: {(Number(item.area) || 0).toLocaleString()} sq ft
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center gap-3 mt-8">
+                  <div className="text-lg font-bold">
+                    Estimated Total: <span className="text-red-600">₱{computeEditTotals().totalEstimate.toLocaleString()}</span>
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setEditInspection(null)}
+                      className="px-6 py-3 bg-gray-200 rounded-xl"
+                      disabled={savingEdit}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveEdit}
+                      className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700"
+                      disabled={savingEdit}
+                    >
+                      {savingEdit ? 'Saving...' : 'Save Changes'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

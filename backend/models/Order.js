@@ -130,6 +130,11 @@ const OrderSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
+    customer_email: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     shipping_address: {
       type: String,
       default: "",

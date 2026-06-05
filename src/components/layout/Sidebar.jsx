@@ -36,7 +36,7 @@ function Sidebar({ isOpen }) {
           <img
             src={logo}
             alt="ACGC Logo"
-            className="w-12 h-12 object-contain"
+            className="w-20 h-12 object-contain"
           />
 
           <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
@@ -44,7 +44,7 @@ function Sidebar({ isOpen }) {
               ACGC ADMIN
             </h1>
 
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-700">
               Aluminum Services
             </p>
           </div>
@@ -175,14 +175,14 @@ function MenuItem({
     <Link
       to={to}
       title={label}
-      className={`flex w-full items-center gap-3 p-3 rounded-xl transition-all duration-300 ease-in-out ${
+      className={`flex w-full items-center gap-1 p-3 rounded-xl transition-all duration-300 ease-in-out ${
         active
           ? "bg-red-600 text-white"
           : "text-gray-700 hover:bg-red-50 hover:text-red-700"
       } ${isOpen ? "justify-start" : "justify-center"}`}
     >
       {icon}
-      <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${
+      <span className={`overflow-hidden whitespace-nowrap transition-all duration-1000 ease-in-out ${
         isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"
       }`}>
         {label}

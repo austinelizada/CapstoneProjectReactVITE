@@ -144,7 +144,7 @@ export const createOrder = async (req, res) => {
 
 export const createOrderAsAdmin = async (req, res) => {
   try {
-    const { items, shipping_address, order_type, attachments, payment_terms, customer_name, customer_phone } = req.body;
+    const { items, shipping_address, order_type, attachments, payment_terms, customer_name, customer_phone, customer_email, customer_id } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Order items are required" });
@@ -161,9 +161,10 @@ export const createOrderAsAdmin = async (req, res) => {
     const total_amount = overrideAmount > 0 ? overrideAmount : totalAmountFromItems;
 
     const order = new Order({
-      customer: undefined,
+      customer: customer_id || undefined,
       customer_name: customer_name || "",
       customer_phone: customer_phone || "",
+      customer_email: customer_email || "",
       items: sanitizedItems,
       total_amount,
       shipping_address: normalizeAddress(shipping_address || ""),
@@ -271,7 +272,7 @@ export const updateOrderInspection = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { inspection_status, inspection_date, inspection_notes, issues_found } = req.body;
+    const { inspection_status, inspection_date, inspection_notes, issues_found, shipping_address, payment_terms, items, total_amount } = req.body;
 
     const order = await Order.findById(orderId);
     if (!order) {
@@ -282,6 +283,19 @@ export const updateOrderInspection = async (req, res) => {
     if (inspection_date) order.inspection_date = inspection_date;
     if (inspection_notes) order.inspection_notes = inspection_notes;
     if (issues_found !== undefined) order.issues_found = issues_found;
+    if (shipping_address !== undefined) order.shipping_address = normalizeAddress(shipping_address || "");
+    if (payment_terms !== undefined) order.payment_terms = payment_terms || "";
+    if (Array.isArray(items)) {
+      const sanitizedItems = sanitizeOrderItems(items);
+      const invalidItem = sanitizedItems.find((item) => !item.product_id || !item.name);
+      if (invalidItem) {
+        return res.status(400).json({ success: false, message: "Invalid item data in inspection update." });
+      }
+      order.items = sanitizedItems;
+    }
+    if (total_amount !== undefined) {
+      order.total_amount = Number(total_amount) || order.total_amount;
+    }
 
     order.status = "site_inspection_scheduled";
     await order.save();

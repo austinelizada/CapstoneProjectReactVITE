@@ -2,7 +2,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import Admin from "../models/Admin.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, roleMiddleware } from "../middleware/auth.js";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -173,6 +173,37 @@ router.get("/admin-exists", async (req, res) => {
       message: "Error checking admin status",
       error: error.message,
     });
+  }
+});
+
+router.get("/customers", authMiddleware, roleMiddleware("admin"), async (req, res) => {
+  try {
+    const { search } = req.query;
+    if (!search || !search.trim()) {
+      return res.json({ success: true, customers: [] });
+    }
+
+    const queryText = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(queryText, "i");
+
+    const customers = await User.find({
+      role: "customer",
+      $or: [
+        { first_name: regex },
+        { last_name: regex },
+        { email: regex },
+        { username: regex },
+        { phone: regex },
+      ],
+    })
+      .select("first_name last_name email phone street_address city province zip_code")
+      .limit(10)
+      .lean();
+
+    res.json({ success: true, customers });
+  } catch (error) {
+    console.error("Customer search error:", error);
+    res.status(500).json({ success: false, message: "Unable to search customers", error: error.message });
   }
 });
 
