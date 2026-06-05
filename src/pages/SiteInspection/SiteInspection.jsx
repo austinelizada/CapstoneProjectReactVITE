@@ -934,7 +934,7 @@ const buildInspectionPayload = async (payload) => {
                       <option value="commercial">Walk-in Customer</option>
                     </select>
                   </div>
-                  
+
    	          	<div>
                   <label className="block font-medium text-gray-700 mb-2">Site Address</label>
                     <input
@@ -977,7 +977,7 @@ const buildInspectionPayload = async (payload) => {
                     {(newInspection.items || []).map((it, index) => {
                       const rowSubtotal = calculateRowSubtotal(it);
                       return (
-                        <div key={it.id} className="grid grid-cols-12 gap-2 items-center">
+                        <div key={it.id} className="py-5 mt-4 grid grid-cols-10 gap-2 items-center">
                           <div className="col-span-3">
                             <select
                               className="w-full border rounded p-2"
@@ -1013,29 +1013,28 @@ const buildInspectionPayload = async (payload) => {
 
                           {/* per-row summary cards below inputs */}
                           <div className="col-span-12 mt-2 grid grid-cols-3 gap-2">
-                            <div className="p-2 bg-gray-50 rounded text-sm">
-                              <div className="text-xs text-gray-500">Total Area</div>
-                              <div className="font-bold">{it.area || 0} sq ft</div>
+                            <div className="p-4 bg-red-100 rounded text-sm">
+                              <div className="text-sm text-gray-700">Total Area</div>
+                              <div className="font-bold text-gray-700"> {it.area || 0} sq ft
+                              </div>
                             </div>
-                            <div className="p-2 bg-gray-50 rounded text-sm">
-                              <div className="text-xs text-gray-500">Estimation Mode</div>
+                            <div className="p-3 bg-yellow-100 rounded text-sm">
+                              <div className="text-medium text-gray-700">Estimation Mode</div>
                               <div className="mt-1">
                                 <select
                                   value={it.estimation_mode || 'auto'}
                                   onChange={(e) => handleToggleEstimationMode(it.id, e.target.value)}
-                                  className="w-full border rounded p-1 text-sm"
+                                  className="w-full border rounded p-1 text-sm text-gray-700 bg-white font-bold"
                                 >
                                   <option value="auto">Auto</option>
                                   <option value="manual">Manual</option>
                                 </select>
                               </div>
                             </div>
-                            <div className="p-2 bg-gray-50 rounded text-sm">
-                              <div className="text-xs text-gray-500">Estimated Total</div>
+                            <div className="p-3 bg-green-100 rounded text-sm">
+                              <div className="text-sm text-gray-700">Estimated Total</div>
                               {it.estimation_mode === 'auto' ? (
-                                <div className="font-bold text-gray-700">
-                                  ₱{rowSubtotal.toLocaleString()}
-                                  <div className="text-xs text-gray-500 mt-1">Calculated</div>
+                                <div className="p-2 text-sm font-bold text-gray-700"> ₱{rowSubtotal.toLocaleString()}
                                 </div>
                               ) : (
                                 <div className="mt-2">
