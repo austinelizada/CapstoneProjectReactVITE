@@ -128,6 +128,11 @@ const ProductSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    created_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+    },
     is_active: {
       type: Boolean,
       default: true,

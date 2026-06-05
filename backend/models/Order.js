@@ -63,10 +63,29 @@ const OrderSchema = new mongoose.Schema(
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
+    },
+    customer_name: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    customer_phone: {
+      type: String,
+      trim: true,
+      default: "",
     },
     items: {
       type: [OrderItemSchema],
+      default: [],
+    },
+    payment_terms: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    attachments: {
+      type: [String],
       default: [],
     },
     total_amount: {

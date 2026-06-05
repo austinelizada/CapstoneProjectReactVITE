@@ -1,5 +1,5 @@
 import express from "express";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, roleMiddleware } from "../middleware/auth.js";
 import {
   listProducts,
   getProduct,
@@ -12,8 +12,7 @@ const router = express.Router();
 
 router.get("/", listProducts);
 router.get("/:id", authMiddleware, getProduct);
-// Allow unauthenticated product creation for local testing (remove authMiddleware in prod)
-router.post("/", createProduct);
+router.post("/", authMiddleware, roleMiddleware("admin"), createProduct);
 router.put("/:id", authMiddleware, updateProduct);
 router.delete("/:id", authMiddleware, deleteProduct);
 

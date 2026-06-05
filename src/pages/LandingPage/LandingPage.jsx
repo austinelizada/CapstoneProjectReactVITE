@@ -18,6 +18,7 @@ function LandingPage() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [isLoadingFeatured, setIsLoadingFeatured] = useState(false);
+  const [featuredError, setFeaturedError] = useState("");
   const location = useLocation();
 
   useEffect(() => {
@@ -49,6 +50,9 @@ function LandingPage() {
       } catch (error) {
         console.error("Failed to load featured products", error);
         setFeaturedProducts([]);
+        setFeaturedError(
+          error?.data?.message || error?.message || "Failed to load featured products."
+        );
       } finally {
         setIsLoadingFeatured(false);
       }
@@ -133,6 +137,14 @@ function LandingPage() {
               alt="logo"
               className="w-14 h-14 object-contain"
             />
+          </motion.div>
+
+          {featuredError && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+              <p className="font-semibold">Backend connection issue</p>
+              <p>{featuredError}</p>
+            </div>
+          )}
 
             <div>
 
@@ -149,8 +161,6 @@ function LandingPage() {
               </p>
 
             </div>
-
-          </motion.div>
 
                 {/* DESKTOP NAV */}
 

@@ -52,6 +52,33 @@ const buildAddressFromUser = (user) => {
   );
 };
 
+const sanitizeOrderItems = (items = []) => {
+  return (items || []).map((item) => {
+    const quantity = Number(item.quantity) || 1;
+    const unit_price = Number(item.unit_price) || 0;
+    const width = Number(item.width) || 0;
+    const height = Number(item.height) || 0;
+    const area = Number(item.area) || 0;
+    const estimated_price = item.is_estimate
+      ? Number(item.estimated_price) || area * unit_price
+      : 0;
+
+    return {
+      product_id: item.product_id || item._id || null,
+      name: item.name,
+      quantity,
+      unit_price,
+      unit: item.unit || "piece",
+      width,
+      height,
+      area,
+      estimated_price,
+      notes: item.notes || "",
+      is_estimate: Boolean(item.is_estimate),
+    };
+  });
+};
+
 const generateTrackingNumber = () => {
   return `ACGC-${Date.now().toString(36).toUpperCase()}-${Math.random()
     .toString(36)
@@ -87,27 +114,7 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ success: false, message: "Order items are required" });
     }
 
-    const sanitizedItems = items.map((item) => {
-      const quantity = Number(item.quantity) || 1;
-      const unit_price = Number(item.unit_price) || 0;
-      const estimated_price = item.is_estimate
-        ? Number(item.estimated_price) || Number(item.area || 0) * unit_price
-        : 0;
-
-      return {
-        product_id: item._id,
-        name: item.name,
-        quantity,
-        unit_price,
-        unit: item.unit || "piece",
-        width: Number(item.width) || 0,
-        height: Number(item.height) || 0,
-        area: Number(item.area) || 0,
-        estimated_price,
-        notes: item.notes || "",
-        is_estimate: Boolean(item.is_estimate),
-      };
-    });
+    const sanitizedItems = sanitizeOrderItems(items);
 
     const total_amount = sanitizedItems.reduce((sum, item) => {
       const itemAmount = item.is_estimate && item.estimated_price ? item.estimated_price : item.quantity * item.unit_price;
@@ -131,6 +138,50 @@ export const createOrder = async (req, res) => {
     res.status(201).json({ success: true, order });
   } catch (error) {
     console.error("Create order error:", error);
+    res.status(500).json({ success: false, message: "Unable to create order", error: error.message });
+  }
+};
+
+export const createOrderAsAdmin = async (req, res) => {
+  try {
+    const { items, shipping_address, order_type, attachments, payment_terms, customer_name, customer_phone } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, message: "Order items are required" });
+    }
+
+    const sanitizedItems = sanitizeOrderItems(items);
+
+    const totalAmountFromItems = sanitizedItems.reduce((sum, item) => {
+      const itemAmount = item.is_estimate && item.estimated_price ? item.estimated_price : item.quantity * item.unit_price;
+      return sum + itemAmount;
+    }, 0);
+
+    const overrideAmount = Number(req.body.estimated_cost) || 0;
+    const total_amount = overrideAmount > 0 ? overrideAmount : totalAmountFromItems;
+
+    const order = new Order({
+      customer: undefined,
+      customer_name: customer_name || "",
+      customer_phone: customer_phone || "",
+      items: sanitizedItems,
+      total_amount,
+      shipping_address: normalizeAddress(shipping_address || ""),
+      payment_terms: payment_terms || "",
+      attachments: Array.isArray(attachments) ? attachments : [],
+      tracking: generateTrackingNumber(),
+      order_type: order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
+      contract_status: "pending",
+      payment_status: "not_paid",
+      status: "site_inspection",
+      inspection_status: "pending",
+    });
+
+    await order.save();
+
+    res.status(201).json({ success: true, order });
+  } catch (error) {
+    console.error("Create order as admin error:", error);
     res.status(500).json({ success: false, message: "Unable to create order", error: error.message });
   }
 };

@@ -101,7 +101,9 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const adminExists = await Admin.exists({});
+    const adminExists =
+      (await Admin.exists({})) ||
+      (await User.exists({ role: "admin" }));
     if (!adminExists) {
       return res.status(403).json({
         success: false,
@@ -201,7 +203,9 @@ router.post("/create-admin", async (req, res) => {
       });
     }
 
-    const adminExists = await Admin.exists({});
+    const adminExists =
+      (await Admin.exists({})) ||
+      (await User.exists({ role: "admin" }));
     if (adminExists) {
       return res.status(403).json({
         success: false,

@@ -2,8 +2,15 @@ import Product from "../models/Product.js";
 
 export const listProducts = async (req, res) => {
   try {
-    const { search, category } = req.query;
+    const { search, category, adminOnly } = req.query;
     const filter = { is_active: true };
+
+    if (adminOnly === "true") {
+      filter.$or = [
+        { created_by: { $exists: true, $ne: null } },
+        { created_by: null },
+      ];
+    }
 
     if (category && category !== "all") {
       filter.category = category.toLowerCase();
@@ -93,6 +100,7 @@ export const createProduct = async (req, res) => {
       unit: unit || "per_piece",
       stock_quantity: Number(stock_quantity) || 0,
       image_url: image_url || "",
+      created_by: req.user?.id || undefined,
       // ERP fields
       product_type: product_type || "",
       product_name: product_name || name || "",

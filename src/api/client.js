@@ -22,18 +22,47 @@ try {
 export async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("token");
   const headers = {
-    "Content-Type": "application/json",
     ...options.headers,
   };
+
+  // If body is not FormData, default to JSON content-type
+  if (!(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
 
   if (token && token !== "null" && token !== "undefined") {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  const maxRetries = options._retries || 3;
+  let attempt = 0;
+  let response;
+  while (attempt < maxRetries) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers,
+      });
+      break;
+    } catch (fetchError) {
+      attempt += 1;
+      const isLast = attempt >= maxRetries;
+      if (isLast) {
+        const message =
+          fetchError?.message === "Failed to fetch"
+            ? `Unable to connect to backend at ${API_BASE}. Please ensure the server is running and retry.`
+            : fetchError?.message || "Network error while connecting to the API.";
+        const error = new Error(message);
+        error.cause = fetchError;
+        error.isNetworkError = true;
+        throw error;
+      }
+      // exponential backoff
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 200 * Math.pow(2, attempt)));
+    }
+  }
 
   const data = await response.json().catch(() => ({}));
 
