@@ -7,6 +7,8 @@ export const getAdminOrders = (params = {}) => {
   return apiFetch(`/orders/admin/list${query ? `?${query}` : ""}`);
 };
 
+export const getAdminOrder = (orderId) => apiFetch(`/orders/admin/${orderId}`);
+
 export const updateOrderStatus = (orderId, payload) =>
   apiFetch(`/orders/admin/${orderId}/status`, {
     method: "PUT",
@@ -18,6 +20,15 @@ export const updateOrderInspection = (orderId, payload) =>
     method: "PUT",
     body: JSON.stringify(payload),
   });
+
+export const respondToContract = (orderId, payload) =>
+  apiFetch(`/orders/${orderId}/contract`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
+export const acceptContract = (orderId) => respondToContract(orderId, { action: "accept" });
+export const declineContract = (orderId) => respondToContract(orderId, { action: "decline" });
 
 export const createOrder = (payload) =>
   apiFetch("/orders", {
@@ -33,7 +44,8 @@ export const createInspection = (payload) =>
 
 export const trackOrder = (tracking) => apiFetch(`/orders/track/${encodeURIComponent(tracking)}`);
 
-export const generateContract = (orderId) =>
+export const generateContract = (orderId, payload = {}) =>
   apiFetch(`/orders/admin/${orderId}/contract`, {
     method: "POST",
+    body: JSON.stringify(payload),
   });

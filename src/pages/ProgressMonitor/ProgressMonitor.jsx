@@ -5,6 +5,8 @@ import {
   Pencil,
 } from "lucide-react";
 
+import { getAdminOrders } from "@/api/orders";
+
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 
@@ -37,57 +39,8 @@ function ProgressMonitor() {
 
   const rowsPerPage = 5;
 
-  const [projectList, setProjectList] =
-    useState([
-      {
-        client: "Juan Dela Cruz",
-        product: "Sliding Window",
-        inspection: "Passed",
-        installation: "Feb 15, 2026",
-        progress: 25,
-        status: "Pending",
-      },
-      {
-        client: "Maria Santos",
-        product: "Glass Door",
-        inspection: "Passed",
-        installation: "Feb 18, 2026",
-        progress: 40,
-        status: "Cutting",
-      },
-      {
-        client: "Mark Reyes",
-        product: "Storefront",
-        inspection: "Passed",
-        installation: "Feb 22, 2026",
-        progress: 65,
-        status: "Fabrication",
-      },
-      {
-        client: "Ana Cruz",
-        product: "Casement Window",
-        inspection: "Passed",
-        installation: "Feb 25, 2026",
-        progress: 80,
-        status: "Installation",
-      },
-      {
-        client: "Pedro Garcia",
-        product: "Sliding Door",
-        inspection: "Passed",
-        installation: "Feb 10, 2026",
-        progress: 100,
-        status: "Completed",
-      },
-      {
-        client: "John Smith",
-        product: "Tempered Glass",
-        inspection: "Passed",
-        installation: "Feb 05, 2026",
-        progress: 70,
-        status: "Delayed",
-      },
-    ]);
+  const [projectList, setProjectList] = useState([]);
+  const [projectLoading, setProjectLoading] = useState(false);
 
   const filteredProjects =
     projectList.filter((project) => {
@@ -123,28 +76,89 @@ function ProgressMonitor() {
     filteredProjects.length / rowsPerPage
   );
 
-  const completedCount =
-    projectList.filter(
-      (p) => p.status === "Completed"
-    ).length;
+  const formatOrderStatus = (status, contractStatus) => {
+    if (status === "completed") return "Completed";
+    if (status === "site_inspection") return "Installation";
+    if (status === "processing") return "Fabrication";
+    if (status === "contract_accepted") return "Accepted";
+    if (status === "contract_sent") return "Pending";
+    if (status === "admin_review") return "Pending";
+    if (status === "order_submitted") return "Pending";
+    if (status === "cancelled") return "Cancelled";
+    return contractStatus === "accepted" ? "Accepted" : "Pending";
+  };
 
-  const delayedCount =
-    projectList.filter(
-      (p) => p.status === "Delayed"
-    ).length;
+  const mapProgressFromStatus = (status) => {
+    if (status === "completed") return 100;
+    if (status === "site_inspection") return 70;
+    if (status === "processing") return 65;
+    if (status === "contract_accepted") return 50;
+    if (status === "contract_sent") return 25;
+    return 15;
+  };
+
+  useEffect(() => {
+    const fetchProjects = async () => {
+      setProjectLoading(true);
+      try {
+        const response = await getAdminOrders();
+        const orders = response.orders || [];
+        const projects = orders
+          .filter((order) =>
+            [
+              "contract_accepted",
+              "site_inspection",
+              "processing",
+              "completed",
+            ].includes(order.status) ||
+            order.contract_status === "accepted"
+          )
+          .map((order) => ({
+            client:
+              order.customer_name ||
+              `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim() ||
+              "Unknown",
+            product:
+              order.items && order.items.length > 0
+                ? order.items[0].name || order.items[0].category || "Project"
+                : "Project",
+            inspection:
+              order.inspection_status && order.inspection_status !== "pending"
+                ? order.inspection_status.charAt(0).toUpperCase() + order.inspection_status.slice(1)
+                : order.inspection_date
+                ? new Date(order.inspection_date).toLocaleDateString()
+                : "TBD",
+            installation:
+              order.inspection_date
+                ? new Date(order.inspection_date).toLocaleDateString()
+                : "TBD",
+            progress: mapProgressFromStatus(order.status),
+            status: formatOrderStatus(order.status, order.contract_status),
+          }));
+        setProjectList(projects);
+      } catch (error) {
+        console.error("Failed to load progress monitor projects", error);
+        setProjectList([]);
+      } finally {
+        setProjectLoading(false);
+      }
+    };
+
+    fetchProjects();
+  }, []);
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} />
 
-      <div className="flex-1">
+      <div className="flex-1 min-h-0 flex flex-col">
         <Navbar
           toggleSidebar={() =>
             setIsSidebarOpen(!isSidebarOpen)
           }
         />
 
-        <main className="p-6">
+        <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
           {/* HEADER */}
 
@@ -156,42 +170,6 @@ function ProgressMonitor() {
             <p className="mt-2 text-red-100">
               Monitor fabrication and installation progress.
             </p>
-          </div>
-
-          {/* STATS */}
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-
-            <div className="bg-white rounded-3xl p-6 shadow">
-              <p className="text-gray-500">
-                Projects
-              </p>
-
-              <h2 className="text-4xl font-bold mt-2">
-                {projectList.length}
-              </h2>
-            </div>
-
-            <div className="bg-white rounded-3xl p-6 shadow">
-              <p className="text-gray-500">
-                Completed
-              </p>
-
-              <h2 className="text-4xl font-bold text-green-600 mt-2">
-                {completedCount}
-              </h2>
-            </div>
-
-            <div className="bg-white rounded-3xl p-6 shadow">
-              <p className="text-gray-500">
-                Delayed
-              </p>
-
-              <h2 className="text-4xl font-bold text-red-600 mt-2">
-                {delayedCount}
-              </h2>
-            </div>
-
           </div>
 
           {/* FILTERS */}

@@ -26,7 +26,8 @@ import {
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { getProducts } from "@/api/products";
-import { createOrder, getOrders, trackOrder } from "@/api/orders";
+import { createOrder, getOrders, trackOrder, acceptContract, declineContract } from "@/api/orders";
+import ContractModal from "../../components/ContractModal";
 import { calculateEstimate } from "@/lib/estimator";
 
 const normalizeAddress = (value) => {
@@ -113,6 +114,17 @@ function CustomerDashboard() {
   const [checkoutError, setCheckoutError] = useState("");
   const [orderRequestMessage, setOrderRequestMessage] = useState("");
   const [orderRequestLoading, setOrderRequestLoading] = useState(false);
+  const [contractActionLoading, setContractActionLoading] = useState(false);
+  const [contractActionError, setContractActionError] = useState("");
+  const [contractActionMessage, setContractActionMessage] = useState("");
+  const [contractActionOrderId, setContractActionOrderId] = useState(null);
+  const [showContractModal, setShowContractModal] = useState(false);
+  const [contractPreviewOrder, setContractPreviewOrder] = useState(null);
+  const [contractConfirmModal, setContractConfirmModal] = useState({
+    open: false,
+    action: null,
+    orderId: null,
+  });
   const [showOrderReviewModal, setShowOrderReviewModal] = useState(false);
   const [orderReviewAgreed, setOrderReviewAgreed] = useState(false);
   const [reviewOrderMode, setReviewOrderMode] = useState("estimate");
@@ -461,6 +473,83 @@ function CustomerDashboard() {
     }
   };
 
+  const updateLocalOrder = (updatedOrder) => {
+    setOrders((prev) => prev.map((order) => (order._id === updatedOrder._id ? updatedOrder : order)));
+    if (selectedOrderForModal?._id === updatedOrder._id) {
+      setSelectedOrderForModal(updatedOrder);
+    }
+  };
+
+  const handleAcceptContract = async (orderId) => {
+    setContractActionError("");
+    setContractActionMessage("");
+    setContractActionOrderId(orderId);
+    setContractActionLoading(true);
+    try {
+      const response = await acceptContract(orderId);
+      updateLocalOrder(response.order);
+      setContractActionMessage("Contract accepted successfully.");
+      setContractActionOrderId(response.order._id);
+      setContractConfirmModal({ open: false, action: null, orderId: null });
+      setShowContractModal(false);
+    } catch (error) {
+      setContractActionError(error.data?.message || error.message || "Unable to accept contract.");
+      setContractActionMessage("");
+    } finally {
+      setContractActionLoading(false);
+    }
+  };
+
+  const handleDeclineContract = async (orderId) => {
+    setContractActionError("");
+    setContractActionMessage("");
+    setContractActionOrderId(orderId);
+    setContractActionLoading(true);
+    try {
+      const response = await declineContract(orderId);
+      updateLocalOrder(response.order);
+      if (selectedOrderForModal?._id === orderId) {
+        setSelectedOrderForModal(response.order);
+      }
+      setContractActionMessage("Contract declined and order cancelled.");
+      setContractActionOrderId(response.order._id);
+      setContractConfirmModal({ open: false, action: null, orderId: null });
+      setShowContractModal(false);
+    } catch (error) {
+      setContractActionError(error.data?.message || error.message || "Unable to decline contract.");
+      setContractActionMessage("");
+    } finally {
+      setContractActionLoading(false);
+    }
+  };
+
+  const openContractConfirmModal = (action, orderId) => {
+    setContractConfirmModal({
+      open: true,
+      action,
+      orderId,
+    });
+  };
+
+  const closeContractConfirmModal = () => {
+    setContractConfirmModal({ open: false, action: null, orderId: null });
+  };
+
+  const handleConfirmContractAction = async () => {
+    if (!contractConfirmModal.orderId || !contractConfirmModal.action) return;
+
+    const orderId = contractConfirmModal.orderId;
+    const action = contractConfirmModal.action;
+
+    closeContractConfirmModal();
+
+    if (action === "accept") {
+      await handleAcceptContract(orderId);
+    } else if (action === "decline") {
+      await handleDeclineContract(orderId);
+    }
+  };
+
   const handleRemoveFromCart = (cartId) => {
     setCartItems((prev) => prev.filter((item) => item.cartId !== cartId));
   };
@@ -771,6 +860,64 @@ function CustomerDashboard() {
     return `₱${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
+  const buildContractDataFromOrder = (order) => {
+    if (!order) return null;
+
+    const amount = Number(order.contract_amount || order.total_amount || 0);
+    const downPayment = Math.round((amount * 0.5) * 100) / 100;
+    const items = (order.items || []).map((item) => ({
+      name: item.name || "Item",
+      category: item.category || item.product_type || "General",
+      quantity: item.quantity || 0,
+      width: item.width || "—",
+      height: item.height || "—",
+      area: item.area || 0,
+      unitPrice: Number(item.unit_price || 0),
+      amount: Number(item.is_estimate ? item.estimated_price || 0 : (item.quantity || 0) * Number(item.unit_price || 0)),
+    }));
+
+    const contractStatus = order.contract_status?.replace(/_/g, " ") || order.status?.replace(/_/g, " ") || "Pending";
+    const accepted = (order.contract_status || order.status || "").toString().toLowerCase() === "accepted" || order.status === "contract_accepted";
+
+    return {
+      orderNumber: order.tracking || order._id || "N/A",
+      contractDate: order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : new Date(order.createdAt).toLocaleDateString(),
+      orderDate: order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "N/A",
+      status: order.status?.replace(/_/g, " ") || "Pending",
+      contractStatus,
+      customerName: order.customer?.first_name || order.customer_name || "Customer",
+      customerEmail: order.customer?.email || order.customer_email || "N/A",
+      customerPhone: order.customer?.phone || order.customer_phone || "N/A",
+      projectLocation: order.shipping_address || "N/A",
+      siteInspectionDate: order.inspection_date ? new Date(order.inspection_date).toLocaleDateString() : "TBD",
+      paymentTerms: order.payment_terms || "Standard payment terms apply.",
+      contractTerms: order.contract_terms || "",
+      subtotal: amount,
+      totalProjectCost: amount,
+      downPayment,
+      items,
+      accepted,
+      acceptanceMethod: accepted ? "Online Acceptance" : null,
+      acceptanceDate: accepted && order.updatedAt ? new Date(order.updatedAt).toLocaleString() : null,
+      acceptedBy: order.customer?.first_name || order.customer_name || "Customer",
+      contractId: order.tracking || order._id || "N/A",
+      customerAccountId: order.customer?._id || order.customer || "N/A",
+    };
+  };
+
+  const openContractModal = (order) => {
+    if (!order) return;
+    setContractPreviewOrder(order);
+    setShowContractModal(true);
+  };
+
+  const closeContractModal = () => {
+    setShowContractModal(false);
+    setContractPreviewOrder(null);
+  };
+
+  const contractPreviewData = contractPreviewOrder ? buildContractDataFromOrder(contractPreviewOrder) : null;
+
   const getOrderStatusLabel = (status) => {
     switch (status) {
       case "order_submitted":
@@ -828,6 +975,7 @@ function CustomerDashboard() {
       { key: "site_inspection", label: "Site Inspection" },
       { key: "contract_created", label: "Contract Created" },
       { key: "contract_accepted", label: "Contract Acceptance" },
+      { key: "cutting", label: "Cutting" },
       { key: "fabrication", label: "Fabrication" },
       { key: "installation", label: "Installation" },
       { key: "completed", label: "Completed" },
@@ -835,7 +983,7 @@ function CustomerDashboard() {
 
     const stepMap = {
       contract_sent: "contract_created",
-      contract_accepted: "contract_created",
+      contract_accepted: "contract_accepted",
       contract_declined: "contract_created",
       Cutting: "fabrication",
       Fabrication: "fabrication",
@@ -844,6 +992,10 @@ function CustomerDashboard() {
 
     const normalizedStatus = stepMap[order.status] || order.status;
     let activeIndex = steps.findIndex((step) => step.key === normalizedStatus);
+    const inspectionIsScheduled = order.status === "site_inspection" && order.inspection_status === "scheduled";
+    if (inspectionIsScheduled) {
+      activeIndex = steps.findIndex((step) => step.key === "contract_created");
+    }
 
     if (order.status === "cancelled") {
       activeIndex = -1;
@@ -881,6 +1033,10 @@ function CustomerDashboard() {
 
     // Otherwise, apply status filter
     if (orderFilter === "all") return true;
+    if (orderFilter === "adminreview") return order.status === "admin_review";
+    if (orderFilter === "siteinspection") return order.status === "site_inspection";
+    if (orderFilter === "pendingcontract") return ["contract_sent"].includes(order.status);
+    if (orderFilter === "contract") return ["contract_sent", "contract_accepted"].includes(order.status);
     if (orderFilter === "open") return order.status !== "completed" && order.status !== "cancelled";
     if (orderFilter === "completed") return order.status === "completed";
     if (orderFilter === "cancelled") return order.status === "cancelled";
@@ -2209,6 +2365,65 @@ function CustomerDashboard() {
                   </div>
                 </div>
 
+                {(selectedOrderForModal.contract_terms || selectedOrderForModal.status === "contract_sent") && (
+                  <div className="rounded-[28px] bg-slate-50 p-6 shadow-sm space-y-4">
+                    <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Contract Summary</h5>
+                    {selectedOrderForModal.contract_terms ? (
+                      <div className="rounded-2xl bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Terms</p>
+                        <p className="mt-2 whitespace-pre-line text-sm text-slate-700">{selectedOrderForModal.contract_terms}</p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-600">Contract terms are not yet available.</p>
+                    )}
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Amount</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-950">{formatCurrency(selectedOrderForModal.contract_amount || selectedOrderForModal.total_amount)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Status</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.contract_status?.replace(/_/g, " ") || "Pending"}</p>
+                      </div>
+                    </div>
+                    {selectedOrderForModal.status === "contract_sent" && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          onClick={() => openContractConfirmModal("accept", selectedOrderForModal._id)}
+                          disabled={contractActionLoading}
+                          className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {contractActionLoading ? "Accepting..." : "Accept Contract"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openContractConfirmModal("decline", selectedOrderForModal._id)}
+                          disabled={contractActionLoading}
+                          className="rounded-2xl border border-red-300 bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {contractActionLoading ? "Declining..." : "Decline Contract"}
+                        </button>
+                      </div>
+                    )}
+                    {contractActionError && selectedOrderForModal.status === "contract_sent" && (
+                      <p className="text-sm text-red-600">{contractActionError}</p>
+                    )}
+                    {contractActionMessage && contractActionOrderId === selectedOrderForModal._id && (
+                      <p className="text-sm text-emerald-700">{contractActionMessage}</p>
+                    )}
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() => openContractModal(selectedOrderForModal)}
+                        className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+                      >
+                        View Contract
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
                   <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Order Timeline</h5>
                   <p className="text-sm text-slate-500 mt-1">Status history for this order.</p>
@@ -2771,10 +2986,45 @@ function CustomerDashboard() {
                             </div>
                           )}
 
-                          <div className="mt-6 flex gap-3">
+                          {order.status === "contract_sent" && (
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              <button
+                                type="button"
+                                onClick={() => openContractConfirmModal("accept", order._id)}
+                                disabled={contractActionLoading}
+                                className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {contractActionLoading ? "Accepting..." : "Accept Contract"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openContractConfirmModal("decline", order._id)}
+                                disabled={contractActionLoading}
+                                className="rounded-2xl border border-red-300 bg-white px-4 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {contractActionLoading ? "Declining..." : "Decline Contract"}
+                              </button>
+                            </div>
+                          )}
+
+                          {contractActionError && order.status === "contract_sent" && (
+                            <p className="mt-3 text-sm text-red-600">{contractActionError}</p>
+                          )}
+                          {contractActionMessage && contractActionOrderId === order._id && (
+                            <p className="mt-3 text-sm text-emerald-700">{contractActionMessage}</p>
+                          )}
+
+                          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              onClick={() => openContractModal(order)}
+                              className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+                            >
+                              View Contract
+                            </button>
                             <button
                               onClick={() => setSelectedOrderForModal(order)}
-                              className="flex-1 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                              className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
                             >
                               View Full Details
                             </button>
@@ -2789,6 +3039,57 @@ function CustomerDashboard() {
         )}
 
 
+        <ContractModal
+          isOpen={showContractModal}
+          onClose={closeContractModal}
+          inspection={contractPreviewOrder}
+          contractData={contractPreviewData}
+          onAccept={() => contractPreviewOrder && openContractConfirmModal("accept", contractPreviewOrder._id)}
+          onDecline={() => contractPreviewOrder && openContractConfirmModal("decline", contractPreviewOrder._id)}
+          isLoading={contractActionLoading}
+        />
+
+        {/* CONTRACT CONFIRMATION MODAL */}
+        {contractConfirmModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={closeContractConfirmModal} />
+            <div className="relative bg-white rounded-3xl shadow-lg p-6 w-full max-w-md">
+              <h2 className="text-2xl font-bold mb-4">
+                {contractConfirmModal.action === "accept"
+                  ? "Confirm Contract Acceptance"
+                  : "Confirm Contract Decline"}
+              </h2>
+              <p className="text-sm text-slate-600 mb-6">
+                {contractConfirmModal.action === "accept"
+                  ? "Are you sure you want to accept this contract? This action cannot be undone."
+                  : "Are you sure you want to decline this contract? This will cancel your order."}
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={closeContractConfirmModal}
+                  className="px-4 py-2 rounded-lg bg-gray-100 text-slate-700 hover:bg-gray-200 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmContractAction}
+                  disabled={contractActionLoading}
+                  className={`px-4 py-2 rounded-lg text-white transition disabled:opacity-50 disabled:cursor-not-allowed ${
+                    contractConfirmModal.action === "accept"
+                      ? "bg-emerald-600 hover:bg-emerald-700"
+                      : "bg-red-600 hover:bg-red-700"
+                  }`}
+                >
+                  {contractActionLoading
+                    ? contractConfirmModal.action === "accept"
+                      ? "Accepting..."
+                      : "Declining..."
+                    : "Confirm"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,22 +1,9 @@
-import { X, Download, Printer } from "lucide-react";
+import { X } from "lucide-react";
 import logo from "@/assets/images/ACGCLOGO1.png";
+import approvedStamp from "@/assets/approved.png";
 
-function ContractModal({ isOpen, onClose, inspection, contractData }) {
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, isLoading, onDownload, onDownloadPNG, onPrint }) {
   if (!isOpen || !inspection || !contractData) return null;
-
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const handleDownload = () => {
-    const element = document.getElementById("contract-content");
-    if (!element) return;
-    
-    const printWindow = window.open("", "", "height=1000,width=1200");
-    printWindow.document.write(element.innerHTML);
-    printWindow.document.close();
-    printWindow.print();
-  };
 
   const formatCurrency = (value) => {
     return new Intl.NumberFormat("en-PH", {
@@ -26,28 +13,74 @@ function ContractModal({ isOpen, onClose, inspection, contractData }) {
     }).format(value || 0);
   };
 
+  const statusRaw = (contractData?.status || contractData?.contractStatus || contractData?.orderStatus || "").toString().toLowerCase();
+  const isAccepted = /accepted|contract_accepted/i.test(statusRaw);
+  const actionsAllowed = Boolean(onAccept || onDecline) && !/accept|accepted|decline|declined|cancel/i.test(statusRaw);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-5xl max-h-[90vh] overflow-auto bg-white rounded-2xl shadow-2xl flex flex-col">
         {/* Header with controls */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-gray-900">Generated Contract</h2>
-          <div className="flex items-center gap-3">
+        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex flex-wrap items-center justify-between gap-3 z-10">
+          <div className="min-w-0">
+            <h2 className="text-2xl font-bold text-gray-900">Generated Contract</h2>
+            {contractData?.status && (
+              <p className="mt-2 text-sm text-slate-500">
+                Status: <span className="font-semibold">{contractData.contractStatus || contractData.status.replace(/_/g, " ")}</span>
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {onDownload && (
+              <button
+                type="button"
+                onClick={onDownload}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white border text-slate-700 hover:bg-gray-50 transition"
+              >
+                Download PDF
+              </button>
+            )}
+            {onDownloadPNG && (
+              <button
+                type="button"
+                onClick={onDownloadPNG}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white border text-slate-700 hover:bg-gray-50 transition"
+              >
+                Download PNG
+              </button>
+            )}
+            {onPrint && (
+              <button
+                type="button"
+                onClick={onPrint}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white border text-slate-700 hover:bg-gray-50 transition"
+              >
+                Print Contract
+              </button>
+            )}
+            {actionsAllowed && onAccept && (
+              <button
+                type="button"
+                onClick={onAccept}
+                disabled={isLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isLoading ? "Accepting..." : "Accept Contract"}
+              </button>
+            )}
+            {actionsAllowed && onDecline && (
+              <button
+                type="button"
+                onClick={onDecline}
+                disabled={isLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-red-300 bg-red-600 text-white hover:bg-red-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isLoading ? "Declining..." : "Decline Contract"}
+              </button>
+            )}
             <button
-              onClick={handlePrint}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition"
-            >
-              <Printer size={18} />
-              Print
-            </button>
-            <button
-              onClick={handleDownload}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 transition"
-            >
-              <Download size={18} />
-              Download
-            </button>
-            <button
+              type="button"
               onClick={onClose}
               className="p-2 rounded-lg hover:bg-gray-100 transition"
             >
@@ -57,70 +90,114 @@ function ContractModal({ isOpen, onClose, inspection, contractData }) {
         </div>
 
         {/* Contract content */}
-        <div id="contract-content" className="flex-1 overflow-auto p-8 bg-white">
+        <div id="contract-content" className="relative flex-1 overflow-auto p-8 bg-white">
+          {isAccepted && (
+            <div className="">
+            </div>
+          )}
+
+          {isAccepted && (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
+              <img
+                src={approvedStamp}
+                alt="Approved stamp overlay"
+                style={{ transform: "rotate(-20deg)", width: "85%", maxWidth: 1000, opacity: 0.22 }}
+              />
+            </div>
+          )}
           {/* Header Section */}
           <div className="grid grid-cols-3 items-start mb-8 pb-8 border-b-2 border-gray-800">
             <div className="flex items-center gap-2">
               <img src={logo} alt="ACGC" className="w-16 h-12 object-contain" />
               <div>
                 <h1 className="font-bold text-lg">ACGC</h1>
-                <p className="text-xs text-gray-600">Glass & Aluminum Services</p>
+                <p className="text-sm text-gray-900">Glass & Aluminum Services</p>
               </div>
             </div>
             <div className="text-center">
-              <h2 className="text-xl font-bold tracking-wide">CUSTOMER ORDER CONTRACT</h2>
+              <h2 className="text-xl font-bold tracking-wide">ORDER CONTRACT AGREEMENT</h2>
             </div>
             <div className="text-right space-y-1 text-sm">
               <div>
-                <span className="font-semibold">CONTRACT NO:</span>
-                <span className="ml-2">{contractData.contractNumber}</span>
-              </div>
-              <div>
-                <span className="font-semibold">TRACKING NO:</span>
-                <span className="ml-2">{contractData.trackingNumber}</span>
+                <span className="font-semibold">TRACKING ID:</span>
+                <span className="ml-2">{contractData.orderNumber}</span>
               </div>
               <div>
                 <span className="font-semibold">DATE:</span>
                 <span className="ml-2">{contractData.contractDate}</span>
               </div>
-              <div className="mt-2">
-                <span className="inline-block bg-amber-700 text-white px-3 py-1 text-xs font-bold rounded">
-                  {contractData.status}
-                </span>
+              <div>
+                <span className="font-semibold">ORDER DATE:</span>
+                <span className="ml-2">{contractData.orderDate}</span>
               </div>
             </div>
           </div>
 
-          {/* Customer Information */}
-          <div className="mb-8">
-            <h3 className="text-sm font-bold uppercase tracking-wide mb-4 pb-2 border-b border-gray-300">
-              CUSTOMER INFORMATION
-            </h3>
-            <div className="grid grid-cols-2 gap-6">
-              <div className="border border-gray-300 rounded p-4">
-                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Customer Name</div>
-                <div className="font-semibold text-gray-900">{inspection.customer_name || "N/A"}</div>
+          {isAccepted && (
+            <div className="mb-8 rounded-3xl border border-emerald-200 bg-emerald-50 p-6 relative">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Contract Status</p>
+                  <p className="mt-2 text-2xl font-bold text-emerald-900">Accepted</p>
+                </div>
+                <div className="inline-flex items-center rounded-full border border-emerald-700 bg-white px-4 py-2 text-sm font-semibold text-emerald-900 uppercase tracking-[0.15em] shadow-sm">
+                  Online Acceptance
+                </div>
               </div>
-              <div className="border border-gray-300 rounded p-4">
-                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Email Address</div>
-                <div className="font-semibold text-gray-900">{inspection.customer_email || "N/A"}</div>
-              </div>
-              <div className="border border-gray-300 rounded p-4">
-                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Contact Number</div>
-                <div className="font-semibold text-gray-900">{inspection.phone || "N/A"}</div>
-              </div>
-              <div className="border border-gray-300 rounded p-4">
-                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Order Type</div>
-                <div className="font-semibold text-gray-900">
-                  {inspection.order_type === "online_order" ? "Online Order" : "Custom Fabrication"}
+
+              <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Accepted By</p>
+                  <p className="mt-2 font-semibold text-gray-900">{contractData.acceptedBy || contractData.customerName}</p>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Acceptance Date</p>
+                  <p className="mt-2 font-semibold text-gray-900">{contractData.acceptanceDate || "N/A"}</p>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Contract ID</p>
+                  <p className="mt-2 font-semibold text-gray-900">{contractData.contractId || contractData.orderNumber}</p>
                 </div>
               </div>
             </div>
-            <div className="mt-4 border border-gray-300 rounded p-4">
-              <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Project Address</div>
-              <div className="font-semibold text-gray-900">{inspection.site_address || "N/A"}</div>
+          )}
+
+          <h3 className="text-sm font-bold uppercase tracking-wide mb-4 pb-2 border-b border-gray-300">
+            CUSTOMER INFORMATION
+          </h3>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="border border-gray-300 rounded p-4">
+                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Customer Name</div>
+                <div className="font-semibold text-gray-900">{contractData.customerName || inspection.customer_name || "N/A"}</div>
+              </div>
+              <div className="border border-gray-300 rounded p-4">
+                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Email Address</div>
+                <div className="font-semibold text-gray-900">{contractData.customerEmail || inspection.customer_email || "N/A"}</div>
+              </div>
+              <div className="border border-gray-300 rounded p-4">
+                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Contact Number</div>
+                <div className="font-semibold text-gray-900">{contractData.customerPhone || inspection.customer_phone || "N/A"}</div>
+              </div>
+              <div className="border border-gray-300 rounded p-4">
+                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Order Type</div>
+                <div className="font-semibold text-gray-900">{inspection.order_type === "walk_in_customer" ? "Walk-in Customer" : "Online Customer"}</div>
+              </div>
             </div>
-          </div>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="border border-gray-300 rounded p-4">
+                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Site Address</div>
+                <div className="font-semibold text-gray-900">{contractData.projectLocation || inspection.shipping_address || "N/A"}</div>
+              </div>
+              <div className="border border-gray-300 rounded p-4">
+                <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Site Inspection Date</div>
+                <div className="font-semibold text-gray-900">{contractData.siteInspectionDate || "TBD"}</div>
+              </div>
+            </div>
+
+            <div className="mt-4 border border-gray-300 rounded p-4 bg-slate-50">
+              <div className="text-xs font-semibold text-gray-600 uppercase mb-1">Payment Terms</div>
+              <div className="font-semibold text-gray-900">{contractData.paymentTerms || "Standard payment terms apply."}</div>
+            </div>
 
           {/* Order Details Table */}
           <div className="mb-8">
@@ -132,32 +209,32 @@ function ContractModal({ isOpen, onClose, inspection, contractData }) {
                 <thead className="bg-gray-900 text-white">
                   <tr>
                     <th className="border border-gray-300 px-4 py-3 text-left font-bold">PRODUCT / DESCRIPTION</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left font-bold">CATEGORY</th>
                     <th className="border border-gray-300 px-4 py-3 text-center font-bold">QTY</th>
                     <th className="border border-gray-300 px-4 py-3 text-center font-bold">WIDTH</th>
-                    <th className="border border-gray-300 px-4 py-3 text-center font-bold">HEIGHT (MM)</th>
+                    <th className="border border-gray-300 px-4 py-3 text-center font-bold">HEIGHT</th>
+                    <th className="border border-gray-300 px-4 py-3 text-center font-bold">AREA</th>
                     <th className="border border-gray-300 px-4 py-3 text-right font-bold">UNIT PRICE</th>
-                    <th className="border border-gray-300 px-4 py-3 text-right font-bold">AMOUNT</th>
+                    <th className="border border-gray-300 px-4 py-3 text-right font-bold">SUBTOTAL</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {inspection.items && inspection.items.length > 0 ? (
-                    inspection.items.map((item, idx) => (
+                  {contractData.items && contractData.items.length > 0 ? (
+                    contractData.items.map((item, idx) => (
                       <tr key={idx}>
                         <td className="border border-gray-300 px-4 py-3">{item.name || "Item"}</td>
-                        <td className="border border-gray-300 px-4 py-3 text-center">{item.qty || 0}</td>
+                        <td className="border border-gray-300 px-4 py-3 text-sm text-slate-600">{item.category || "N/A"}</td>
+                        <td className="border border-gray-300 px-4 py-3 text-center">{item.quantity || 0}</td>
                         <td className="border border-gray-300 px-4 py-3 text-center">{item.width || "—"}</td>
                         <td className="border border-gray-300 px-4 py-3 text-center">{item.height || "—"}</td>
-                        <td className="border border-gray-300 px-4 py-3 text-right">
-                          {formatCurrency(item.unit_price)}
-                        </td>
-                        <td className="border border-gray-300 px-4 py-3 text-right font-semibold">
-                          {formatCurrency((item.unit_price || 0) * (item.qty || 1))}
-                        </td>
+                        <td className="border border-gray-300 px-4 py-3 text-center">{item.area || "—"}</td>
+                        <td className="border border-gray-300 px-4 py-3 text-right">{formatCurrency(item.unitPrice)}</td>
+                        <td className="border border-gray-300 px-4 py-3 text-right font-semibold">{formatCurrency(item.amount)}</td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="6" className="border border-gray-300 px-4 py-3 text-center text-gray-500">
+                      <td colSpan="8" className="border border-gray-300 px-4 py-3 text-center text-gray-500">
                         No items added
                       </td>
                     </tr>
@@ -167,7 +244,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData }) {
             </div>
             <div className="mt-4 flex justify-end">
               <div className="w-64">
-                <div className="flex justify-between py-2 border-b border-amber-700 font-bold text-amber-700">
+                <div className="flex justify-between py-2 border-b border-amber-700 font-bold text-yellow-600">
                   <span>SUBTOTAL</span>
                   <span>{formatCurrency(contractData.subtotal)}</span>
                 </div>
@@ -185,30 +262,33 @@ function ContractModal({ isOpen, onClose, inspection, contractData }) {
                 <h4 className="text-xs font-bold uppercase tracking-wide mb-4">FINANCIAL OVERVIEW</h4>
                 <div className="mb-4">
                   <div className="text-xs text-gray-300 uppercase mb-2">Total Project Cost</div>
-                  <div className="text-3xl font-bold">₱ {(contractData.subtotal / 1000).toFixed(1)}K</div>
+                  <div className="text-3xl font-bold">{formatCurrency(contractData.totalProjectCost)}</div>
                 </div>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span>Required Down Payment (50%)</span>
-                    <span className="font-bold">{formatCurrency(contractData.subtotal * 0.5)}</span>
+                    <span className="font-bold">{formatCurrency(contractData.downPayment)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Remaining Balance</span>
-                    <span className="font-bold">{formatCurrency(contractData.subtotal * 0.5)}</span>
+                    <span className="font-bold">{formatCurrency(contractData.totalProjectCost - contractData.downPayment)}</span>
                   </div>
-                  <div className="text-xs text-gray-400 mt-3">
+                  <div className="text-xs text-yellow-400 mt-3">
+                    {contractData.paymentTerms || "Balance due upon project completion unless otherwise agreed."}
+                  </div>
+                </div>
+                  <div className="text-xs text-yellow-400 mt-3">
                     Balance Due Upon Completion & Installation
                   </div>
                 </div>
               </div>
-            </div>
-
+            
             {/* Customer Agreement */}
             <div>
               <h3 className="text-sm font-bold uppercase tracking-wide mb-4 pb-2 border-b border-gray-300">
                 CUSTOMER AGREEMENT
               </h3>
-              <ul className="space-y-3 text-xs text-gray-700">
+              <ul className="space-y-3 text-sm text-gray-700">
                 <li className="flex gap-3">
                   <span className="text-amber-700 font-bold">•</span>
                   <span>
@@ -240,26 +320,46 @@ function ContractModal({ isOpen, onClose, inspection, contractData }) {
           {/* Authorization & Signatures */}
           <div className="mt-12 pt-8 border-t-2 border-gray-300">
             <h3 className="text-sm font-bold uppercase tracking-wide mb-6 pb-2 border-b border-gray-300">
-              AUTHORIZATION & SIGNATURES
+              {isAccepted ? "ONLINE ACCEPTANCE RECORD" : "AUTHORIZATION & SIGNATURES"}
             </h3>
-            <div className="grid grid-cols-2 gap-12">
-              <div>
-                <h4 className="text-xs font-bold uppercase mb-8">PREPARED BY - ACGC REPRESENTATIVE</h4>
-                <div className="mb-12 h-16 border-b border-gray-800"></div>
-                <div className="text-xs">
-                  <p className="font-semibold">ACGC Sales Representative</p>
-                  <p className="text-gray-600">ACGC Glass & Aluminum Services</p>
+            {isAccepted ? (
+              <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-6">
+                <p className="text-sm font-semibold text-emerald-900">This contract was approved digitally through the customer portal.</p>
+                <p className="mt-2 text-sm text-slate-700">No handwritten signature, signature image, or physical signature field is required. This approval record is the official proof of customer acceptance.</p>
+                <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Acceptance Method</p>
+                    <p className="mt-2 font-semibold text-gray-900">{contractData.acceptanceMethod || "Online Acceptance"}</p>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-200 bg-white p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Accepted By</p>
+                    <p className="mt-2 font-semibold text-gray-900">{contractData.acceptedBy || contractData.customerName}</p>
+                  </div>
                 </div>
               </div>
-              <div>
-                <h4 className="text-xs font-bold uppercase mb-8">CUSTOMER APPROVAL</h4>
-                <div className="mb-12 h-16 border-b border-gray-800"></div>
-                <div className="text-xs">
-                  <p className="font-semibold">{inspection.customer_name || "Customer Name"}</p>
-                  <p className="text-gray-600">Date: ___________________</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-12">
+                <div>
+                  <h4 className="text-xs font-bold uppercase mb-8">PREPARED BY - ACGC REPRESENTATIVE</h4>
+                  <div className="mb-12 h-16 border-b border-gray-800"></div>
+                  <div className="text-xs">
+                    <p className="font-semibold">ACGC Sales Representative</p>
+                    <p className="text-gray-600">ACGC Glass & Aluminum Services</p>
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold uppercase mb-8">CUSTOMER APPROVAL</h4>
+                  <div className="mb-12 h-16 border-b border-gray-800"></div>
+                  <div className="text-xs">
+                    <p className="font-semibold">{inspection.customer_name || "Customer Name"}</p>
+                    <p className="text-gray-600">Date: ___________________</p>
+                  </div>
+                </div>
+                {/* small approved stamp inside the accepted block */}
+                <div className="absolute top-4 right-4">
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Footer */}
@@ -269,21 +369,6 @@ function ContractModal({ isOpen, onClose, inspection, contractData }) {
           </div>
         </div>
       </div>
-
-      {/* Print styles */}
-      <style>{`
-        @media print {
-          body {
-            margin: 0;
-            padding: 0;
-          }
-          #contract-content {
-            margin: 0;
-            padding: 0;
-            background: white;
-          }
-        }
-      `}</style>
     </div>
   );
 }

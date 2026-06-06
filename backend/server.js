@@ -16,7 +16,7 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 const requiredEnvs = ["JWT_SECRET"];
 for (const envName of requiredEnvs) {
   if (!process.env[envName]) {
-    console.error(`✗ Missing required environment variable: ${envName}`);
+    console.error(`Missing required environment variable: ${envName}`);
     process.exit(1);
   }
 }
@@ -28,6 +28,7 @@ if (!process.env.MONGO_URI) {
 }
 
 const app = express();
+const PORT = parseInt(process.env.PORT, 10) || 5000;
 
 app.use((req, res, next) => {
   console.info(`[api] ${req.method} ${req.originalUrl}`);
@@ -43,12 +44,6 @@ app.use(
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Routes
-app.use("/api/auth", authRoutes);
-app.use("/api/products", productRoutes);
-app.use("/api/orders", orderRoutes);
-app.use("/api/uploads", uploadRoutes);
 
 // Serve uploaded files
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
@@ -82,6 +77,25 @@ app.get("/api/health", (req, res) => {
   return res.json(getHealthModel());
 });
 
+app.use("/api", (req, res, next) => {
+  if (mongoose.connection.readyState === 1) {
+    return next();
+  }
+
+  return res.status(503).json({
+    success: false,
+    message:
+      "Backend is running, but MongoDB is not connected yet. Start MongoDB and try again.",
+    health: getHealthModel(),
+  });
+});
+
+// Routes
+app.use("/api/auth", authRoutes);
+app.use("/api/products", productRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/uploads", uploadRoutes);
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error("[error]", err);
@@ -99,27 +113,37 @@ app.use((req, res) => {
   });
 });
 
-const PORT = parseInt(process.env.PORT, 10) || 5000;
-
 const shutdown = (reason, error) => {
-  console.error(`✗ Shutdown: ${reason}`);
+  console.error(`Shutdown: ${reason}`);
   if (error) {
     console.error(error);
   }
   process.exit(1);
 };
 
-connectMongo()
-  .then(() => {
-    console.log("✓ Connected to MongoDB");
-    app.listen(PORT, () => {
-      console.log(`✓ Server listening on http://localhost:${PORT}`);
-      console.log(`✓ API base URL: http://localhost:${PORT}/api`);
-    });
-  })
-  .catch((error) => {
-    shutdown("MongoDB connection error", error);
-  });
+const connectWithRetry = async (attempt = 1) => {
+  if (mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2) {
+    return;
+  }
+
+  try {
+    await connectMongo();
+    console.log("Connected to MongoDB");
+  } catch (error) {
+    const delayMs = Math.min(30000, 2000 * attempt);
+    console.error(
+      `MongoDB connection error. Retrying in ${Math.round(delayMs / 1000)}s.`,
+      error.message
+    );
+    setTimeout(() => connectWithRetry(attempt + 1), delayMs);
+  }
+};
+
+app.listen(PORT, () => {
+  console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`API base URL: http://localhost:${PORT}/api`);
+  connectWithRetry();
+});
 
 process.on("uncaughtException", (error) => {
   shutdown("Uncaught exception", error);
@@ -130,11 +154,11 @@ process.on("unhandledRejection", (reason) => {
 });
 
 process.on("SIGINT", () => {
-  console.log("✱ Received SIGINT, shutting down gracefully.");
+  console.log("Received SIGINT, shutting down gracefully.");
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  console.log("✱ Received SIGTERM, shutting down gracefully.");
+  console.log("Received SIGTERM, shutting down gracefully.");
   process.exit(0);
 });

@@ -4,14 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 5173",
+    "dev": "concurrently -k -n backend,frontend -c blue,green \"npm --prefix backend run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev:frontend\"",
+    "dev:frontend": "vite --host 127.0.0.1 --port 5173",
     "dev:no-hmr": "vite --host 127.0.0.1 --port 5173 --no-hmr",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "start:backend": "cd backend && npm start",
-    "dev:backend": "cd backend && npm run dev",
-    "dev:all": "concurrently \"cd backend && npm run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev\"",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:all": "npm run dev",
     "promote-admin": "cd backend && npm run promote-admin"
   },
   "dependencies": {
@@ -20,6 +21,8 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.40.0",
+    "html-to-image": "^1.11.13",
+    "jspdf": "^4.2.1",
     "lucide-react": "^1.17.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.7",

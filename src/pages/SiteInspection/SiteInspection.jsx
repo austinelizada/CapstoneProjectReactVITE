@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import toast, { Toaster } from 'react-hot-toast';
 
-import { getAdminOrders, generateContract, updateOrderInspection, updateOrderStatus, createInspection } from "@/api/orders";
+import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection } from "@/api/orders";
 import { getProducts } from "@/api/products";
 import { searchCustomers } from "@/api/users";
 import Sidebar from "../../components/layout/Sidebar";
@@ -65,6 +65,7 @@ function SiteInspection() {
   const [showContractModal, setShowContractModal] = useState(false);
   const [contractData, setContractData] = useState(null);
   const [contractInspection, setContractInspection] = useState(null);
+  
   const today = new Date().toISOString().split("T")[0];
 
   const fetchSiteInspections = async () => {
@@ -84,6 +85,7 @@ function SiteInspection() {
       setInspectionsLoading(false);
     }
   };
+
 
   const resetNewInspectionForm = () => {
     setNewInspection(getDefaultInspection());
@@ -516,6 +518,19 @@ const buildInspectionPayload = async (payload) => {
   useEffect(() => {
     fetchSiteInspections();
     fetchProducts();
+    // If navigated with ?view=orderId, open that inspection
+    const params = new URLSearchParams(window.location.search || "");
+    const viewId = params.get("view");
+    if (viewId) {
+      (async () => {
+        try {
+          const res = await getAdminOrder(viewId);
+          if (res && res.order) setViewInspection(res.order);
+        } catch (err) {
+          console.error("Failed to load order for view param", err);
+        }
+      })();
+    }
   }, []);
 
   useEffect(() => {
@@ -592,25 +607,103 @@ const buildInspectionPayload = async (payload) => {
     setViewInspection(inspection);
   };
 
-  const generateContractData = (inspection) => {
-    if (!inspection) return null;
+  const validateContractOrder = (order) => {
+    const errors = [];
+    const customerName = order.customer_name || `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim();
+    if (!customerName) errors.push("Customer name is required.");
+    if (!order.customer_email && !order.customer?.email) errors.push("Customer email is required.");
+    if (!order.customer_phone && !order.customer?.phone) errors.push("Customer contact number is required.");
+    if (!order.shipping_address) errors.push("Order shipping address is required.");
+    if (!Array.isArray(order.items) || order.items.length === 0) errors.push("Order must contain at least one product.");
 
-    // Calculate total from items
-    const subtotal = (inspection.items || []).reduce((sum, item) => {
-      return sum + ((item.unit_price || 0) * (item.qty || 1));
+    if (Array.isArray(order.items)) {
+      order.items.forEach((item, index) => {
+        if (!item.name && !item.product_id?.name) {
+          errors.push(`Product at row ${index + 1} must have a name.`);
+        }
+        if (!item.unit_price && item.unit_price !== 0) {
+          errors.push(`Product at row ${index + 1} must have a unit price.`);
+        }
+        if (!item.quantity || item.quantity < 1) {
+          errors.push(`Product at row ${index + 1} must have a quantity of at least 1.`);
+        }
+      });
+    }
+
+    const calculatedTotal = (order.items || []).reduce((sum, item) => {
+      const unitPrice = Number(item.unit_price) || 0;
+      const quantity = Number(item.quantity) || 1;
+      return sum + unitPrice * quantity;
     }, 0);
 
-    // Generate unique contract number
+    if (calculatedTotal <= 0) {
+      errors.push("Calculated product total must be greater than zero.");
+    }
+
+    return errors;
+  };
+
+  const generateContractData = (order) => {
+    if (!order) return null;
+
+    const customerName = order.customer_name || `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim() || "Customer";
+    const customerEmail = order.customer_email || order.customer?.email || "N/A";
+    const customerPhone = order.customer_phone || order.customer?.phone || "N/A";
+    const customerType = order.order_type === "walk_in_customer" ? "Walk-in Customer" : "Online Customer";
+    const orderNumber = order.tracking || `ORD-${String(order._id || "").slice(-8).toUpperCase()}`;
+    const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "N/A";
+    const siteInspectionDate = order.inspection_date ? new Date(order.inspection_date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "TBD";
+    const projectLocation = order.shipping_address || "N/A";
+    const paymentTerms = order.payment_terms || "Standard payment terms apply.";
+    const contractTerms = order.contract_terms || "The terms and conditions outlined by ACGC Glass & Aluminum Services apply to this agreement.";
+    const totalProjectCost = Number(order.contract_amount || order.total_amount || 0);
+    const downPayment = Math.round((totalProjectCost * 0.5) * 100) / 100;
     const contractNumber = `ACGC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
-    const trackingNumber = `TRK-${inspection._id?.slice(-4).toUpperCase() || Math.random().toString(36).substring(2, 8).toUpperCase()}-GL5`;
+    const trackingNumber = `TRK-${order.tracking || (order._id?.slice(-4).toUpperCase() || Math.random().toString(36).substring(2, 8).toUpperCase())}`;
     const contractDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
+    const items = (order.items || []).map((item, index) => {
+      const itemName = item.name || item.product_id?.name || `Item ${index + 1}`;
+      const quantity = Number(item.quantity) || 1;
+      const unitPrice = Number(item.unit_price) || 0;
+      const width = Number(item.width) || 0;
+      const height = Number(item.height) || 0;
+      const area = Number(item.area) || Math.round(((width * height) / 144) * 100) / 100;
+      const amount = item.is_estimate && Number(item.estimated_price) ? Number(item.estimated_price) : quantity * unitPrice;
+      return {
+        name: itemName,
+        quantity,
+        width,
+        height,
+        area,
+        unitPrice,
+        amount,
+        category: item.product_id?.category || item.product_type || "N/A",
+      };
+    });
+
+    const subtotal = items.reduce((sum, item) => sum + item.amount, 0);
+
     return {
+      customerName,
+      customerType,
+      customerEmail,
+      customerPhone,
+      orderNumber,
+      orderDate,
+      siteInspectionDate,
+      projectLocation,
+      totalProjectCost,
+      downPayment,
+      paymentTerms,
+      contractTerms,
       contractNumber,
       trackingNumber,
       contractDate,
-      status: "PENDING",
+      status: (order.contract_status || "pending").toUpperCase(),
       subtotal,
+      items,
+      orderStatus: order.status,
     };
   };
 
@@ -618,22 +711,33 @@ const buildInspectionPayload = async (payload) => {
     if (!orderId) return;
     try {
       setGeneratingId(orderId);
-      
-      // Find the inspection from the list
-      const inspection = inspections.find((i) => (i._id || i.id) === orderId);
-      if (!inspection) {
-        toast.error("Inspection not found");
+
+      const { order } = await getAdminOrder(orderId);
+      if (!order) {
+        toast.error("Order not found");
         return;
       }
 
-      // Generate contract data
-      const contract = generateContractData(inspection);
-      
-      // Set state to show contract modal
-      setContractInspection(inspection);
+      const validationErrors = validateContractOrder(order);
+      if (validationErrors.length > 0) {
+        toast.error(validationErrors.join(" "));
+        return;
+      }
+
+      const contract = generateContractData(order);
+      if (!contract) {
+        toast.error("Unable to build contract data.");
+        return;
+      }
+
+      await generateContract(orderId, {
+        contract_terms: order.contract_terms || contract.contractTerms,
+        contract_amount: order.contract_amount || contract.totalProjectCost,
+      });
+
+      setContractInspection(order);
       setContractData(contract);
       setShowContractModal(true);
-      
       toast.success("Contract generated successfully!");
     } catch (err) {
       console.error("Generate contract failed", err);
@@ -820,7 +924,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
         inspection_date: editInspection.inspection_date || undefined,
         inspection_notes: editInspection.inspection_notes || undefined,
         issues_found: editInspection.issues_found || undefined,
-        inspection_status: editInspection.inspection_status || undefined,
+        inspection_status: editInspection.inspection_date ? "scheduled" : editInspection.inspection_status || undefined,
         shipping_address: editInspection.siteAddress || undefined,
         payment_terms: editInspection.payment_terms || undefined,
         items: (editInspection.items || []).map((item) => {
@@ -884,17 +988,17 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
   }, [isSidebarOpen]);
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} />
 
-      <div className="flex-1">
+      <div className="flex-1 min-h-0 flex flex-col">
         <Navbar
           toggleSidebar={() =>
             setIsSidebarOpen(!isSidebarOpen)
           }
         />
 
-        <main className="p-6">
+        <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
           {/* HEADER */}
 
@@ -914,46 +1018,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
             </div>
           </div>
 
-          {/* STATS */}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-
-            <div className="bg-white rounded-3xl p-6 shadow">
-              <p className="text-gray-500">
-
-                Total Inspections
-              </p>
-
-              <h2 className="text-4xl font-bold mt-2">
-                {inspections.length}
-              </h2>
-            </div>
-
-            <div className="bg-white rounded-3xl p-6 shadow">
-              <p className="text-gray-500">
-                Pending
-              </p>
-
-              <h2 className="text-4xl font-bold text-yellow-500 mt-2">
-                {inspections.filter((inspection) =>
-                  inspection.inspection_status === "pending" || inspection.status === "site_inspection"
-                ).length}
-              </h2>
-            </div>
-
-            <div className="bg-white rounded-3xl p-6 shadow">
-              <p className="text-gray-500">
-                Completed
-              </p>
-
-              <h2 className="text-4xl font-bold text-green-600 mt-2">
-                {inspections.filter((inspection) =>
-                  inspection.inspection_status === "completed" || inspection.status === "completed"
-                ).length}
-              </h2>
-            </div>
-
-          </div>
 
           {/* CANCEL CONFIRMATION MODAL */}
           {cancelConfirm.open && (
@@ -1105,7 +1170,13 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                       const orderType = inspection.order_type === "walk_in_customer" ? "Walk-in" : "Online";
                       const address = inspection.shipping_address || "—";
                       const date = inspection.createdAt ? new Date(inspection.createdAt).toLocaleDateString() : "—";
-                      const statusLabel = inspection.status === "site_inspection" ? "Site Inspection" : inspection.status?.replace(/_/g, " ") || "Pending";
+                      const statusLabel = inspection.inspection_status
+                        ? inspection.inspection_status
+                            .replace(/_/g, " ")
+                            .replace(/\b\w/g, (c) => c.toUpperCase())
+                        : inspection.status === "site_inspection"
+                          ? "Site Inspection"
+                          : inspection.status?.replace(/_/g, " ") || "Pending";
                       const estimatedCost = inspection.total_amount ? `₱${inspection.total_amount.toLocaleString()}` : "—";
 
                       return (

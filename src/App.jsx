@@ -6,6 +6,7 @@ import Signup from "./pages/Signup/Signup";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import TrackOrder from "./pages/TrackOrder/TrackOrder";
 import SiteInspection from "./pages/SiteInspection/SiteInspection";
+import Notifications from "./pages/Notifications/Notifications";
 import Transactions from "./pages/Transactions/Transactions";
 import ProgressMonitor from "./pages/ProgressMonitor/ProgressMonitor";
 import Product from "./pages/Product/Product";
@@ -48,6 +49,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <SiteInspection />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/notifications"
+            element={
+              <ProtectedRoute>
+                <Notifications />
               </ProtectedRoute>
             }
           />

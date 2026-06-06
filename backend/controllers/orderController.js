@@ -234,14 +234,36 @@ export const getAdminOrders = async (req, res) => {
     if (contract_status) filter.contract_status = contract_status;
 
     const orders = await Order.find(filter)
-      .populate("items.product_id", "image_url image images name")
-      .populate("customer", "first_name last_name email phone street_address")
+      .populate("items.product_id", "image_url image images name category product_type")
+      .populate("customer", "first_name last_name email phone street_address city province zip_code")
       .sort({ createdAt: -1 });
 
     res.json({ success: true, orders });
   } catch (error) {
     console.error("Get admin orders error:", error);
     res.status(500).json({ success: false, message: "Unable to fetch orders", error: error.message });
+  }
+};
+
+export const getAdminOrderById = async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Admin access required" });
+    }
+
+    const { orderId } = req.params;
+    const order = await Order.findById(orderId)
+      .populate("customer", "first_name last_name email phone street_address city province zip_code")
+      .populate("items.product_id", "image_url image images name category product_type");
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error("Get admin order error:", error);
+    res.status(500).json({ success: false, message: "Unable to fetch order", error: error.message });
   }
 };
 
@@ -274,6 +296,45 @@ export const updateOrderStatus = async (req, res) => {
   }
 };
 
+export const respondToContract = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { action } = req.body;
+
+    if (!action || !["accept", "decline"].includes(action)) {
+      return res.status(400).json({ success: false, message: "Contract action must be accept or decline." });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (!order.customer || order.customer.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Not authorized to respond to this contract." });
+    }
+
+    if (order.status !== "contract_sent") {
+      return res.status(400).json({ success: false, message: "Contract cannot be responded to at this stage." });
+    }
+
+    if (action === "accept") {
+      order.contract_status = "accepted";
+      order.status = "contract_accepted";
+    } else {
+      order.contract_status = "declined";
+      order.status = "cancelled";
+    }
+
+    await order.save();
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error("Respond to contract error:", error);
+    res.status(500).json({ success: false, message: "Unable to update contract response", error: error.message });
+  }
+};
+
 export const updateOrderInspection = async (req, res) => {
   try {
     if (req.user.role !== "admin") {
@@ -288,7 +349,12 @@ export const updateOrderInspection = async (req, res) => {
     };
 
     if (inspection_status !== undefined) updateData.inspection_status = inspection_status;
-    if (inspection_date !== undefined) updateData.inspection_date = inspection_date;
+    if (inspection_date !== undefined) {
+      updateData.inspection_date = inspection_date;
+      if (inspection_status === undefined || inspection_status === null) {
+        updateData.inspection_status = "scheduled";
+      }
+    }
     if (inspection_notes !== undefined) updateData.inspection_notes = inspection_notes;
     if (issues_found !== undefined) updateData.issues_found = issues_found;
     if (shipping_address !== undefined) updateData.shipping_address = normalizeAddress(shipping_address || "");

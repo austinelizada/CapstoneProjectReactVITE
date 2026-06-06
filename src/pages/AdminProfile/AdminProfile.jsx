@@ -163,15 +163,15 @@ function AdminProfile() {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} />
 
-      <div className="flex-1">
+      <div className="flex-1 min-h-0 flex flex-col">
         <Navbar
           toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         />
 
-        <main className="p-6">
+        <main className="flex-1 min-h-0 overflow-y-auto p-6">
           <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
             <h1 className="text-3xl font-bold">Admin Profile</h1>
             <p className="text-red-100 mt-2">

@@ -6,7 +6,7 @@ import {
   ShieldCheck,
   Package,
 } from "lucide-react";
-import { getOrders, updateOrderStatus } from "@/api/orders";
+import { getOrders, getAdminOrders, updateOrderStatus } from "@/api/orders";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -88,6 +88,11 @@ function Dashboard() {
     order: null,
   });
 
+  const [contractNotifications, setContractNotifications] = useState([]);
+  const [contractNotificationsLoading, setContractNotificationsLoading] = useState(false);
+  const [contractPage, setContractPage] = useState(1);
+  const contractsPerPage = 5;
+
   const showToast = (message, type = "success") => {
     setToast({ open: true, message, type });
     setTimeout(() => {
@@ -130,6 +135,8 @@ function Dashboard() {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
 
+  
+
   useEffect(() => {
     const fetchOrders = async () => {
       setOrdersLoading(true);
@@ -145,7 +152,38 @@ function Dashboard() {
     };
 
     fetchOrders();
+    fetchContractNotifications();
   }, []);
+
+  async function fetchContractNotifications() {
+    setContractNotificationsLoading(true);
+    try {
+      const [acceptedResp, declinedResp] = await Promise.all([
+        getAdminOrders({ contract_status: "accepted" }),
+        getAdminOrders({ contract_status: "declined" }),
+      ]);
+
+      const notifications = [
+        ...(acceptedResp.orders || []).map((order) => ({
+          ...order,
+          notificationType: "accepted",
+          read: false,
+        })),
+        ...(declinedResp.orders || []).map((order) => ({
+          ...order,
+          notificationType: "declined",
+          read: false,
+        })),
+      ].sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+
+      setContractNotifications(notifications);
+    } catch (error) {
+      console.error("Failed to load contract notifications:", error);
+      setContractNotifications([]);
+    } finally {
+      setContractNotificationsLoading(false);
+    }
+  };
 
   const handleApproveOrder = async (order) => {
     setActionLoading(true);
@@ -212,17 +250,17 @@ function Dashboard() {
   const totalPages = Math.max(1, Math.ceil(orderRequests.length / ordersPerPage));
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} />
 
-      <div className="flex-1">
+      <div className="flex-1 min-h-0 flex flex-col">
         <Navbar
           toggleSidebar={() =>
             setIsSidebarOpen(!isSidebarOpen)
           }
         />
 
-        <main className="p-6">
+        <main className="flex-1 min-h-0 overflow-y-auto p-6">
           {toast.open && (
             <div className="fixed right-6 top-6 z-50 w-full max-w-sm rounded-2xl border px-4 py-3 shadow-xl transition duration-200 ease-out bg-white"
               role="status"
@@ -280,6 +318,89 @@ function Dashboard() {
               <p className="text-blue-600 text-sm mt-2">
                 1 currently active
               </p>
+            </div>
+
+          </div>
+
+          {/* Quick Actions */}
+
+          <div className="bg-white rounded-3xl shadow mt-6 p-6">
+
+            <h2 className="text-xl font-bold mb-6">
+              Quick Actions
+            </h2>
+
+            <p className="text-gray-500 mb-6">
+              Shortcuts
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+
+              <button
+                onClick={() =>
+                  navigate("/site-inspection")
+                }
+                className="bg-red-50 border border-red-200 rounded-2xl p-6 text-left hover:bg-red-100 transition"
+              >
+                <ClipboardCheck
+                  className="text-red-600 mb-3"
+                  size={32}
+                />
+
+                <h3 className="font-bold">
+                  New Inspection
+                </h3>
+
+                <p className="text-gray-500 text-sm mt-2">
+                  Site inspection
+                </p>
+              </button>
+
+              <button className="bg-blue-50 border border-blue-200 rounded-2xl p-6 text-left hover:bg-blue-100 transition">
+                <FolderOpen
+                  className="text-blue-600 mb-3"
+                  size={32}
+                />
+
+                <h3 className="font-bold">
+                  View Projects
+                </h3>
+
+                <p className="text-gray-500 text-sm mt-2">
+                  Progress monitor
+                </p>
+              </button>
+
+              <button className="bg-green-50 border border-green-200 rounded-2xl p-6 text-left hover:bg-green-100 transition">
+                <ShieldCheck
+                  className="text-green-600 mb-3"
+                  size={32}
+                />
+
+                <h3 className="font-bold">
+                  View Warranty
+                </h3>
+
+                <p className="text-gray-500 text-sm mt-2">
+                  Warranties
+                </p>
+              </button>
+
+              <button className="bg-purple-50 border border-purple-200 rounded-2xl p-6 text-left hover:bg-purple-100 transition">
+                <Package
+                  className="text-purple-600 mb-3"
+                  size={32}
+                />
+
+                <h3 className="font-bold">
+                  Add Product
+                </h3>
+
+                <p className="text-gray-500 text-sm mt-2">
+                  Inventory
+                </p>
+              </button>
+
             </div>
 
           </div>
@@ -487,89 +608,6 @@ function Dashboard() {
                 </button>
 
               </div>
-
-            </div>
-
-          </div>
-
-          {/* Quick Actions */}
-
-          <div className="bg-white rounded-3xl shadow mt-6 p-6">
-
-            <h2 className="text-xl font-bold mb-6">
-              Quick Actions
-            </h2>
-
-            <p className="text-gray-500 mb-6">
-              Shortcuts
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-
-              <button
-                onClick={() =>
-                  navigate("/site-inspection")
-                }
-                className="bg-red-50 border border-red-200 rounded-2xl p-6 text-left hover:bg-red-100 transition"
-              >
-                <ClipboardCheck
-                  className="text-red-600 mb-3"
-                  size={32}
-                />
-
-                <h3 className="font-bold">
-                  New Inspection
-                </h3>
-
-                <p className="text-gray-500 text-sm mt-2">
-                  Site inspection
-                </p>
-              </button>
-
-              <button className="bg-blue-50 border border-blue-200 rounded-2xl p-6 text-left hover:bg-blue-100 transition">
-                <FolderOpen
-                  className="text-blue-600 mb-3"
-                  size={32}
-                />
-
-                <h3 className="font-bold">
-                  View Projects
-                </h3>
-
-                <p className="text-gray-500 text-sm mt-2">
-                  Progress monitor
-                </p>
-              </button>
-
-              <button className="bg-green-50 border border-green-200 rounded-2xl p-6 text-left hover:bg-green-100 transition">
-                <ShieldCheck
-                  className="text-green-600 mb-3"
-                  size={32}
-                />
-
-                <h3 className="font-bold">
-                  View Warranty
-                </h3>
-
-                <p className="text-gray-500 text-sm mt-2">
-                  Warranties
-                </p>
-              </button>
-
-              <button className="bg-purple-50 border border-purple-200 rounded-2xl p-6 text-left hover:bg-purple-100 transition">
-                <Package
-                  className="text-purple-600 mb-3"
-                  size={32}
-                />
-
-                <h3 className="font-bold">
-                  Add Product
-                </h3>
-
-                <p className="text-gray-500 text-sm mt-2">
-                  Inventory
-                </p>
-              </button>
 
             </div>
 

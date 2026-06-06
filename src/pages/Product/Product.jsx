@@ -571,10 +571,10 @@ function Products() {
 
 
   return (
-    <div className="flex min-h-screen bg-gray-100">
+    <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} />
 
-      <div className="flex-1">
+      <div className="flex-1 min-h-0 flex flex-col">
 
         <Navbar
           toggleSidebar={() =>
@@ -584,7 +584,7 @@ function Products() {
           }
         />
 
-        <main className="p-6">
+        <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
           {/* HEADER */}
 
