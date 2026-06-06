@@ -211,6 +211,55 @@ function SiteInspection() {
     return productId ? String(productId) : "";
   };
 
+  const getEditItemFromOrderItem = (item) => {
+    const normalizedProductId = normalizeProductId(item.product_id || item._id);
+    const selectedProduct = products.find((p) => String(p._id || p.id) === normalizedProductId) || null;
+    const quantity = item.quantity !== undefined && item.quantity !== null
+      ? Number(item.quantity)
+      : item.qty !== undefined && item.qty !== null
+        ? Number(item.qty)
+        : 1;
+    const providedWidth = item.width !== undefined && item.width !== null ? Number(item.width) : 0;
+    const providedHeight = item.height !== undefined && item.height !== null ? Number(item.height) : 0;
+    const widthValue = providedWidth > 0 ? providedWidth : Number(selectedProduct?.width || 0);
+    const heightValue = providedHeight > 0 ? providedHeight : Number(selectedProduct?.height || 0);
+    const areaValue = item.area !== undefined && item.area !== null && Number(item.area) > 0
+      ? Number(item.area)
+      : Math.round(((widthValue * heightValue * quantity) / 144) * 100) / 100;
+    const productUnitPrice = deriveUnitPriceForPayload({
+      ...item,
+      product_id: normalizedProductId,
+      unit_price: item.unit_price,
+    });
+    const unitPriceValue = item.unit_price !== undefined && item.unit_price !== null && Number(item.unit_price) > 0
+      ? Number(item.unit_price)
+      : productUnitPrice;
+    const estimationMode = item.is_estimate ? (item.estimation_mode || "auto") : "auto";
+
+    return {
+      ...item,
+      id: item.id || item._id || `${Date.now()}-${Math.random()}`,
+      product_id: normalizedProductId,
+      name: item.name || selectedProduct?.name || "",
+      qty: quantity,
+      quantity,
+      width: widthValue ? String(widthValue) : "",
+      height: heightValue ? String(heightValue) : "",
+      area: areaValue,
+      unit_price: unitPriceValue,
+      unit: item.unit || selectedProduct?.unit || "sqft",
+      estimation_mode: estimationMode,
+      manual_estimated_total: item.manual_estimated_total ?? (estimationMode === "manual" ? String(item.estimated_price || "") : ""),
+      category: selectedProduct?.category || item.category || item.product_type || "",
+      product_type: selectedProduct?.product_type || item.product_type || "",
+      base_price: selectedProduct?.base_price || item.base_price || 0,
+      price_per_sqft: selectedProduct?.price_per_sqft || item.price_per_sqft || 0,
+      price_per_blade: selectedProduct?.price_per_blade || item.price_per_blade || 0,
+      customization_fee: selectedProduct?.customization_fee || item.customization_fee || 0,
+      variant: selectedProduct?.variant || item.variant || "",
+    };
+  };
+
   const calculateItemArea = (item) => {
     const width = Number(item.width) || 0;
     const height = Number(item.height) || 0;
@@ -643,6 +692,12 @@ const buildInspectionPayload = async (payload) => {
     return errors;
   };
 
+  const hasValidInspectionDate = (order) => {
+    if (!order?.inspection_date) return false;
+    const inspectionDate = new Date(order.inspection_date);
+    return !Number.isNaN(inspectionDate.getTime());
+  };
+
   const generateContractData = (order) => {
     if (!order) return null;
 
@@ -718,6 +773,11 @@ const buildInspectionPayload = async (payload) => {
         return;
       }
 
+      if (!hasValidInspectionDate(order)) {
+        toast.error("A Site Inspection Date must be scheduled before a contract can be generated.");
+        return;
+      }
+
       const validationErrors = validateContractOrder(order);
       if (validationErrors.length > 0) {
         toast.error(validationErrors.join(" "));
@@ -780,27 +840,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
         inspection_notes: inspection.inspection_notes || "",
         issues_found: inspection.issues_found || "",
         inspection_status: inspection.inspection_status || "pending",
-        items: (inspection.items || []).map((item) => {
-          const normalizedProductId = normalizeProductId(item.product_id);
-          const area = item.area !== undefined && item.area !== null ? item.area : calculateItemArea(item);
-          const qty = item.quantity !== undefined && item.quantity !== null ? item.quantity : item.qty || 1;
-          const estimationMode = item.estimation_mode || (item.manual_estimated_total !== undefined ? "manual" : "auto");
-          return {
-            ...item,
-            id: item.id || item._id || `${Date.now()}-${Math.random()}`,
-            product_id: normalizedProductId,
-            qty,
-            quantity: qty,
-            width: item.width !== undefined && item.width !== null ? String(item.width) : "",
-            height: item.height !== undefined && item.height !== null ? String(item.height) : "",
-            area,
-            unit_price: item.unit_price !== undefined && item.unit_price !== null ? item.unit_price : 0,
-            unit: item.unit || item.product_id?.unit || "sqft",
-            estimation_mode: estimationMode,
-            manual_estimated_total: item.manual_estimated_total ?? (estimationMode === "manual" ? String(item.estimated_price || "") : ""),
-          };
-        }),
-        customerId: inspection.customer?._id || null,
+        items: (inspection.items || []).map((item) => getEditItemFromOrderItem(item)),        customerId: inspection.customer?._id || null,
       });
     } else {
       // fallback: open an empty editor
@@ -864,17 +904,29 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
   const closeCancelModal = () => setCancelConfirm({ open: false, id: null });
 
   const [restoreConfirm, setRestoreConfirm] = useState({ open: false, id: null });
+  const [contractConfirm, setContractConfirm] = useState({ open: false, id: null });
 
   const requestRestore = (orderId) => {
     setRestoreConfirm({ open: true, id: orderId });
   };
 
+  const requestGenerateContract = (orderId) => {
+    setContractConfirm({ open: true, id: orderId });
+  };
+
   const closeRestoreModal = () => setRestoreConfirm({ open: false, id: null });
+  const closeContractModal = () => setContractConfirm({ open: false, id: null });
 
   const handleConfirmRestore = async () => {
     const orderId = restoreConfirm.id;
     setRestoreConfirm({ open: false, id: null });
     await handleRestore(orderId);
+  };
+
+  const handleConfirmGenerateContract = async () => {
+    const orderId = contractConfirm.id;
+    setContractConfirm({ open: false, id: null });
+    await handleGenerateContract(orderId);
   };
 
   const handleRestore = async (orderId) => {
@@ -1062,6 +1114,26 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
             </div>
           )}
 
+          {contractConfirm.open && (
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+              <div className="bg-white w-full max-w-md rounded-3xl p-6">
+                <h3 className="text-xl font-bold mb-4">Generate Contract</h3>
+                <p className="text-gray-600 mb-6">A contract will be generated for this order. Do you want to continue?</p>
+
+                <div className="flex justify-end gap-3">
+                  <button onClick={closeContractModal} className="px-4 py-2 bg-gray-200 rounded-xl">Cancel</button>
+                  <button
+                    onClick={handleConfirmGenerateContract}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-xl"
+                    disabled={generatingId === contractConfirm.id}
+                  >
+                    {generatingId === contractConfirm.id ? 'Generating...' : 'Confirm'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <Toaster position="bottom-right" />
 
           {/* SEARCH */}
@@ -1206,12 +1278,12 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                               >
                                 <Eye size={23} />
                               </button>
-                              {activeTab !== 'cancelled' && (
+                              {activeTab !== 'cancelled' && hasValidInspectionDate(inspection) && (
                                 <button
                                   title="Generate Contract"
                                   aria-label="Generate contract"
                                   className="text-emerald-600 hover:text-emerald-800"
-                                  onClick={() => handleGenerateContract(inspection._id || inspection.id)}
+                                  onClick={() => requestGenerateContract(inspection._id || inspection.id)}
                                   disabled={generatingId === (inspection._id || inspection.id)}
                                 >
                                   {generatingId === (inspection._id || inspection.id) ? (

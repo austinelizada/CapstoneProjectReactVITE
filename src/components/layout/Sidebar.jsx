@@ -27,12 +27,12 @@ function Sidebar({ isOpen }) {
   return (
     <>
       <aside
-        className={`bg-white border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${
+        className={`bg-white border-gray-300 border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${
           isOpen ? "w-72" : "w-20"
         }`}
       >
         {/* LOGO */}
-        <div className="flex items-center gap-3 p-5 border-b">
+        <div className="flex items-center gap-1 p-5 border-b">
           <img
             src={logo}
             alt="ACGC Logo"
@@ -51,11 +51,11 @@ function Sidebar({ isOpen }) {
         </div>
 
         {/* MENU */}
-        <nav className="p-3 space-y-2">
+        <nav className="p-1 space-y-4 gap-1 mt-4 px-2 flex flex-col">
 
           <MenuItem
             to="/dashboard"
-            icon={<LayoutDashboard size={20} />}
+            icon={<LayoutDashboard size={23} />}
             label="Dashboard"
             isOpen={isOpen}
             active={location.pathname === "/dashboard"}
@@ -63,7 +63,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/site-inspection"
-            icon={<MapPinned size={20} />}
+            icon={<MapPinned size={23} />}
             label="Site Inspection"
             isOpen={isOpen}
             active={location.pathname === "/site-inspection"}
@@ -71,7 +71,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/transactions"
-            icon={<ReceiptText size={20} />}
+            icon={<ReceiptText size={23} />}
             label="Transactions"
             isOpen={isOpen}
             active={location.pathname === "/transactions"}
@@ -79,7 +79,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/progress-monitor"
-            icon={<BarChart3 size={20} />}
+            icon={<BarChart3 size={23} />}
             label="Progress Monitor"
             isOpen={isOpen}
             active={location.pathname === "/progress-monitor"}
@@ -87,7 +87,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/product"
-            icon={<Package size={20} />}
+            icon={<Package size={23} />}
             label="Products"
             isOpen={isOpen}
             active={location.pathname === "/product"}
@@ -95,7 +95,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/profile"
-            icon={<UserCog size={20} />}
+            icon={<UserCog size={23} />}
             label="Admin Profile"
             isOpen={isOpen}
             active={location.pathname === "/profile"}
@@ -103,7 +103,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/settings"
-            icon={<Settings size={20} />}
+            icon={<Settings size={23} />}
             label="Settings"
             isOpen={isOpen}
             active={location.pathname === "/settings"}
@@ -113,9 +113,9 @@ function Sidebar({ isOpen }) {
           <button
             onClick={() => setShowLogoutModal(true)}
             title="Logout"
-            className={`flex w-full items-center gap-3 p-3 rounded-xl text-red-600 hover:bg-red-50 transition-all duration-300 ease-in-out ${isOpen ? "justify-start" : "justify-center"}`}
+            className={`flex w-full items-center gap-3 p-3 rounded-xl text-red-500 hover:bg-red-50 transition-all duration-300 ease-in-out ${isOpen ? "justify-start" : "justify-center"}`}
           >
-            <LogOut size={20} />
+            <LogOut size={23} />
             <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
               Logout
             </span>

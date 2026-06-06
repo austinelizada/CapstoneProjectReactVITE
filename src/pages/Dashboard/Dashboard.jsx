@@ -290,7 +290,7 @@ function Dashboard() {
 
           {/* Statistics */}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6">
 
             <div className="bg-white rounded-3xl p-6 shadow">
               <p className="text-gray-500">
@@ -302,7 +302,7 @@ function Dashboard() {
               </h2>
 
               <p className="text-green-600 text-sm mt-2">
-                ↑ 2 this month
+                ↑ this month
               </p>
             </div>
 
@@ -324,79 +324,79 @@ function Dashboard() {
 
           {/* Quick Actions */}
 
-          <div className="bg-white rounded-3xl shadow mt-6 p-6">
+          <div className="bg-white rounded-3xl shadow mt-6 p-4">
 
-            <h2 className="text-xl font-bold mb-6">
+            <h2 className="text-lg font-bold mb-4">
               Quick Actions
             </h2>
 
-            <p className="text-gray-500 mb-6">
+            <p className="text-gray-500 mb-4">
               Shortcuts
             </p>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
 
               <button
                 onClick={() =>
                   navigate("/site-inspection")
                 }
-                className="bg-red-50 border border-red-200 rounded-2xl p-6 text-left hover:bg-red-100 transition"
+                className="bg-red-50/50 border border-red-500 rounded-2xl p-4 text-left hover:bg-red-100 transition"
               >
                 <ClipboardCheck
-                  className="text-red-600 mb-3"
-                  size={32}
+                  className="text-red-600 mb-2"
+                  size={28}
                 />
 
-                <h3 className="font-bold">
+                <h3 className="font-bold text-sm leading-tight">
                   New Inspection
                 </h3>
 
-                <p className="text-gray-500 text-sm mt-2">
+                <p className="text-gray-500 text-xs mt-1">
                   Site inspection
                 </p>
               </button>
 
-              <button className="bg-blue-50 border border-blue-200 rounded-2xl p-6 text-left hover:bg-blue-100 transition">
+              <button className="bg-blue-50/50 border border-blue-500 rounded-2xl p-4 text-left hover:bg-blue-100 transition">
                 <FolderOpen
-                  className="text-blue-600 mb-3"
-                  size={32}
+                  className="text-blue-600 mb-2"
+                  size={28}
                 />
 
-                <h3 className="font-bold">
+                <h3 className="font-bold text-sm leading-tight">
                   View Projects
                 </h3>
 
-                <p className="text-gray-500 text-sm mt-2">
+                <p className="text-gray-500 text-xs mt-1">
                   Progress monitor
                 </p>
               </button>
 
-              <button className="bg-green-50 border border-green-200 rounded-2xl p-6 text-left hover:bg-green-100 transition">
+              <button className="bg-green-50/50 border border-green-500 rounded-2xl p-4 text-left hover:bg-green-100 transition">
                 <ShieldCheck
-                  className="text-green-600 mb-3"
-                  size={32}
+                  className="text-green-600 mb-2"
+                  size={28}
                 />
 
-                <h3 className="font-bold">
+                <h3 className="font-bold text-sm leading-tight">
                   View Warranty
                 </h3>
 
-                <p className="text-gray-500 text-sm mt-2">
+                <p className="text-gray-500 text-xs mt-1">
                   Warranties
                 </p>
               </button>
 
-              <button className="bg-purple-50 border border-purple-200 rounded-2xl p-6 text-left hover:bg-purple-100 transition">
+              <button className="bg-purple-50 border border-purple-500 rounded-2xl p-4 text-left hover:bg-purple-100 transition">
                 <Package
-                  className="text-purple-600 mb-3"
-                  size={32}
+                  className="text-purple-600 mb-2"
+                  size={28}
                 />
 
-                <h3 className="font-bold">
+                <h3 className="font-bold text-sm leading-tight">
                   Add Product
                 </h3>
 
-                <p className="text-gray-500 text-sm mt-2">
+                <p className="text-gray-500 text-xs mt-1">
                   Inventory
                 </p>
               </button>

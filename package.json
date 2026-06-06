@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n backend,frontend -c blue,green \"npm --prefix backend run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev:frontend\"",
-    "dev:frontend": "vite --host 127.0.0.1 --port 5173",
-    "dev:no-hmr": "vite --host 127.0.0.1 --port 5173 --no-hmr",
+    "dev:frontend": "vite --host 0.0.0.0 --port 5173",
+    "dev:frontend:mobile": "vite --host 0.0.0.0 --port 5173",
+    "dev:mobile": "concurrently -k -n backend,frontend -c blue,green \"npm --prefix backend run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev:frontend:mobile\"",
+    "dev:no-hmr": "vite --host 0.0.0.0 --port 5173 --no-hmr",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",

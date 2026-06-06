@@ -177,6 +177,22 @@ router.get("/admin-exists", async (req, res) => {
   }
 });
 
+router.get("/admin-status", async (req, res) => {
+  console.info("[auth] GET /api/auth/admin-status");
+  try {
+    const adminCount = await Admin.countDocuments({});
+    const legacyAdminCount = await User.countDocuments({ role: "admin" });
+    res.json({ exists: adminCount + legacyAdminCount > 0 });
+  } catch (error) {
+    console.error("Admin status check error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error checking admin status",
+      error: error.message,
+    });
+  }
+});
+
 router.get("/customers", authMiddleware, roleMiddleware("admin"), async (req, res) => {
   try {
     const { search } = req.query;
