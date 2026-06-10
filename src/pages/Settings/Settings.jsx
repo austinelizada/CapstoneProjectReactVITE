@@ -337,6 +337,10 @@ function Settings() {
 
                   <tr>
 
+                    <th className="w-16 p-4 text-center text-sm font-semibold">
+                      No.
+                    </th>
+
                     <th className="p-4 text-left text-sm font-semibold">
                       User
                     </th>
@@ -369,6 +373,9 @@ function Settings() {
                       key={index}
                       className="border-t hover:bg-gray-50 transition"
                     >
+                      <td className="w-16 p-4 text-center font-semibold text-slate-600">
+                        {index + 1}
+                      </td>
 
                       {/* USER */}
 

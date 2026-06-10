@@ -5,10 +5,49 @@ import {
   Pencil,
 } from "lucide-react";
 
-import { getAdminOrders } from "@/api/orders";
+import { getAdminOrders, updateOrderProgress } from "@/api/orders";
+import { uploadFiles } from "@/api/uploads";
+import ProgressViewModal from "../../components/ProgressViewModal";
+import ProgressEditModal from "../../components/ProgressEditModal";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+
+const hasDelayedStage = (stages = []) =>
+  Array.isArray(stages) &&
+  stages.some(
+    (stage) =>
+      (!stage.completed && stage.status === "delayed") ||
+      (Array.isArray(stage.subStages) &&
+        stage.subStages.some((sub) => !sub.completed && sub.status === "delayed"))
+  );
+
+const formatOrderStatus = (status, contractStatus) => {
+  if (status === "completed") return "Completed";
+  if (status === "site_inspection") return "Installation";
+  if (status === "processing") return "Fabrication";
+  if (status === "contract_accepted") return "Accepted";
+  if (status === "contract_sent") return "Pending";
+  if (status === "admin_review") return "Pending";
+  if (status === "order_submitted") return "Pending";
+  if (status === "cancelled") return "Cancelled";
+  return contractStatus === "accepted" ? "Accepted" : "Pending";
+};
+
+const getProjectStatus = (order) => {
+  if (hasDelayedStage(order.progress_stages)) return "Delayed";
+  return formatOrderStatus(order.status, order.contract_status);
+};
+
+const mapProgressFromStatus = (status, progress) => {
+  if (typeof progress === "number") return progress;
+  if (status === "completed") return 100;
+  if (status === "site_inspection") return 70;
+  if (status === "processing") return 65;
+  if (status === "contract_accepted") return 50;
+  if (status === "contract_sent") return 25;
+  return 15;
+};
 
 function ProgressMonitor() {
   const [isSidebarOpen, setIsSidebarOpen] =
@@ -33,6 +72,8 @@ function ProgressMonitor() {
 
   const [showEditModal, setShowEditModal] =
     useState(false);
+
+  const [showViewModal, setShowViewModal] = useState(false);
 
   const [selectedProject, setSelectedProject] =
     useState(null);
@@ -76,27 +117,6 @@ function ProgressMonitor() {
     filteredProjects.length / rowsPerPage
   );
 
-  const formatOrderStatus = (status, contractStatus) => {
-    if (status === "completed") return "Completed";
-    if (status === "site_inspection") return "Installation";
-    if (status === "processing") return "Fabrication";
-    if (status === "contract_accepted") return "Accepted";
-    if (status === "contract_sent") return "Pending";
-    if (status === "admin_review") return "Pending";
-    if (status === "order_submitted") return "Pending";
-    if (status === "cancelled") return "Cancelled";
-    return contractStatus === "accepted" ? "Accepted" : "Pending";
-  };
-
-  const mapProgressFromStatus = (status) => {
-    if (status === "completed") return 100;
-    if (status === "site_inspection") return 70;
-    if (status === "processing") return 65;
-    if (status === "contract_accepted") return 50;
-    if (status === "contract_sent") return 25;
-    return 15;
-  };
-
   useEffect(() => {
     const fetchProjects = async () => {
       setProjectLoading(true);
@@ -114,6 +134,7 @@ function ProgressMonitor() {
             order.contract_status === "accepted"
           )
           .map((order) => ({
+            id: order._id || order.id,
             client:
               order.customer_name ||
               `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim() ||
@@ -132,8 +153,18 @@ function ProgressMonitor() {
               order.inspection_date
                 ? new Date(order.inspection_date).toLocaleDateString()
                 : "TBD",
-            progress: mapProgressFromStatus(order.status),
-            status: formatOrderStatus(order.status, order.contract_status),
+            progress: mapProgressFromStatus(order.status, order.progress),
+            stages: order.progress_stages || [],
+            status: getProjectStatus(order),
+            statusKey: order.status,
+            contract_status: order.contract_status,
+            payment_status: order.payment_status,
+            inspection_status: order.inspection_status,
+            inspection_date: order.inspection_date,
+            createdAt: order.createdAt,
+            updatedAt: order.updatedAt,
+            contract_terms: order.contract_terms,
+            rawOrder: order,
           }));
         setProjectList(projects);
       } catch (error) {
@@ -146,6 +177,70 @@ function ProgressMonitor() {
 
     fetchProjects();
   }, []);
+
+  const handleSave = async (updated, fileContexts = [], onUploadProgress) => {
+    let updatedProject = { ...updated };
+    try {
+      if (fileContexts && fileContexts.length > 0) {
+        const files = fileContexts.map((ctx) => ctx.file);
+        const res = await uploadFiles(files, onUploadProgress);
+        const uploadedUrls = (res.files || []).map((f) => f.url).filter(Boolean);
+
+        uploadedUrls.forEach((url, index) => {
+          const context = fileContexts[index];
+          if (typeof context.subIndex === "number") {
+            updatedProject.stages[context.stageIndex].subStages[context.subIndex].images = [
+              ...(updatedProject.stages[context.stageIndex].subStages[context.subIndex].images || []),
+              url,
+            ];
+          } else {
+            updatedProject.stages[context.stageIndex].images = [
+              ...(updatedProject.stages[context.stageIndex].images || []),
+              url,
+            ];
+          }
+        });
+      }
+
+      if (updatedProject.id) {
+        const response = await updateOrderProgress(updatedProject.id, {
+          progress: updatedProject.progress,
+          status: updatedProject.status,
+          installation_date: updatedProject.installation,
+          stages: updatedProject.stages,
+          proof_images: [],
+        });
+
+        if (response?.order) {
+          const savedOrder = response.order;
+          updatedProject = {
+            ...updatedProject,
+            rawOrder: savedOrder,
+            statusKey: savedOrder.status,
+            contract_status: savedOrder.contract_status,
+            payment_status: savedOrder.payment_status,
+            inspection_status: savedOrder.inspection_status,
+            inspection_date: savedOrder.inspection_date,
+            createdAt: savedOrder.createdAt,
+            updatedAt: savedOrder.updatedAt,
+            contract_terms: savedOrder.contract_terms,
+            progress: mapProgressFromStatus(savedOrder.status, savedOrder.progress),
+            stages: savedOrder.progress_stages || [],
+            progress_stages: savedOrder.progress_stages || [],
+            status: getProjectStatus(savedOrder),
+          };
+        }
+      }
+
+      setProjectList((items) =>
+        items.map((item) => (item.id === updatedProject.id ? updatedProject : item))
+      );
+      setSelectedProject(updatedProject);
+    } catch (err) {
+      console.error("Failed to save progress", err);
+      throw err;
+    }
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
@@ -232,6 +327,7 @@ function ProgressMonitor() {
                 <thead className="bg-gray-50">
 
                   <tr>
+                    <th className="w-16 p-4 text-center">No.</th>
                     <th className="p-4 text-left">Client</th>
                     <th className="p-4 text-left">Product</th>
                     <th className="p-4 text-left">Site Inspection</th>
@@ -244,13 +340,24 @@ function ProgressMonitor() {
                 </thead>
 
                 <tbody>
+                  {projectLoading && (
+                    <tr>
+                      <td className="p-6 text-center text-gray-500" colSpan={8}>
+                        Loading projects...
+                      </td>
+                    </tr>
+                  )}
 
-                  {currentProjects.map(
+                  {!projectLoading && currentProjects.map(
                     (project, index) => (
                       <tr
                         key={index}
                         className="border-t hover:bg-gray-50"
                       >
+                        <td className="w-16 p-4 text-center font-semibold text-slate-600">
+                          {firstIndex + index + 1}
+                        </td>
+
                         <td className="p-4">
                           {project.client}
                         </td>
@@ -307,7 +414,10 @@ function ProgressMonitor() {
                           <div className="flex justify-center gap-2">
 
                             <button className="bg-blue-100 text-blue-600 p-2 rounded-lg">
-                              <Eye size={18} />
+                                <Eye size={18} onClick={() => {
+                                  setSelectedProject(project);
+                                  setShowViewModal(true);
+                                }} />
                             </button>
 
                             <button
@@ -326,6 +436,14 @@ function ProgressMonitor() {
 
                       </tr>
                     )
+                  )}
+
+                  {!projectLoading && currentProjects.length === 0 && (
+                    <tr>
+                      <td className="p-6 text-center text-gray-500" colSpan={8}>
+                        No projects found.
+                      </td>
+                    </tr>
                   )}
 
                 </tbody>
@@ -390,81 +508,12 @@ function ProgressMonitor() {
 
           </div>
 
-          {/* EDIT MODAL */}
+          {showViewModal && selectedProject && (
+            <ProgressViewModal project={selectedProject} onClose={() => setShowViewModal(false)} />
+          )}
 
           {showEditModal && selectedProject && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-
-              <div className="bg-white rounded-3xl p-6 w-full max-w-lg">
-
-                <h2 className="text-2xl font-bold mb-6">
-                  Edit Project
-                </h2>
-
-                <input
-                  type="number"
-                  value={selectedProject.progress}
-                  onChange={(e) =>
-                    setSelectedProject({
-                      ...selectedProject,
-                      progress: Number(e.target.value),
-                    })
-                  }
-                  className="w-full border p-3 rounded-xl mb-4"
-                />
-
-                <select
-                  value={selectedProject.status}
-                  onChange={(e) =>
-                    setSelectedProject({
-                      ...selectedProject,
-                      status: e.target.value,
-                    })
-                  }
-                  className="w-full border p-3 rounded-xl"
-                >
-                  <option>Pending</option>
-                  <option>Cutting</option>
-                  <option>Fabrication</option>
-                  <option>Installation</option>
-                  <option>Completed</option>
-                  <option>Delayed</option>
-                </select>
-
-                <div className="flex justify-end gap-3 mt-6">
-
-                  <button
-                    onClick={() =>
-                      setShowEditModal(false)
-                    }
-                    className="px-4 py-2 bg-gray-200 rounded-xl"
-                  >
-                    Cancel
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setProjectList(
-                        projectList.map((item) =>
-                          item.client ===
-                          selectedProject.client
-                            ? selectedProject
-                            : item
-                        )
-                      );
-
-                      setShowEditModal(false);
-                    }}
-                    className="px-4 py-2 bg-red-600 text-white rounded-xl"
-                  >
-                    Save Changes
-                  </button>
-
-                </div>
-
-              </div>
-
-            </div>
+            <ProgressEditModal project={selectedProject} onClose={() => setShowEditModal(false)} onSave={handleSave} />
           )}
 
         </main>

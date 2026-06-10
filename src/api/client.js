@@ -13,6 +13,8 @@ if (rawApiBase) {
   API_BASE = "/api";
 }
 
+export { API_BASE };
+
 // Helpful runtime debug when devtools are open
 try {
   // eslint-disable-next-line no-console

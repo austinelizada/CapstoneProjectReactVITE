@@ -21,6 +21,12 @@ export const updateOrderInspection = (orderId, payload) =>
     body: JSON.stringify(payload),
   });
 
+export const updateOrderProgress = (orderId, payload) =>
+  apiFetch(`/orders/admin/${orderId}/progress`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
 export const respondToContract = (orderId, payload) =>
   apiFetch(`/orders/${orderId}/contract`, {
     method: "PUT",
@@ -29,6 +35,11 @@ export const respondToContract = (orderId, payload) =>
 
 export const acceptContract = (orderId) => respondToContract(orderId, { action: "accept" });
 export const declineContract = (orderId) => respondToContract(orderId, { action: "decline" });
+export const respondToInstallationSchedule = (orderId, payload) =>
+  apiFetch(`/orders/${orderId}/installation-schedule`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 
 export const createOrder = (payload) =>
   apiFetch("/orders", {

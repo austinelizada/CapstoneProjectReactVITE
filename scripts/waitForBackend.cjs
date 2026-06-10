@@ -1,7 +1,7 @@
 const http = require('http');
 
-const url = process.env.BACKEND_URL || 'http://localhost:5000/';
-const timeout = Number(process.env.WAIT_TIMEOUT_MS) || 30000;
+const url = process.env.BACKEND_URL || 'http://localhost:5000/api/auth/admin-exists';
+const timeout = Number(process.env.WAIT_TIMEOUT_MS) || 60000;
 const interval = Number(process.env.WAIT_INTERVAL_MS) || 500;
 
 function checkOnce() {
@@ -21,18 +21,15 @@ function checkOnce() {
 
 (async () => {
   const start = Date.now();
-  process.stdout.write(`Waiting for backend at ${url}`);
   while (Date.now() - start < timeout) {
     // eslint-disable-next-line no-await-in-loop
     const ok = await checkOnce();
     if (ok) {
-      console.log('\nBackend is ready.');
       process.exit(0);
     }
-    process.stdout.write('.');
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, interval));
   }
-  console.error('\nTimeout waiting for backend');
+  console.error(`Timeout waiting for backend at ${url}`);
   process.exit(1);
 })();

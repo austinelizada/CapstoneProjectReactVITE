@@ -429,6 +429,10 @@ function Dashboard() {
 
                   <tr>
 
+                    <th className="w-16 p-4 text-center">
+                      No.
+                    </th>
+
                     <th className="p-4 text-left">
                       Client
                     </th>
@@ -469,13 +473,13 @@ function Dashboard() {
 
                   {ordersLoading ? (
                     <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-500">
+                      <td colSpan={9} className="p-8 text-center text-slate-500">
                         Loading order requests...
                       </td>
                     </tr>
                   ) : currentOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-500">
+                      <td colSpan={9} className="p-8 text-center text-slate-500">
                         No order requests available.
                       </td>
                     </tr>
@@ -498,6 +502,10 @@ function Dashboard() {
                           key={order._id || order.tracking || index}
                           className="border-t hover:bg-gray-50"
                         >
+                          <td className="w-16 p-4 text-center font-semibold text-slate-600">
+                            {firstIndex + index + 1}
+                          </td>
+
                           <td className="p-4 font-medium">{customerName}</td>
 
                           <td className="p-4">{phone}</td>

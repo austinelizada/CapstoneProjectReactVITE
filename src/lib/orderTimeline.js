@@ -1,0 +1,364 @@
+const formatDateTime = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const formatDateOnly = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+};
+
+const stageDefinitions = [
+  { key: "order_submitted", label: "Order Request Submitted", assignedTo: "Sales Team" },
+  { key: "admin_review", label: "Order Request Reviewed", assignedTo: "Admin Team" },
+  { key: "site_inspection_scheduled", label: "Site Inspection Scheduled", assignedTo: "Inspection Team" },
+  { key: "site_inspection_completed", label: "Site Inspection Completed", assignedTo: "Inspection Team" },
+  { key: "contract_created", label: "Contract Created", assignedTo: "Contract Team" },
+  { key: "contract_sent", label: "Contract Sent to Customer", assignedTo: "Contract Team" },
+  { key: "contract_accepted", label: "Contract Accepted", assignedTo: "Customer" },
+  { key: "project_in_progress", label: "Project In Progress", assignedTo: "Production Team" },
+  { key: "installation_scheduled", label: "Installation Scheduled", assignedTo: "Installation Team" },
+  { key: "installation_completed", label: "Installation Completed", assignedTo: "Installation Team" },
+  { key: "project_completed", label: "Project Completed", assignedTo: "Project Manager" },
+];
+
+const getOrderStageScore = (order) => {
+  if (!order) return -1;
+  if (order.status === "cancelled") return 0;
+  if (order.status === "completed") return 10;
+  if (order.status === "processing") return 7;
+  if (order.status === "contract_accepted") return 6;
+  if (order.status === "contract_sent") return 5;
+  if (order.status === "site_inspection") {
+    return order.inspection_status === "completed" ? 3 : 2;
+  }
+  if (order.status === "admin_review") return 1;
+  if (order.status === "order_submitted") return 0;
+  return 0;
+};
+
+const hasContractProgress = (order) =>
+  Boolean(order?.contract_terms) ||
+  order?.contract_status === "sent" ||
+  order?.contract_status === "accepted" ||
+  ["contract_sent", "contract_accepted", "processing", "completed"].includes(order?.status);
+
+const isInspectionCompleted = (order) =>
+  order?.inspection_status === "completed" || hasContractProgress(order);
+
+const getStageDate = (order, stageKey) => {
+  switch (stageKey) {
+    case "order_submitted":
+      return order.createdAt || order.created_at || null;
+    case "admin_review":
+      return order.updatedAt || order.updated_at || null;
+    case "site_inspection_scheduled":
+      return order.inspection_date || null;
+    case "site_inspection_completed":
+      return isInspectionCompleted(order) ? order.inspection_completed_at || order.inspection_date || order.updatedAt || null : null;
+    case "contract_created":
+      return order.contract_terms ? order.updatedAt || null : null;
+    case "contract_sent":
+      return order.contract_status === "sent" || order.status === "contract_sent" ? order.updatedAt || null : null;
+    case "contract_accepted":
+      return order.contract_status === "accepted" || order.status === "contract_accepted" ? order.updatedAt || null : null;
+    case "project_in_progress":
+      return order.status === "processing" ? order.updatedAt || null : null;
+    case "installation_scheduled":
+      return order.inspection_date || null;
+    case "installation_completed":
+      return order.status === "completed" ? order.updatedAt || null : null;
+    case "project_completed":
+      return order.status === "completed" ? order.updatedAt || null : null;
+    default:
+      return null;
+  }
+};
+
+const getStageNotes = (order, stageKey) => {
+  if (!order) return null;
+  if (stageKey === "site_inspection_scheduled" || stageKey === "site_inspection_completed") {
+    return order.inspection_notes || null;
+  }
+  if (stageKey === "contract_created" || stageKey === "contract_sent" || stageKey === "contract_accepted") {
+    return order.contract_terms || null;
+  }
+  if (stageKey === "project_in_progress") {
+    return order.progress != null ? `Current completion: ${order.progress}%` : null;
+  }
+  return null;
+};
+
+const getStageStatus = (order, stepIndex, currentIndex, stageKey) => {
+  if (!order) return "pending";
+  if (order.status === "cancelled") {
+    if (stepIndex === 0) return "completed";
+    return stepIndex <= currentIndex ? "cancelled" : "pending";
+  }
+
+  const inspectionCompleted = isInspectionCompleted(order);
+  const inspectionScheduled = order.inspection_status === "scheduled" || order.inspection_status === "completed";
+  const hasContractTerms = Boolean(order.contract_terms);
+  const contractSent = order.contract_status === "sent" || order.contract_status === "accepted" || order.status === "contract_sent";
+  const contractAccepted = order.contract_status === "accepted" || order.status === "contract_accepted";
+
+  switch (stageKey) {
+    case "order_submitted":
+      return "completed";
+    case "admin_review":
+      return order.status === "order_submitted" ? "pending" : "completed";
+    case "site_inspection_scheduled":
+      return inspectionScheduled ? "completed" : order.status === "site_inspection" ? "in-progress" : "pending";
+    case "site_inspection_completed":
+      return inspectionCompleted ? "completed" : "pending";
+    case "contract_created":
+      return hasContractTerms ? "completed" : "pending";
+    case "contract_sent":
+      return contractSent ? "completed" : "pending";
+    case "contract_accepted":
+      return contractAccepted ? "completed" : "pending";
+    default:
+      if (stepIndex < currentIndex) return "completed";
+      if (stepIndex === currentIndex) return "in-progress";
+      return "pending";
+  }
+};
+
+export const buildOrderTimelineStages = (order) => {
+  if (!order) return [];
+
+  const currentIndex = getOrderStageScore(order);
+  const baseStages = stageDefinitions.slice(0, 7).map((stage, index) => {
+    const status = getStageStatus(order, index, currentIndex, stage.key);
+    return {
+      ...stage,
+      status,
+      statusText:
+        status === "completed"
+          ? "Completed"
+          : status === "in-progress"
+          ? "In Progress"
+          : status === "cancelled"
+          ? "Cancelled"
+          : "Pending",
+      date: formatDateTime(getStageDate(order, stage.key)),
+      assignedTo: stage.assignedTo,
+      notes: getStageNotes(order, stage.key),
+    };
+  });
+
+  const contractAccepted =
+    order.contract_status === "accepted" || order.status === "contract_accepted";
+  if (!contractAccepted) {
+    return baseStages;
+  }
+
+  const progressStageKeys = [
+    { key: "cutting", label: "Cutting" },
+    { key: "fabrication", label: "Fabrication" },
+    { key: "installation_scheduling", label: "Installation Scheduling" },
+    { key: "installation_agreement", label: "Installation Agreement" },
+    { key: "installation", label: "Installation" },
+  ];
+
+  const stageMap = Array.isArray(order.progress_stages)
+    ? order.progress_stages.reduce((map, stage) => {
+        const key = stage.key || (stage.name || "").toLowerCase().replace(/\s+/g, "_");
+        map[key] = stage;
+        return map;
+      }, {})
+    : {};
+
+  const progressStages = progressStageKeys
+    .map((definition) => {
+      const isAgreementStage = definition.key === "installation_agreement";
+      const sourceStage = isAgreementStage
+        ? stageMap["installation_scheduling"] || stageMap["installation_scheduled"] || {}
+        : stageMap[definition.key] || {};
+
+      const completed = !!sourceStage.completed || sourceStage.customerResponse === "accepted";
+      const delayed = !completed && sourceStage.status === "delayed";
+      const inProgress = !completed && sourceStage.status === "in_progress";
+      const status = completed ? "completed" : delayed ? "delayed" : inProgress ? "in-progress" : "pending";
+      const subStages = Array.isArray(sourceStage.subStages)
+        ? sourceStage.subStages.map((sub) => ({
+            name: sub.name || "",
+            status: sub.completed
+              ? "completed"
+              : sub.status === "delayed"
+              ? "delayed"
+              : sub.status === "in_progress"
+              ? "in-progress"
+              : "pending",
+            date: formatDateTime(sub.date),
+            notes: sub.description || null,
+            images: Array.isArray(sub.images) ? sub.images : [],
+          }))
+        : [];
+
+      if (isAgreementStage) {
+        const hasProposal = sourceStage.proposedInstallationDate && sourceStage.proposedInstallationTime;
+        if (!hasProposal) return null;
+      }
+
+      const completedSubCount = subStages.filter((sub) => sub.status === "completed").length;
+      const latestDelayEntry = Array.isArray(sourceStage.delayHistory) && sourceStage.delayHistory.length > 0
+        ? sourceStage.delayHistory[sourceStage.delayHistory.length - 1]
+        : null;
+
+      const defaultNotes =
+        subStages.length > 0
+          ? `${completedSubCount}/${subStages.length} sub-stages completed`
+          : `Current phase: ${definition.label}`;
+
+      const schedulingNotes =
+        definition.key === "installation_scheduling"
+          ? sourceStage.proposedInstallationDate && sourceStage.proposedInstallationTime
+            ? sourceStage.customerResponse === "accepted"
+              ? `Installation schedule confirmed for ${formatDateOnly(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
+              : sourceStage.customerResponse === "reschedule_requested"
+              ? `Customer requested a reschedule from ${formatDateOnly(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
+              : sourceStage.customerResponse === "declined"
+              ? "Customer declined the proposed schedule. Awaiting a new installation proposal."
+              : `Waiting for customer confirmation - proposed ${formatDateOnly(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
+            : "Waiting for customer confirmation"
+          : null;
+
+      const agreementStatusText = sourceStage.customerResponse === "accepted"
+        ? "Accepted"
+        : sourceStage.customerResponse === "reschedule_requested"
+        ? "Reschedule Requested"
+        : sourceStage.customerResponse
+        ? "Waiting for Customer Response"
+        : "Pending";
+
+      const statusText =
+        definition.key === "installation_scheduling"
+          ? completed
+            ? "Completed"
+            : sourceStage.customerResponse === "accepted"
+            ? "Completed"
+            : sourceStage.customerResponse === "reschedule_requested"
+            ? "Reschedule Requested"
+            : sourceStage.proposedInstallationDate && sourceStage.proposedInstallationTime
+            ? "Waiting for Customer Response"
+            : "Pending"
+          : definition.key === "installation_agreement"
+          ? agreementStatusText
+          : completed
+          ? "Completed"
+          : delayed
+          ? "Delayed"
+          : inProgress
+          ? "In Progress"
+          : "Pending";
+
+      return {
+        key: definition.key,
+        label: isAgreementStage ? "Installation Agreement" : sourceStage.name || definition.label,
+        status,
+        statusText,
+        date: isAgreementStage
+          ? sourceStage.customerResponseAt ? formatDateTime(sourceStage.customerResponseAt) : null
+          : formatDateTime(sourceStage.date),
+        assignedTo: "Production Team",
+        notes: isAgreementStage
+          ? sourceStage.customerResponse === "reschedule_requested"
+            ? `Customer requested a new installation time: ${sourceStage.customerPreferredInstallationDate ? formatDateOnly(sourceStage.customerPreferredInstallationDate) : "TBD"} at ${sourceStage.customerPreferredInstallationTime || "TBD"}. ${sourceStage.customerRescheduleNotes || ""}`
+            : sourceStage.customerResponse === "accepted"
+            ? `Installation agreement accepted for ${sourceStage.proposedInstallationDate ? formatDateOnly(sourceStage.proposedInstallationDate) : "TBD"} at ${sourceStage.proposedInstallationTime || "TBD"}.`
+            : sourceStage.proposedInstallationDate && sourceStage.proposedInstallationTime
+            ? `Please agree or request a change for the proposed installation on ${formatDateOnly(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}.`
+            : "Awaiting installation agreement."
+          : schedulingNotes || defaultNotes,
+        images: Array.isArray(sourceStage.images) ? sourceStage.images : [],
+        subStages,
+        proposedInstallationDate: formatDateOnly(sourceStage.proposedInstallationDate),
+        proposedInstallationTime: sourceStage.proposedInstallationTime || null,
+        customerResponse: sourceStage.customerResponse || null,
+        customerResponseAt: sourceStage.customerResponseAt ? formatDateTime(sourceStage.customerResponseAt) : null,
+        customerDeclineReason: sourceStage.customerDeclineReason || null,
+        customerPreferredInstallationDate: formatDateOnly(sourceStage.customerPreferredInstallationDate),
+        customerPreferredInstallationTime: sourceStage.customerPreferredInstallationTime || null,
+        customerRescheduleNotes: sourceStage.customerRescheduleNotes || null,
+        delayReason: sourceStage.delayReason || (latestDelayEntry?.reason || null),
+        delayExpectedResolution: formatDateTime(sourceStage.delayExpectedResolution || latestDelayEntry?.expectedResolution),
+        delayNotes: sourceStage.delayNotes || (latestDelayEntry?.notes || null),
+        delayReportedAt: formatDateTime(sourceStage.delayReportedAt || latestDelayEntry?.reportedAt),
+        delayReportedBy: sourceStage.delayReportedBy || (latestDelayEntry?.reportedBy || null),
+        delayHistory: Array.isArray(sourceStage.delayHistory) ? sourceStage.delayHistory.map((entry) => ({
+          ...entry,
+          expectedResolution: formatDateTime(entry.expectedResolution),
+          reportedAt: formatDateTime(entry.reportedAt),
+          resolvedAt: formatDateTime(entry.resolvedAt),
+        })) : [],
+        latestDelayEntry: latestDelayEntry ? {
+          reason: latestDelayEntry.reason || null,
+          expectedResolution: formatDateTime(latestDelayEntry.expectedResolution),
+          notes: latestDelayEntry.notes || null,
+          reportedAt: formatDateTime(latestDelayEntry.reportedAt),
+          reportedBy: latestDelayEntry.reportedBy || null,
+          resolvedAt: formatDateTime(latestDelayEntry.resolvedAt),
+        } : null,
+      };
+    })
+    .filter(Boolean);
+
+  const installationStage = stageMap.installation || {};
+  const installationComplete = !!installationStage.completed || order.status === "completed";
+  const completedStage = {
+    key: "project_completed",
+    label: "Completed",
+    status: installationComplete ? "completed" : "pending",
+    statusText: installationComplete ? "Completed" : "Pending",
+    date: installationComplete ? formatDateTime(installationStage.date || order.updatedAt) : null,
+    assignedTo: "Project Manager",
+    notes: installationComplete ? "Project execution complete." : "Final project completion pending.",
+  };
+
+  return [...baseStages, ...progressStages, completedStage];
+};
+
+export const getOrderTimelineStatusClass = (status) => {
+  switch (status) {
+    case "completed":
+      return "bg-emerald-600 text-white border-emerald-600";
+    case "in-progress":
+      return "bg-amber-100 text-amber-700 border-amber-300";
+    case "delayed":
+      return "bg-red-100 text-red-700 border-red-300";
+    case "cancelled":
+      return "bg-red-100 text-red-700 border-red-300";
+    default:
+      return "bg-slate-100 text-slate-500 border-slate-200";
+  }
+};
+
+export const getOrderTimelineLineClass = (status) => {
+  switch (status) {
+    case "completed":
+      return "bg-emerald-600";
+    case "in-progress":
+      return "bg-amber-300";
+    case "delayed":
+      return "bg-red-400";
+    case "cancelled":
+      return "bg-red-400";
+    default:
+      return "bg-slate-200";
+  }
+};

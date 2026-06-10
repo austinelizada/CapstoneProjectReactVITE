@@ -232,6 +232,11 @@ export const getAdminOrders = async (req, res) => {
 
     if (status) filter.status = status;
     if (contract_status) filter.contract_status = contract_status;
+    if (status === "site_inspection" && !contract_status) {
+      filter.contract_status = "pending";
+      filter.contract_terms = "";
+      filter.contract_amount = { $in: [0, null] };
+    }
 
     const orders = await Order.find(filter)
       .populate("items.product_id", "image_url image images name category product_type")
@@ -314,7 +319,16 @@ export const respondToContract = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to respond to this contract." });
     }
 
-    if (order.status !== "contract_sent") {
+    const orderStatus = (order.status || "").toString().toLowerCase();
+    const contractStatus = (order.contract_status || "").toString().toLowerCase();
+    const isAwaitingCustomerResponse =
+      orderStatus === "contract_sent" || contractStatus === "sent";
+
+    if (action === "accept" && (orderStatus === "contract_accepted" || contractStatus === "accepted")) {
+      return res.json({ success: true, order, message: "Contract already accepted." });
+    }
+
+    if (!isAwaitingCustomerResponse) {
       return res.status(400).json({ success: false, message: "Contract cannot be responded to at this stage." });
     }
 
@@ -335,7 +349,87 @@ export const respondToContract = async (req, res) => {
   }
 };
 
+export const respondToInstallationSchedule = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { action, reason, preferredInstallationDate, preferredInstallationTime, notes } = req.body;
+
+    if (!action || !["accept", "reschedule"].includes(action)) {
+      return res.status(400).json({ success: false, message: "Schedule action must be accept or reschedule." });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (!order.customer || order.customer.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Not authorized to respond to this installation schedule." });
+    }
+
+    const scheduleStage = Array.isArray(order.progress_stages)
+      ? order.progress_stages.find((stage) =>
+          ["installation_scheduling", "installation_scheduled"].includes((stage.key || "").toString().toLowerCase())
+        )
+      : null;
+
+    if (!scheduleStage) {
+      return res.status(400).json({ success: false, message: "Installation schedule is not available for response." });
+    }
+
+    const hasProposal = scheduleStage.proposedInstallationDate || scheduleStage.proposedInstallationTime;
+    if (!hasProposal) {
+      return res.status(400).json({ success: false, message: "No installation proposal is available to respond to." });
+    }
+
+    if (action === "accept") {
+      const alreadyAccepted = scheduleStage.customerResponse === "accepted" && scheduleStage.completed;
+      if (alreadyAccepted) {
+        return res.json({ success: true, order, message: "Installation schedule already accepted." });
+      }
+
+      scheduleStage.customerResponse = "accepted";
+      scheduleStage.customerResponseAt = new Date();
+      scheduleStage.customerDeclineReason = "";
+      scheduleStage.customerPreferredInstallationDate = null;
+      scheduleStage.customerPreferredInstallationTime = "";
+      scheduleStage.customerRescheduleNotes = "";
+      scheduleStage.completed = true;
+      scheduleStage.status = "done";
+      scheduleStage.date = new Date();
+      order.status = order.status === "contract_accepted" ? "contract_accepted" : order.status;
+    } else {
+      if (!reason || !preferredInstallationDate || !preferredInstallationTime) {
+        return res.status(400).json({
+          success: false,
+          message: "Reschedule requests require a reason, preferred installation date, and preferred installation time.",
+        });
+      }
+
+      scheduleStage.customerResponse = "reschedule_requested";
+      scheduleStage.customerResponseAt = new Date();
+      scheduleStage.customerDeclineReason = reason.trim();
+      scheduleStage.customerPreferredInstallationDate = new Date(preferredInstallationDate);
+      scheduleStage.customerPreferredInstallationTime = preferredInstallationTime.trim();
+      scheduleStage.customerRescheduleNotes = notes ? notes.trim() : "";
+      scheduleStage.completed = false;
+      scheduleStage.status = "pending";
+      scheduleStage.date = null;
+      order.status = order.status === "contract_accepted" ? "contract_accepted" : order.status;
+    }
+
+    await order.save();
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error("Respond to installation schedule error:", error);
+    res.status(500).json({ success: false, message: "Unable to update installation schedule response", error: error.message });
+  }
+};
+
 export const updateOrderInspection = async (req, res) => {
+  let updateData = {};
+
   try {
     if (req.user.role !== "admin") {
       return res.status(403).json({ success: false, message: "Admin access required" });
@@ -344,7 +438,7 @@ export const updateOrderInspection = async (req, res) => {
     const { orderId } = req.params;
     const { inspection_status, inspection_date, inspection_notes, issues_found, shipping_address, payment_terms, items, total_amount, customer_name, customer_email, customer_phone } = req.body;
 
-    const updateData = {
+    updateData = {
       status: "site_inspection",
     };
 
@@ -408,6 +502,177 @@ export const updateOrderInspection = async (req, res) => {
   }
 };
 
+export const updateOrderProgress = async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Admin access required" });
+    }
+
+    const { orderId } = req.params;
+    const { progress, status, installation_date, stages, proof_images } = req.body;
+
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+
+    if (typeof progress !== "undefined") order.progress = Number(progress) || 0;
+
+    // Map friendly status values back to internal statuses when possible
+    const mapFriendlyToInternal = (s) => {
+      if (!s) return undefined;
+      const key = String(s).toLowerCase();
+      if (key.includes("fabrication") || key.includes("processing")) return "processing";
+      if (key.includes("installation") || key.includes("site_inspection")) return "site_inspection";
+      if (key.includes("completed")) return "completed";
+      if (key.includes("cutting")) return "processing";
+      if (key.includes("pending")) return "admin_review";
+      if (key.includes("delayed")) return "processing";
+      return undefined;
+    };
+
+    const mapped = mapFriendlyToInternal(status);
+    if (mapped) order.status = mapped;
+
+    if (installation_date) {
+      // store as inspection_date for compatibility with existing schema
+      order.inspection_date = installation_date;
+    }
+
+    if (Array.isArray(stages)) {
+      order.progress_stages = stages.map((s) => ({
+        key: s.key || (s.name || "").toString().toLowerCase().replace(/\s+/g, "_"),
+        name: s.name || "",
+        status: ["pending", "in_progress", "done", "delayed", "on_hold"].includes(s.status) ? s.status : s.completed ? "done" : "pending",
+        completed: !!s.completed,
+        date: s.date ? new Date(s.date) : null,
+        delayReason: s.delayReason || "",
+        delayExpectedResolution: s.delayExpectedResolution ? new Date(s.delayExpectedResolution) : null,
+        delayNotes: s.delayNotes || "",
+        delayReportedAt: s.delayReportedAt ? new Date(s.delayReportedAt) : null,
+        delayReportedBy: s.delayReportedBy || "",
+        proposedInstallationDate: s.proposedInstallationDate ? new Date(s.proposedInstallationDate) : null,
+        proposedInstallationTime: s.proposedInstallationTime ? String(s.proposedInstallationTime).trim() : "",
+        delayHistory: Array.isArray(s.delayHistory)
+          ? s.delayHistory.map((entry) => ({
+              reason: entry.reason || "",
+              expectedResolution: entry.expectedResolution ? new Date(entry.expectedResolution) : null,
+              notes: entry.notes || "",
+              reportedAt: entry.reportedAt ? new Date(entry.reportedAt) : null,
+              reportedBy: entry.reportedBy || "",
+              status: entry.status || "delayed",
+              resolvedAt: entry.resolvedAt ? new Date(entry.resolvedAt) : null,
+            }))
+          : [],
+        images: Array.isArray(s.images) ? s.images : [],
+        customerResponse: ["pending", "accepted", "declined", "reschedule_requested"].includes(s.customerResponse)
+          ? s.customerResponse
+          : "pending",
+        customerResponseAt: s.customerResponseAt ? new Date(s.customerResponseAt) : null,
+        customerDeclineReason: s.customerDeclineReason ? s.customerDeclineReason : "",
+        customerPreferredInstallationDate: s.customerPreferredInstallationDate ? new Date(s.customerPreferredInstallationDate) : null,
+        customerPreferredInstallationTime: s.customerPreferredInstallationTime ? s.customerPreferredInstallationTime : "",
+        customerRescheduleNotes: s.customerRescheduleNotes ? s.customerRescheduleNotes : "",
+        subStages: Array.isArray(s.subStages)
+          ? s.subStages.map((sub) => ({
+              name: sub.name || "",
+              description: sub.description || "",
+              status: ["pending", "in_progress", "done", "delayed", "on_hold"].includes(sub.status)
+                ? sub.status
+                : sub.completed
+                ? "done"
+                : "pending",
+              completed: !!sub.completed,
+              date: sub.date ? new Date(sub.date) : null,
+              images: Array.isArray(sub.images) ? sub.images : [],
+            }))
+          : [],
+      }));
+
+      const delayReporter = req.user?.email || "";
+      order.progress_stages = order.progress_stages.map((stage) => {
+        const history = Array.isArray(stage.delayHistory)
+          ? stage.delayHistory.map((entry) => ({
+              ...entry,
+              reportedBy: entry.reportedBy || delayReporter,
+            }))
+          : [];
+
+        const last = history[history.length - 1];
+        if (stage.status !== "delayed" && last && last.status === "delayed" && !last.resolvedAt) {
+          history[history.length - 1] = {
+            ...last,
+            resolvedAt: new Date(),
+          };
+        }
+
+        return {
+          ...stage,
+          delayReportedBy: stage.delayReportedBy || delayReporter,
+          delayHistory: history,
+        };
+      });
+
+      const allProjectStagesDone =
+        order.progress_stages.length > 0 &&
+        order.progress_stages.every((stage) => stage.completed === true);
+      if (allProjectStagesDone) {
+        order.status = "completed";
+      }
+
+      // If a site inspection stage exists, keep inspection_date/status in sync
+      try {
+        const inspectionStage = order.progress_stages.find((s) => {
+          const key = (s.key || "").toString().toLowerCase();
+          const name = (s.name || "").toString().toLowerCase();
+          return (
+            key.includes("site_inspection") ||
+            name.includes("site inspection") ||
+            key.includes("inspection") ||
+            name.includes("inspection") ||
+            // treat installation-named stages as inspection-related for compatibility
+            key.includes("installation") ||
+            name.includes("installation")
+          );
+        });
+
+        if (inspectionStage) {
+          // If admin saved a proposed date/time for inspection/scheduling, keep inspection_date in sync
+          if (inspectionStage.proposedInstallationDate) {
+            order.inspection_date = inspectionStage.proposedInstallationDate;
+            // mark scheduled unless already completed
+            if (order.inspection_status !== "completed") order.inspection_status = "scheduled";
+          }
+
+          // If the inspection stage is completed, ensure the order's inspection_status is marked completed
+          if (inspectionStage.completed) {
+            order.inspection_status = "completed";
+            if (inspectionStage.date) {
+              order.inspection_date = inspectionStage.date;
+            }
+          }
+        }
+      } catch (syncErr) {
+        console.warn("Failed to sync inspection stage to order fields:", syncErr && syncErr.message ? syncErr.message : syncErr);
+      }
+    }
+
+    // Accept an array of proof_images to append to the last stage or attachments
+    if (Array.isArray(proof_images) && proof_images.length > 0) {
+      order.attachments = Array.isArray(order.attachments) ? order.attachments.concat(proof_images) : proof_images.slice();
+      if (order.progress_stages && order.progress_stages.length > 0) {
+        const last = order.progress_stages[order.progress_stages.length - 1];
+        last.images = Array.isArray(last.images) ? last.images.concat(proof_images) : proof_images.slice();
+      }
+    }
+
+    await order.save();
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error("Update order progress error:", error);
+    res.status(500).json({ success: false, message: "Unable to update order progress", error: error.message });
+  }
+};
+
 export const generateContract = async (req, res) => {
   try {
     if (req.user.role !== "admin") {
@@ -425,6 +690,7 @@ export const generateContract = async (req, res) => {
     order.contract_status = "sent";
     order.contract_terms = contract_terms || "";
     order.contract_amount = Number(contract_amount) || order.total_amount;
+    order.inspection_status = "completed";
     order.status = "contract_sent";
 
     await order.save();

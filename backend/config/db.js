@@ -35,7 +35,9 @@ const getMongoUri = () => {
 export async function connectMongo() {
   const uri = getMongoUri();
   const validUri = validateMongoUri(uri);
-  console.info("[db] Connecting to MongoDB using URI:", validUri.replace(/(mongodb\+srv:\/\/[^@]+@)/, "mongodb+srv://***@"));
+  if (process.env.DEBUG_DB === "true") {
+    console.info("[db] Connecting to MongoDB using URI:", validUri.replace(/(mongodb\+srv:\/\/[^@]+@)/, "mongodb+srv://***@"));
+  }
   return mongoose.connect(validUri, {
     autoIndex: true,
   });

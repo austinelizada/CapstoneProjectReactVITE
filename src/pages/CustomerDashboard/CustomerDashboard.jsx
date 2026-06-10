@@ -28,7 +28,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getProducts } from "@/api/products";
 import { createOrder, getOrders, trackOrder, acceptContract, declineContract } from "@/api/orders";
 import ContractModal from "../../components/ContractModal";
+import OrderTimeline from "@/components/OrderTimeline";
 import { calculateEstimate } from "@/lib/estimator";
+
+const PRODUCT_IMAGE_PLACEHOLDER =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -474,13 +478,32 @@ function CustomerDashboard() {
   };
 
   const updateLocalOrder = (updatedOrder) => {
-    setOrders((prev) => prev.map((order) => (order._id === updatedOrder._id ? updatedOrder : order)));
-    if (selectedOrderForModal?._id === updatedOrder._id) {
+    const updatedOrderId = updatedOrder?._id || updatedOrder?.id;
+    if (!updatedOrderId) return;
+
+    setOrders((prev) =>
+      prev.map((order) =>
+        (order._id || order.id) === updatedOrderId ? updatedOrder : order
+      )
+    );
+    if ((selectedOrderForModal?._id || selectedOrderForModal?.id) === updatedOrderId) {
+      setSelectedOrderForModal(updatedOrder);
+    }
+    if ((contractPreviewOrder?._id || contractPreviewOrder?.id) === updatedOrderId) {
+      setContractPreviewOrder(updatedOrder);
+    }
+  };
+
+  const handleOrderUpdate = (updatedOrder) => {
+    updateLocalOrder(updatedOrder);
+    if ((selectedOrderForModal?._id || selectedOrderForModal?.id) === (updatedOrder?._id || updatedOrder?.id)) {
       setSelectedOrderForModal(updatedOrder);
     }
   };
 
   const handleAcceptContract = async (orderId) => {
+    if (!orderId || contractActionLoading) return;
+
     setContractActionError("");
     setContractActionMessage("");
     setContractActionOrderId(orderId);
@@ -501,6 +524,8 @@ function CustomerDashboard() {
   };
 
   const handleDeclineContract = async (orderId) => {
+    if (!orderId || contractActionLoading) return;
+
     setContractActionError("");
     setContractActionMessage("");
     setContractActionOrderId(orderId);
@@ -844,16 +869,16 @@ function CustomerDashboard() {
       const images = Object.values(product.images).flat().filter(Boolean);
       if (images.length > 0) return images[0];
     }
-    return "https://via.placeholder.com/600x400?text=No+image";
+    return PRODUCT_IMAGE_PLACEHOLDER;
   };
 
   const getOrderItemImage = (item) => {
-    if (!item) return "https://via.placeholder.com/300x200?text=No+image";
+    if (!item) return PRODUCT_IMAGE_PLACEHOLDER;
     if (item.image_url) return item.image_url;
     if (item.image) return item.image;
     const product = item.product_id || item.product;
     if (product) return getProductImage(product);
-    return "https://via.placeholder.com/300x200?text=Product+image";
+    return PRODUCT_IMAGE_PLACEHOLDER;
   };
 
   const formatCurrency = (amount) => {
@@ -884,6 +909,8 @@ function CustomerDashboard() {
       contractDate: order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : new Date(order.createdAt).toLocaleDateString(),
       orderDate: order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "N/A",
       status: order.status?.replace(/_/g, " ") || "Pending",
+      orderStatus: order.status || "",
+      rawContractStatus: order.contract_status || "",
       contractStatus,
       customerName: order.customer?.first_name || order.customer_name || "Customer",
       customerEmail: order.customer?.email || order.customer_email || "N/A",
@@ -1042,8 +1069,6 @@ function CustomerDashboard() {
     if (orderFilter === "cancelled") return order.status === "cancelled";
     return true;
   });
-
-  const selectedOrderSteps = selectedOrderForModal ? getOrderProgressSteps(selectedOrderForModal) : [];
 
   const orderViewClass = orderViewMode === "view2"
     ? "grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
@@ -2229,7 +2254,7 @@ function CustomerDashboard() {
                                 className="h-full w-full object-cover"
                                 onError={(e) => {
                                   e.currentTarget.onerror = null;
-                                  e.currentTarget.src = "https://via.placeholder.com/300x200?text=Product+image";
+                                  e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
                                 }}
                               />
                             </div>
@@ -2387,23 +2412,7 @@ function CustomerDashboard() {
                       </div>
                     </div>
                     {selectedOrderForModal.status === "contract_sent" && (
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <button
-                          type="button"
-                          onClick={() => openContractConfirmModal("accept", selectedOrderForModal._id)}
-                          disabled={contractActionLoading}
-                          className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {contractActionLoading ? "Accepting..." : "Accept Contract"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openContractConfirmModal("decline", selectedOrderForModal._id)}
-                          disabled={contractActionLoading}
-                          className="rounded-2xl border border-red-300 bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {contractActionLoading ? "Declining..." : "Decline Contract"}
-                        </button>
+                      <div className="flex items-center gap-3">
                       </div>
                     )}
                     {contractActionError && selectedOrderForModal.status === "contract_sent" && (
@@ -2424,29 +2433,7 @@ function CustomerDashboard() {
                   </div>
                 )}
 
-                <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                  <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Order Timeline</h5>
-                  <p className="text-sm text-slate-500 mt-1">Status history for this order.</p>
-
-                  <div className="mt-6 space-y-4">
-                    {selectedOrderSteps.map((step, index) => (
-                      <div key={step.key} className="flex gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className={`flex h-10 w-10 items-center justify-center rounded-full border text-sm font-semibold ${step.done ? "border-emerald-600 bg-emerald-600 text-white" : step.active ? "border-amber-400 bg-amber-100 text-amber-700" : "border-slate-200 bg-white text-slate-500"}`}>
-                            {step.done ? "✓" : index + 1}
-                          </div>
-                          {index < selectedOrderSteps.length - 1 && (
-                            <div className={`w-1 h-12 mt-2 ${step.done ? "bg-emerald-600" : step.active ? "bg-amber-300" : "bg-slate-200"}`} />
-                          )}
-                        </div>
-                        <div className="pt-1 pb-4">
-                          <p className={`text-sm font-semibold ${step.done || step.active ? "text-slate-900" : "text-slate-500"}`}>{step.label}</p>
-                          {step.active ? <p className="text-xs text-amber-600 mt-1">Current stage</p> : null}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <OrderTimeline order={selectedOrderForModal} onOrderChange={handleOrderUpdate} audience="customer" />
               </div>
 
               <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 flex justify-end gap-3">
@@ -3044,9 +3031,10 @@ function CustomerDashboard() {
           onClose={closeContractModal}
           inspection={contractPreviewOrder}
           contractData={contractPreviewData}
-          onAccept={() => contractPreviewOrder && openContractConfirmModal("accept", contractPreviewOrder._id)}
-          onDecline={() => contractPreviewOrder && openContractConfirmModal("decline", contractPreviewOrder._id)}
+          onAccept={() => handleAcceptContract(contractPreviewOrder?._id || contractPreviewOrder?.id)}
+          onDecline={() => contractPreviewOrder && openContractConfirmModal("decline", contractPreviewOrder._id || contractPreviewOrder.id)}
           isLoading={contractActionLoading}
+          actionError={contractActionError}
         />
 
         {/* CONTRACT CONFIRMATION MODAL */}

@@ -34,6 +34,40 @@ const getDefaultInspection = () => ({
   estimation_mode: "auto",
 });
 
+const SITE_INSPECTION_STATUS = "site_inspection";
+const PENDING_CONTRACT_STATUSES = new Set(["", "pending"]);
+const CONTRACT_STAGE_STATUSES = new Set([
+  "contract_created",
+  "contract_sent",
+  "contract_accepted",
+  "contract_declined",
+  "in_transaction",
+  "processing",
+  "cutting",
+  "fabrication",
+  "installation_scheduling",
+  "installation",
+  "completed",
+  "cancelled",
+]);
+
+const normalizeWorkflowValue = (value) =>
+  (value || "").toString().trim().toLowerCase();
+
+const isSiteInspectionVisible = (order) => {
+  if (!order) return false;
+
+  const status = normalizeWorkflowValue(order.status);
+  const contractStatus = normalizeWorkflowValue(order.contract_status);
+
+  if (status !== SITE_INSPECTION_STATUS) return false;
+  if (CONTRACT_STAGE_STATUSES.has(status)) return false;
+  if (!PENDING_CONTRACT_STATUSES.has(contractStatus)) return false;
+  if (order.contract_terms || order.contract_amount) return false;
+
+  return true;
+};
+
 function SiteInspection() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -51,6 +85,7 @@ function SiteInspection() {
   const [editInspection, setEditInspection] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [activeTab, setActiveTab] = useState("site");
+  const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
   const [newInspection, setNewInspection] = useState(getDefaultInspection());
   const [errors, setErrors] = useState({});
@@ -67,6 +102,11 @@ function SiteInspection() {
   const [contractInspection, setContractInspection] = useState(null);
   
   const today = new Date().toISOString().split("T")[0];
+  const pageSize = 8;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchQuery, cancelledInspections.length, inspections.length]);
 
   const fetchSiteInspections = async () => {
     setInspectionsLoading(true);
@@ -75,7 +115,7 @@ function SiteInspection() {
         getAdminOrders({ status: "site_inspection" }),
         getAdminOrders({ status: "cancelled" }),
       ]);
-      setInspections(siteResp.orders || []);
+      setInspections((siteResp.orders || []).filter(isSiteInspectionVisible));
       setCancelledInspections(cancelledResp.orders || []);
     } catch (error) {
       console.error("Failed to load site inspection records:", error);
@@ -790,13 +830,28 @@ const buildInspectionPayload = async (payload) => {
         return;
       }
 
-      await generateContract(orderId, {
+      const contractResponse = await generateContract(orderId, {
         contract_terms: order.contract_terms || contract.contractTerms,
         contract_amount: order.contract_amount || contract.totalProjectCost,
       });
 
-      setContractInspection(order);
-      setContractData(contract);
+      const savedOrder = contractResponse?.order || {};
+      const generatedOrder = {
+        ...order,
+        ...savedOrder,
+        customer: typeof savedOrder.customer === "object" ? savedOrder.customer : order.customer,
+        status: savedOrder.status || "contract_sent",
+        contract_status: savedOrder.contract_status || "sent",
+        contract_terms: savedOrder.contract_terms || order.contract_terms || contract.contractTerms,
+        contract_amount: savedOrder.contract_amount || order.contract_amount || contract.totalProjectCost,
+      };
+      const generatedContract = generateContractData(generatedOrder) || contract;
+
+      setInspections((prev) => prev.filter((inspection) => (inspection._id || inspection.id) !== orderId));
+      setViewInspection((prev) => ((prev?._id || prev?.id) === orderId ? null : prev));
+      setEditInspection((prev) => (prev?.id === orderId ? null : prev));
+      setContractInspection(generatedOrder);
+      setContractData(generatedContract);
       setShowContractModal(true);
       toast.success("Contract generated successfully!");
     } catch (err) {
@@ -936,7 +991,9 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
       const res = await updateOrderStatus(orderId, { status: "site_inspection" });
       if (res && res.order) {
         setCancelledInspections((prev) => prev.filter((i) => (i._id || i.id) !== orderId));
-        setInspections((prev) => [res.order, ...prev]);
+        if (isSiteInspectionVisible(res.order)) {
+          setInspections((prev) => [res.order, ...prev]);
+        }
         toast.success("Inspection restored");
       }
     } catch (err) {
@@ -1016,7 +1073,10 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
       toast.success("Inspection saved");
       // update local inspections list with returned order
       if (res && res.order) {
-        setInspections((prev) => prev.map((i) => ((i._id || i.id) === editInspection.id ? res.order : i)));
+        setInspections((prev) => {
+          const next = prev.map((i) => ((i._id || i.id) === editInspection.id ? res.order : i));
+          return next.filter(isSiteInspectionVisible);
+        });
       }
       setEditInspection(null);
     } catch (err) {
@@ -1038,6 +1098,14 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
+
+  const sourceList = activeTab === "cancelled" ? cancelledInspections : inspections.filter(isSiteInspectionVisible);
+  const filteredList = filterInspections(sourceList);
+  const totalPages = Math.max(1, Math.ceil(filteredList.length / pageSize));
+  const currentPageIndex = Math.min(Math.max(currentPage, 1), totalPages);
+  const paginatedList = filteredList.slice((currentPageIndex - 1) * pageSize, currentPageIndex * pageSize);
+  const visibleRecordStart = filteredList.length === 0 ? 0 : (currentPageIndex - 1) * pageSize + 1;
+  const visibleRecordEnd = Math.min(currentPageIndex * pageSize, filteredList.length);
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
@@ -1199,6 +1267,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
                   <tr>
 
+                    <th className="w-16 p-4 text-center">No.</th>
                     <th className="p-4 text-left">Client</th>
                     <th className="p-4 text-left">Phone</th>
                     <th className="p-4 text-left">Product</th>
@@ -1216,24 +1285,18 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                 <tbody>
                   {inspectionsLoading ? (
                     <tr>
-                      <td colSpan={9} className="p-8 text-center text-slate-500">
+                      <td colSpan={10} className="p-8 text-center text-slate-500">
                         Loading inspections...
                       </td>
                     </tr>
-                  ) : (() => {
-                    const sourceList = activeTab === 'cancelled' ? cancelledInspections : inspections;
-                    const list = filterInspections(sourceList);
-                    if (!list || list.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan={9} className="p-8 text-center text-slate-500">
-                            No records in this tab.
-                          </td>
-                        </tr>
-                      );
-                    }
-
-                    return list.map((inspection) => {
+                  ) : !filteredList.length ? (
+                    <tr>
+                      <td colSpan={10} className="p-8 text-center text-slate-500">
+                        No records in this tab.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedList.map((inspection, index) => {
                       const clientName = inspection.customer
                         ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim() || inspection.customer.email || inspection.customer_name || "Customer"
                         : inspection.customer_name || "Customer";
@@ -1256,6 +1319,9 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                           key={inspection._id || inspection.id}
                           className="border-t hover:bg-gray-50"
                         >
+                          <td className="w-16 p-4 text-center font-semibold text-slate-600">
+                            {(currentPageIndex - 1) * pageSize + index + 1}
+                          </td>
                           <td className="p-4">{clientName}</td>
                           <td className="p-4">{phone}</td>
                           <td className="p-4">{productName}</td>
@@ -1331,26 +1397,49 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                         </tr>
                       );
                     })
-                  })() }
+                  )}
                 </tbody>
 
               </table>
 
             </div>
 
-            <div className="flex justify-center items-center p-4 border-t bg-gray-50 gap-4">
-              <button className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-100">
-                Previous
-              </button>
-              <button className="w-10 h-10 rounded-lg bg-red-600 text-white">
-                1
-              </button>
-              <button className="w-10 h-10 rounded-lg border bg-white hover:bg-gray-100">
-                2
-              </button>
-              <button className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-100">
-                Next
-              </button>
+            <div className="flex flex-col gap-3 justify-center items-center p-4 border-t bg-gray-50 sm:flex-row">
+              <div className="text-sm text-slate-600">
+                Showing {visibleRecordStart} - {visibleRecordEnd} of {filteredList.length} records
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={currentPage <= 1}
+                  className="px-4 py-2 rounded-lg border bg-white text-slate-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                {Array.from({ length: Math.min(5, totalPages) }, (_, idx) => {
+                  const startPage = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
+                  const pageNumber = startPage + idx;
+                  return (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      onClick={() => setCurrentPage(pageNumber)}
+                      className={`w-10 h-10 rounded-lg ${pageNumber === currentPage ? 'bg-red-600 text-white' : 'border bg-white text-slate-700 hover:bg-gray-100'}`}
+                    >
+                      {pageNumber}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage >= totalPages}
+                  className="px-4 py-2 rounded-lg border bg-white text-slate-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
             </div>
 
           </div>

@@ -62,8 +62,9 @@ function Transactions() {
   const [contractPreviewData, setContractPreviewData] = useState(null);
 
   const canReviewTransaction = (order) => {
-    const status = (order.contract_status || "").toString().toLowerCase();
-    return status === "accepted";
+    const contractStatus = (order.contract_status || "").toString().toLowerCase();
+    const orderStatus = (order.status || "").toString().toLowerCase();
+    return contractStatus === "accepted" && orderStatus === "contract_accepted";
   };
 
   const openTransactionConfirm = (action, order) => {
@@ -103,7 +104,7 @@ function Transactions() {
       const now = new Date().toISOString();
       updateOrderLocally(orderId, {
         ...updated,
-        contract_status: updated.contract_status || "approved",
+        contract_status: updated.contract_status || "accepted",
         approved_at: updated.approved_at || now,
         status: updated.status || "site_inspection",
       });
@@ -448,6 +449,13 @@ function Transactions() {
       ? currentProjects
       : currentCancelled;
 
+  const currentFirstIndex =
+    activeTable === "receipts"
+      ? receiptFirstIndex
+      : activeTable === "projects"
+      ? projectFirstIndex
+      : cancelledFirstIndex;
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} />
@@ -536,6 +544,10 @@ function Transactions() {
                 <thead className="bg-gray-50">
 
                   <tr>
+                    <th className="w-16 p-4 text-center">
+                      No.
+                    </th>
+
                     <th className="p-4 text-left">
                       Tracking ID
                     </th>
@@ -579,6 +591,10 @@ function Transactions() {
 
                     return (
                       <tr key={order._id || index} className="border-t hover:bg-gray-50">
+                        <td className="w-16 p-4 text-center font-semibold text-slate-600">
+                          {currentFirstIndex + index + 1}
+                        </td>
+
                         <td className="p-4">{order.tracking}</td>
 
                         <td className="p-4">{customerName}</td>

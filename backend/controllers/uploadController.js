@@ -14,7 +14,39 @@ const storage = multer.diskStorage({
   },
 });
 
-export const uploadMiddleware = multer({ storage });
+const allowedMimeTypes = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+];
+
+const fileFilter = (req, file, cb) => {
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname));
+  }
+};
+
+export const uploadMiddleware = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+const cleanupFiles = async (files = []) => {
+  await Promise.all(
+    files.map(async (file) => {
+      if (!file || !file.path) return;
+      try {
+        await fs.promises.unlink(file.path);
+      } catch (err) {
+        console.warn("Failed to cleanup upload file:", file.path, err.message);
+      }
+    })
+  );
+};
 
 export const uploadImages = async (req, res) => {
   try {
@@ -31,6 +63,14 @@ export const uploadImages = async (req, res) => {
     res.json({ success: true, files: saved });
   } catch (error) {
     console.error("Upload images error:", error);
+    await cleanupFiles(req.files);
+    if (error instanceof multer.MulterError) {
+      const message =
+        error.code === "LIMIT_FILE_SIZE"
+          ? "File size exceeds 5MB limit"
+          : "Invalid file type: only JPEG, PNG, WEBP, and GIF are allowed";
+      return res.status(400).json({ success: false, message });
+    }
     res.status(500).json({ success: false, message: "Unable to upload images", error: error.message });
   }
 };

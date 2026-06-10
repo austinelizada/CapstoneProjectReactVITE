@@ -11,8 +11,9 @@ import orderRoutes from "./routes/orders.js";
 import { connectMongo } from "./config/db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, ".env") });
+dotenv.config({ path: path.resolve(__dirname, ".env"), quiet: true });
 
+const isVerbose = process.env.DEBUG_API === "true" || process.env.VERBOSE === "true";
 const requiredEnvs = ["JWT_SECRET"];
 for (const envName of requiredEnvs) {
   if (!process.env[envName]) {
@@ -21,7 +22,7 @@ for (const envName of requiredEnvs) {
   }
 }
 
-if (!process.env.MONGO_URI) {
+if (!process.env.MONGO_URI && isVerbose) {
   console.warn(
     "[env] MONGO_URI not set. The backend will attempt to connect to local MongoDB at mongodb://127.0.0.1:27017/reactvite"
   );
@@ -30,10 +31,12 @@ if (!process.env.MONGO_URI) {
 const app = express();
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 
-app.use((req, res, next) => {
-  console.info(`[api] ${req.method} ${req.originalUrl}`);
-  next();
-});
+if (isVerbose) {
+  app.use((req, res, next) => {
+    console.info(`[api] ${req.method} ${req.originalUrl}`);
+    next();
+  });
+}
 
 app.use(
   cors({
@@ -98,6 +101,14 @@ app.use("/api/uploads", uploadRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+  if (err.name === "MulterError") {
+    const message =
+      err.code === "LIMIT_FILE_SIZE"
+        ? "File size exceeds 5MB limit"
+        : "Invalid file type: only JPEG, PNG, WEBP, and GIF are allowed";
+    return res.status(400).json({ success: false, message });
+  }
+
   console.error("[error]", err);
   res.status(err.status || 500).json({
     success: false,
@@ -128,7 +139,7 @@ const connectWithRetry = async (attempt = 1) => {
 
   try {
     await connectMongo();
-    console.log("Connected to MongoDB");
+    if (isVerbose) console.log("Connected to MongoDB");
   } catch (error) {
     const delayMs = Math.min(30000, 2000 * attempt);
     console.error(
@@ -140,8 +151,10 @@ const connectWithRetry = async (attempt = 1) => {
 };
 
 app.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
-  console.log(`API base URL: http://localhost:${PORT}/api`);
+  if (isVerbose) {
+    console.log(`Server listening on http://localhost:${PORT}`);
+    console.log(`API base URL: http://localhost:${PORT}/api`);
+  }
   connectWithRetry();
 });
 
@@ -154,11 +167,11 @@ process.on("unhandledRejection", (reason) => {
 });
 
 process.on("SIGINT", () => {
-  console.log("Received SIGINT, shutting down gracefully.");
+  if (isVerbose) console.log("Received SIGINT, shutting down gracefully.");
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  console.log("Received SIGTERM, shutting down gracefully.");
+  if (isVerbose) console.log("Received SIGTERM, shutting down gracefully.");
   process.exit(0);
 });

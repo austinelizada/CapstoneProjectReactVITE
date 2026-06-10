@@ -2,7 +2,7 @@ import { X } from "lucide-react";
 import logo from "@/assets/images/ACGCLOGO1.png";
 import approvedStamp from "@/assets/approved.png";
 
-function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, isLoading, onDownload, onDownloadPNG, onPrint }) {
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, isLoading, actionError, onDownload, onDownloadPNG, onPrint }) {
   if (!isOpen || !inspection || !contractData) return null;
 
   const formatCurrency = (value) => {
@@ -13,9 +13,11 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
     }).format(value || 0);
   };
 
-  const statusRaw = (contractData?.status || contractData?.contractStatus || contractData?.orderStatus || "").toString().toLowerCase();
-  const isAccepted = /accepted|contract_accepted/i.test(statusRaw);
-  const actionsAllowed = Boolean(onAccept || onDecline) && !/accept|accepted|decline|declined|cancel/i.test(statusRaw);
+  const orderStatusRaw = (contractData?.orderStatus || contractData?.status || "").toString().toLowerCase();
+  const contractStatusRaw = (contractData?.rawContractStatus || contractData?.contractStatus || "").toString().toLowerCase();
+  const isAccepted = orderStatusRaw === "contract_accepted" || contractStatusRaw === "accepted";
+  const isAwaitingCustomerResponse = orderStatusRaw === "contract_sent" || contractStatusRaw === "sent";
+  const actionsAllowed = Boolean(onAccept || onDecline) && isAwaitingCustomerResponse && !isAccepted;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -28,6 +30,9 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
               <p className="mt-2 text-sm text-slate-500">
                 Status: <span className="font-semibold">{contractData.contractStatus || contractData.status.replace(/_/g, " ")}</span>
               </p>
+            )}
+            {actionError && (
+              <p className="mt-2 text-sm font-medium text-red-600">{actionError}</p>
             )}
           </div>
 
