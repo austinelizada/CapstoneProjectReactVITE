@@ -3,9 +3,12 @@ import {
   Search,
   Eye,
   Pencil,
+  X,
 } from "lucide-react";
 
-import { getAdminOrders, updateOrderProgress } from "@/api/orders";
+import { getAdminOrders, updateOrderProgress, updateOrderStatus } from "@/api/orders";
+import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
+import toast, { Toaster } from "react-hot-toast";
 import { uploadFiles } from "@/api/uploads";
 import ProgressViewModal from "../../components/ProgressViewModal";
 import ProgressEditModal from "../../components/ProgressEditModal";
@@ -26,6 +29,7 @@ const formatOrderStatus = (status, contractStatus) => {
   if (status === "completed") return "Completed";
   if (status === "site_inspection") return "Installation";
   if (status === "processing") return "Fabrication";
+  if (status === "approved") return "Pending";
   if (status === "contract_accepted") return "Accepted";
   if (status === "contract_sent") return "Pending";
   if (status === "admin_review") return "Pending";
@@ -36,6 +40,19 @@ const formatOrderStatus = (status, contractStatus) => {
 
 const getProjectStatus = (order) => {
   if (hasDelayedStage(order.progress_stages)) return "Delayed";
+
+  const scheduleStage = Array.isArray(order.progress_stages)
+    ? order.progress_stages.find((stage) =>
+        ["installation_scheduling", "installation_scheduled", "installation_agreement"].includes(
+          (stage.key || "").toString().toLowerCase()
+        )
+      )
+    : null;
+
+  if (scheduleStage?.customerResponse === "reschedule_requested") {
+    return "Installation Reschedule Requested";
+  }
+
   return formatOrderStatus(order.status, order.contract_status);
 };
 
@@ -44,9 +61,27 @@ const mapProgressFromStatus = (status, progress) => {
   if (status === "completed") return 100;
   if (status === "site_inspection") return 70;
   if (status === "processing") return 65;
+  if (status === "approved") return 25;
   if (status === "contract_accepted") return 50;
   if (status === "contract_sent") return 25;
   return 15;
+};
+
+const hasFinalStageCompleted = (stages = []) =>
+  Array.isArray(stages) &&
+  stages.length > 0 &&
+  stages[stages.length - 1].completed === true;
+
+const canCancelProject = (project) => {
+  const progress = Number(project.progress) || 0;
+  const status = String(project.status || "").toLowerCase();
+
+  if (progress >= 100) return false;
+  if (status === "completed") return false;
+  if (status === "cancelled") return false;
+  if (hasFinalStageCompleted(project.stages)) return false;
+
+  return true;
 };
 
 function ProgressMonitor() {
@@ -65,7 +100,7 @@ function ProgressMonitor() {
   }, [isSidebarOpen]);
 
   const [statusFilter, setStatusFilter] =
-    useState("All");
+    useState("Pending");
 
   const [search, setSearch] =
     useState("");
@@ -77,6 +112,9 @@ function ProgressMonitor() {
 
   const [selectedProject, setSelectedProject] =
     useState(null);
+
+  const [cancelConfirm, setCancelConfirm] = useState({ open: false, id: null });
+  const [cancellingId, setCancellingId] = useState(null);
 
   const rowsPerPage = 5;
 
@@ -96,6 +134,10 @@ function ProgressMonitor() {
       const matchStatus =
         statusFilter === "All"
           ? true
+          : statusFilter === "Pending"
+          ? ["Pending", "Installation Reschedule Requested", "Accepted"].includes(project.status)
+          : statusFilter === "Installation Reschedule Requested"
+          ? project.status === "Installation Reschedule Requested"
           : project.status === statusFilter;
 
       return matchSearch && matchStatus;
@@ -126,12 +168,14 @@ function ProgressMonitor() {
         const projects = orders
           .filter((order) =>
             [
+              "approved",
+              "admin_review",
+              "contract_sent",
               "contract_accepted",
               "site_inspection",
               "processing",
               "completed",
-            ].includes(order.status) ||
-            order.contract_status === "accepted"
+            ].includes(order.status)
           )
           .map((order) => ({
             id: order._id || order.id,
@@ -147,11 +191,11 @@ function ProgressMonitor() {
               order.inspection_status && order.inspection_status !== "pending"
                 ? order.inspection_status.charAt(0).toUpperCase() + order.inspection_status.slice(1)
                 : order.inspection_date
-                ? new Date(order.inspection_date).toLocaleDateString()
+                ? formatDateToMMDDYYYY(order.inspection_date)
                 : "TBD",
             installation:
               order.inspection_date
-                ? new Date(order.inspection_date).toLocaleDateString()
+                ? formatDateToMMDDYYYY(order.inspection_date)
                 : "TBD",
             progress: mapProgressFromStatus(order.status, order.progress),
             stages: order.progress_stages || [],
@@ -242,8 +286,201 @@ function ProgressMonitor() {
     }
   };
 
+  const handleTimelineOrderChange = (savedOrder) => {
+    if (!savedOrder) return;
+    const updatedProject = {
+      ...(selectedProject || {}),
+      id: savedOrder._id || savedOrder.id || selectedProject?.id,
+      client:
+        savedOrder.customer_name ||
+        `${savedOrder.customer?.first_name || ""} ${savedOrder.customer?.last_name || ""}`.trim() ||
+        selectedProject?.client ||
+        "Unknown",
+      product:
+        savedOrder.items && savedOrder.items.length > 0
+          ? savedOrder.items[0].name || savedOrder.items[0].category || "Project"
+          : selectedProject?.product || "Project",
+      inspection:
+        savedOrder.inspection_status && savedOrder.inspection_status !== "pending"
+          ? savedOrder.inspection_status.charAt(0).toUpperCase() + savedOrder.inspection_status.slice(1)
+          : savedOrder.inspection_date
+          ? formatDateToMMDDYYYY(savedOrder.inspection_date)
+          : "TBD",
+      installation: savedOrder.inspection_date ? formatDateToMMDDYYYY(savedOrder.inspection_date) : "TBD",
+      progress: mapProgressFromStatus(savedOrder.status, savedOrder.progress),
+      stages: savedOrder.progress_stages || [],
+      progress_stages: savedOrder.progress_stages || [],
+      status: getProjectStatus(savedOrder),
+      statusKey: savedOrder.status,
+      contract_status: savedOrder.contract_status,
+      payment_status: savedOrder.payment_status,
+      inspection_status: savedOrder.inspection_status,
+      inspection_date: savedOrder.inspection_date,
+      createdAt: savedOrder.createdAt,
+      updatedAt: savedOrder.updatedAt,
+      contract_terms: savedOrder.contract_terms,
+      rawOrder: savedOrder,
+    };
+
+    setProjectList((items) =>
+      items.map((item) => (item.id === updatedProject.id ? updatedProject : item))
+    );
+    setSelectedProject(updatedProject);
+  };
+
+  const requestCancel = (orderId) => {
+    setCancelConfirm({ open: true, id: orderId });
+  };
+
+  const closeCancelModal = () => setCancelConfirm({ open: false, id: null });
+
+  const handleConfirmCancel = async () => {
+    const orderId = cancelConfirm.id;
+    setCancelConfirm({ open: false, id: null });
+    if (!orderId) return;
+    const prev = projectList.find((p) => p.id === orderId);
+    const prevStatus = prev?.statusKey || prev?.status || null;
+    try {
+      setCancellingId(orderId);
+      const res = await updateOrderStatus(orderId, { status: "cancelled" });
+      if (res && res.order) {
+        const saved = res.order;
+        setProjectList((prevList) =>
+          prevList.map((p) =>
+            p.id === orderId
+              ? {
+                  ...p,
+                  rawOrder: saved,
+                  statusKey: saved.status,
+                  contract_status: saved.contract_status,
+                  payment_status: saved.payment_status,
+                  inspection_status: saved.inspection_status,
+                  inspection_date: saved.inspection_date,
+                  createdAt: saved.createdAt,
+                  updatedAt: saved.updatedAt,
+                  contract_terms: saved.contract_terms,
+                  progress: mapProgressFromStatus(saved.status, saved.progress),
+                  stages: saved.progress_stages || [],
+                  progress_stages: saved.progress_stages || [],
+                  status: getProjectStatus(saved),
+                }
+              : p
+          )
+        );
+
+        toast((t) => (
+          <div className="flex items-center justify-between gap-4">
+            <div>Order cancelled</div>
+            <div className="flex items-center gap-2">
+              {prevStatus && (
+                <button
+                  onClick={async () => {
+                    toast.dismiss(t.id);
+                    try {
+                      const undoRes = await updateOrderStatus(orderId, { status: prevStatus });
+                      if (undoRes && undoRes.order) {
+                        const restored = undoRes.order;
+                        setProjectList((prevList) =>
+                          prevList.map((p) =>
+                            p.id === orderId
+                              ? {
+                                  ...p,
+                                  rawOrder: restored,
+                                  statusKey: restored.status,
+                                  contract_status: restored.contract_status,
+                                  payment_status: restored.payment_status,
+                                  inspection_status: restored.inspection_status,
+                                  inspection_date: restored.inspection_date,
+                                  createdAt: restored.createdAt,
+                                  updatedAt: restored.updatedAt,
+                                  contract_terms: restored.contract_terms,
+                                  progress: mapProgressFromStatus(restored.status, restored.progress),
+                                  stages: restored.progress_stages || [],
+                                  progress_stages: restored.progress_stages || [],
+                                  status: getProjectStatus(restored),
+                                }
+                              : p
+                          )
+                        );
+                        toast.success("Order restored");
+                      }
+                    } catch (e) {
+                      console.error("Failed to restore order", e);
+                      toast.error("Failed to restore order");
+                    }
+                  }}
+                  className="text-sm text-blue-600"
+                >
+                  Undo
+                </button>
+              )}
+            </div>
+          </div>
+        ), { duration: 6000 });
+      } else {
+        // fallback: mark locally
+        setProjectList((prevList) => prevList.map((p) => (p.id === orderId ? { ...p, status: "Cancelled", statusKey: "cancelled" } : p)));
+        toast((t) => (
+          <div className="flex items-center justify-between gap-4">
+            <div>Order cancelled</div>
+            <div className="flex items-center gap-2">
+              {prevStatus && (
+                <button
+                  onClick={async () => {
+                    toast.dismiss(t.id);
+                    try {
+                      const undoRes = await updateOrderStatus(orderId, { status: prevStatus });
+                      if (undoRes && undoRes.order) {
+                        const restored = undoRes.order;
+                        setProjectList((prevList) =>
+                          prevList.map((p) =>
+                            p.id === orderId
+                              ? {
+                                  ...p,
+                                  rawOrder: restored,
+                                  statusKey: restored.status,
+                                  contract_status: restored.contract_status,
+                                  payment_status: restored.payment_status,
+                                  inspection_status: restored.inspection_status,
+                                  inspection_date: restored.inspection_date,
+                                  createdAt: restored.createdAt,
+                                  updatedAt: restored.updatedAt,
+                                  contract_terms: restored.contract_terms,
+                                  progress: mapProgressFromStatus(restored.status, restored.progress),
+                                  stages: restored.progress_stages || [],
+                                  progress_stages: restored.progress_stages || [],
+                                  status: getProjectStatus(restored),
+                                }
+                              : p
+                          )
+                        );
+                        toast.success("Order restored");
+                      }
+                    } catch (e) {
+                      console.error("Failed to restore order", e);
+                      toast.error("Failed to restore order");
+                    }
+                  }}
+                  className="text-sm text-blue-600"
+                >
+                  Undo
+                </button>
+              )}
+            </div>
+          </div>
+        ), { duration: 6000 });
+      }
+    } catch (err) {
+      console.error("Failed to cancel order", err);
+      toast.error(err?.data?.message || err?.message || "Failed to cancel order.");
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
+      <Toaster position="bottom-right" />
       <Sidebar isOpen={isSidebarOpen} />
 
       <div className="flex-1 min-h-0 flex flex-col">
@@ -295,6 +532,7 @@ function ProgressMonitor() {
                 "Cutting",
                 "Fabrication",
                 "Installation",
+                "Installation Reschedule Requested",
                 "Completed",
                 "Delayed",
               ].map((status) => (
@@ -430,6 +668,20 @@ function ProgressMonitor() {
                               <Pencil size={18} />
                             </button>
 
+                            {canCancelProject(project) && (
+                              <button
+                                onClick={() => {
+                                  setSelectedProject(project);
+                                  requestCancel(project.id);
+                                }}
+                                disabled={cancellingId === project.id}
+                                className={`p-2 rounded-lg ${cancellingId === project.id ? "bg-red-200 text-red-300" : "bg-red-100 text-red-600"}`}
+                                title="Cancel project"
+                              >
+                                <X size={18} />
+                              </button>
+                            )}
+
                           </div>
 
                         </td>
@@ -509,11 +761,31 @@ function ProgressMonitor() {
           </div>
 
           {showViewModal && selectedProject && (
-            <ProgressViewModal project={selectedProject} onClose={() => setShowViewModal(false)} />
+            <ProgressViewModal
+              project={selectedProject}
+              onClose={() => setShowViewModal(false)}
+              onOrderChange={handleTimelineOrderChange}
+            />
           )}
 
           {showEditModal && selectedProject && (
             <ProgressEditModal project={selectedProject} onClose={() => setShowEditModal(false)} onSave={handleSave} />
+          )}
+
+          {cancelConfirm.open && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="absolute inset-0" onClick={closeCancelModal} />
+              <div className="relative bg-white rounded-3xl shadow-lg p-6 w-full max-w-md">
+                <h2 className="text-2xl font-bold mb-2">Confirm Cancel</h2>
+                <p className="text-sm text-slate-600 mb-6">Are you sure you want to cancel this project/order? This action will mark the order as cancelled.</p>
+                <div className="flex justify-end gap-3">
+                  <button onClick={closeCancelModal} className="px-4 py-2 rounded-lg bg-gray-100 text-slate-700 hover:bg-gray-200 transition">Close</button>
+                  <button onClick={handleConfirmCancel} disabled={cancellingId === cancelConfirm.id} className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+                    {cancellingId === cancelConfirm.id ? "Cancelling..." : "Confirm Cancel"}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
         </main>

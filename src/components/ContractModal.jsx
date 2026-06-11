@@ -115,8 +115,8 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             <div className="flex items-center gap-2">
               <img src={logo} alt="ACGC" className="w-16 h-12 object-contain" />
               <div>
-                <h1 className="font-bold text-lg">ACGC</h1>
-                <p className="text-sm text-gray-900">Glass & Aluminum Services</p>
+                <h1 className="font-bold text-red-600">ACGC</h1>
+                <p className="text-sm font-semibold text-gray-900">Glass & Aluminum Services</p>
               </div>
             </div>
             <div className="text-center">

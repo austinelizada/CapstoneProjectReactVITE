@@ -16,6 +16,7 @@ import { searchCustomers } from "@/api/users";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import ContractModal from "../../components/ContractModal";
+import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
 
 const getDefaultInspection = () => ({
   customerId: null,
@@ -746,8 +747,8 @@ const buildInspectionPayload = async (payload) => {
     const customerPhone = order.customer_phone || order.customer?.phone || "N/A";
     const customerType = order.order_type === "walk_in_customer" ? "Walk-in Customer" : "Online Customer";
     const orderNumber = order.tracking || `ORD-${String(order._id || "").slice(-8).toUpperCase()}`;
-    const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "N/A";
-    const siteInspectionDate = order.inspection_date ? new Date(order.inspection_date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "TBD";
+    const orderDate = order.createdAt ? formatDateToMMDDYYYY(order.createdAt) : "N/A";
+    const siteInspectionDate = order.inspection_date ? formatDateToMMDDYYYY(order.inspection_date) : "TBD";
     const projectLocation = order.shipping_address || "N/A";
     const paymentTerms = order.payment_terms || "Standard payment terms apply.";
     const contractTerms = order.contract_terms || "The terms and conditions outlined by ACGC Glass & Aluminum Services apply to this agreement.";
@@ -755,7 +756,7 @@ const buildInspectionPayload = async (payload) => {
     const downPayment = Math.round((totalProjectCost * 0.5) * 100) / 100;
     const contractNumber = `ACGC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
     const trackingNumber = `TRK-${order.tracking || (order._id?.slice(-4).toUpperCase() || Math.random().toString(36).substring(2, 8).toUpperCase())}`;
-    const contractDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    const contractDate = formatDateToMMDDYYYY(new Date());
 
     const items = (order.items || []).map((item, index) => {
       const itemName = item.name || item.product_id?.name || `Item ${index + 1}`;
@@ -1304,7 +1305,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                       const productName = inspection.items?.[0]?.name || inspection.items?.[0]?.product_id?.name || "Project Item";
                       const orderType = inspection.order_type === "walk_in_customer" ? "Walk-in" : "Online";
                       const address = inspection.shipping_address || "—";
-                      const date = inspection.createdAt ? new Date(inspection.createdAt).toLocaleDateString() : "—";
+                      const date = inspection.createdAt ? formatDateToMMDDYYYY(inspection.createdAt) : "—";
                       const statusLabel = inspection.inspection_status
                         ? inspection.inspection_status
                             .replace(/_/g, " ")
@@ -1773,7 +1774,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                           {viewInspection.total_amount ? `₱${Number(viewInspection.total_amount).toLocaleString()}` : '—'}
                         </div>
                         <div>
-                          <span className="font-semibold">Created:</span> {viewInspection.createdAt ? new Date(viewInspection.createdAt).toLocaleString() : '—'}
+                          <span className="font-semibold">Created:</span> {viewInspection.createdAt ? formatDateTimeToMMDDYYYY(viewInspection.createdAt) : '—'}
                         </div>
                       </div>
                     </div>
@@ -1815,7 +1816,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <h3 className="font-semibold">Inspection Date</h3>
-                      <p>{viewInspection.inspection_date ? new Date(viewInspection.inspection_date).toLocaleString() : '—'}</p>
+                      <p>{viewInspection.inspection_date ? formatDateToMMDDYYYY(viewInspection.inspection_date) : '—'}</p>
                     </div>
                     <div>
                       <h3 className="font-semibold">Status</h3>

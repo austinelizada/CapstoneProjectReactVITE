@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import toast, { Toaster } from "react-hot-toast";
 import {
   Truck,
   ShoppingCart,
@@ -142,6 +143,7 @@ function CustomerDashboard() {
   const [orderFilter, setOrderFilter] = useState("all");
   const [orderViewMode, setOrderViewMode] = useState("view2");
   const [selectedOrderForModal, setSelectedOrderForModal] = useState(null);
+  const [contractSummaryExpanded, setContractSummaryExpanded] = useState(true);
 
   const [trackingNumber, setTrackingNumber] = useState("");
   const [trackingResult, setTrackingResult] = useState(null);
@@ -222,6 +224,17 @@ function CustomerDashboard() {
   useEffect(() => {
     localStorage.setItem("customerCart", JSON.stringify(cartItems));
   }, [cartItems]);
+
+  useEffect(() => {
+    if (selectedOrderForModal) {
+      const contractStatus = selectedOrderForModal.contract_status?.toLowerCase();
+      if (contractStatus === "accepted" || contractStatus === "declined") {
+        setContractSummaryExpanded(false);
+      } else {
+        setContractSummaryExpanded(true);
+      }
+    }
+  }, [selectedOrderForModal]);
 
   useEffect(() => {
     let active = true;
@@ -512,11 +525,14 @@ function CustomerDashboard() {
       const response = await acceptContract(orderId);
       updateLocalOrder(response.order);
       setContractActionMessage("Contract accepted successfully.");
+      toast.success("Contract accepted successfully.");
       setContractActionOrderId(response.order._id);
       setContractConfirmModal({ open: false, action: null, orderId: null });
       setShowContractModal(false);
     } catch (error) {
-      setContractActionError(error.data?.message || error.message || "Unable to accept contract.");
+      const message = error.data?.message || error.message || "Unable to accept contract.";
+      setContractActionError(message);
+      toast.error(message);
       setContractActionMessage("");
     } finally {
       setContractActionLoading(false);
@@ -537,11 +553,14 @@ function CustomerDashboard() {
         setSelectedOrderForModal(response.order);
       }
       setContractActionMessage("Contract declined and order cancelled.");
+      toast.success("Contract declined successfully.");
       setContractActionOrderId(response.order._id);
       setContractConfirmModal({ open: false, action: null, orderId: null });
       setShowContractModal(false);
     } catch (error) {
-      setContractActionError(error.data?.message || error.message || "Unable to decline contract.");
+      const message = error.data?.message || error.message || "Unable to decline contract.";
+      setContractActionError(message);
+      toast.error(message);
       setContractActionMessage("");
     } finally {
       setContractActionLoading(false);
@@ -1114,6 +1133,7 @@ function CustomerDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-100">
+      <Toaster position="bottom-right" />
       <div className="bg-white shadow sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
@@ -2288,8 +2308,24 @@ function CustomerDashboard() {
                               <span>Progress</span>
                               <span>{progressPercent}%</span>
                             </div>
-                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
-                              <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500" style={{ width: `${progressPercent}%` }} />
+                            <div className="mt-2">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-base font-medium">{progressPercent}%</span>
+                                <span className="text-xs text-slate-500">auto-calculated</span>
+                              </div>
+                              <div className="relative h-2.5 rounded-full bg-gray-100 overflow-visible">
+                                <div
+                                  className="glow-bar h-full rounded-full bg-emerald-500 relative transition-all duration-700 ease-in-out"
+                                  style={{ width: `${progressPercent}%` }}
+                                >
+                                  {progressPercent > 0 && (
+                                    <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full bg-emerald-500">
+                                      <span className="absolute inset-0 block rounded-full bg-emerald-500 opacity-70 animate-ping" />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <p className="mt-2 text-[10px] text-slate-500">Automatically calculated from stage and sub-stage completion.</p>
                             </div>
 
                             <div className="mt-4 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-slate-500">
@@ -2392,48 +2428,66 @@ function CustomerDashboard() {
 
                 {(selectedOrderForModal.contract_terms || selectedOrderForModal.status === "contract_sent") && (
                   <div className="rounded-[28px] bg-slate-50 p-6 shadow-sm space-y-4">
-                    <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Contract Summary</h5>
-                    {selectedOrderForModal.contract_terms ? (
-                      <div className="rounded-2xl bg-white p-4">
-                        <p className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Terms</p>
-                        <p className="mt-2 whitespace-pre-line text-sm text-slate-700">{selectedOrderForModal.contract_terms}</p>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-slate-600">Contract terms are not yet available.</p>
-                    )}
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Amount</p>
-                        <p className="mt-2 text-lg font-semibold text-slate-950">{formatCurrency(selectedOrderForModal.contract_amount || selectedOrderForModal.total_amount)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Status</p>
-                        <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.contract_status?.replace(/_/g, " ") || "Pending"}</p>
-                      </div>
-                    </div>
-                    {selectedOrderForModal.status === "contract_sent" && (
-                      <div className="flex items-center gap-3">
-                      </div>
-                    )}
-                    {contractActionError && selectedOrderForModal.status === "contract_sent" && (
-                      <p className="text-sm text-red-600">{contractActionError}</p>
-                    )}
-                    {contractActionMessage && contractActionOrderId === selectedOrderForModal._id && (
-                      <p className="text-sm text-emerald-700">{contractActionMessage}</p>
-                    )}
-                    <div className="mt-4">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Contract Summary</h5>
                       <button
                         type="button"
-                        onClick={() => openContractModal(selectedOrderForModal)}
-                        className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+                        onClick={() => setContractSummaryExpanded(!contractSummaryExpanded)}
+                        className="text-slate-600 hover:text-slate-900 transition"
                       >
-                        View Contract
+                        {contractSummaryExpanded ? "▼" : "▶"}
                       </button>
                     </div>
+                    {contractSummaryExpanded && (
+                      <>
+                        {selectedOrderForModal.contract_terms ? (
+                          <div className="rounded-2xl bg-white p-4">
+                            <p className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Terms</p>
+                            <p className="mt-2 whitespace-pre-line text-sm text-slate-700">{selectedOrderForModal.contract_terms}</p>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-600">Contract terms are not yet available.</p>
+                        )}
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Amount</p>
+                            <p className="mt-2 text-lg font-semibold text-slate-950">{formatCurrency(selectedOrderForModal.contract_amount || selectedOrderForModal.total_amount)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Status</p>
+                            <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.contract_status?.replace(/_/g, " ") || "Pending"}</p>
+                          </div>
+                        </div>
+                        {selectedOrderForModal.status === "contract_sent" && (
+                          <div className="flex items-center gap-3">
+                          </div>
+                        )}
+                        {contractActionError && selectedOrderForModal.status === "contract_sent" && (
+                          <p className="text-sm text-red-600">{contractActionError}</p>
+                        )}
+                        {contractActionMessage && contractActionOrderId === selectedOrderForModal._id && (
+                          <p className="text-sm text-emerald-700">{contractActionMessage}</p>
+                        )}
+                        <div className="mt-4">
+                          <button
+                            type="button"
+                            onClick={() => openContractModal(selectedOrderForModal)}
+                            className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
+                          >
+                            View Contract
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
-                <OrderTimeline order={selectedOrderForModal} onOrderChange={handleOrderUpdate} audience="customer" />
+                <OrderTimeline
+                  order={selectedOrderForModal}
+                  onOrderChange={handleOrderUpdate}
+                  audience="customer"
+                  onViewContract={() => openContractModal(selectedOrderForModal)}
+                />
               </div>
 
               <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 flex justify-end gap-3">
@@ -3031,7 +3085,7 @@ function CustomerDashboard() {
           onClose={closeContractModal}
           inspection={contractPreviewOrder}
           contractData={contractPreviewData}
-          onAccept={() => handleAcceptContract(contractPreviewOrder?._id || contractPreviewOrder?.id)}
+          onAccept={() => contractPreviewOrder && openContractConfirmModal("accept", contractPreviewOrder._id || contractPreviewOrder.id)}
           onDecline={() => contractPreviewOrder && openContractConfirmModal("decline", contractPreviewOrder._id || contractPreviewOrder.id)}
           isLoading={contractActionLoading}
           actionError={contractActionError}

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import {
   FileText,
+  ShieldCheck,
   CheckCircle,
   Eye,
-  Download,
   Check,
   XCircle,
 } from "lucide-react";
@@ -15,6 +15,7 @@ import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import ContractModal from "../../components/ContractModal";
 import { getAdminOrders, acceptContract, declineContract, updateOrderStatus } from "@/api/orders";
+import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, getTodayIso, isTodayOrFuture, isSameOrAfter } from "@/lib/dateUtils";
 
 function Transactions() {
   const [isSidebarOpen, setIsSidebarOpen] =
@@ -38,11 +39,16 @@ function Transactions() {
     useState(1);
   const [cancelledPage, setCancelledPage] =
     useState(1);
+  const [warrantyInPage, setWarrantyInPage] = useState(1);
+  const [warrantyOutPage, setWarrantyOutPage] = useState(1);
+  const [tableSearch, setTableSearch] = useState("");
 
   useEffect(() => {
     setReceiptPage(1);
     setProjectPage(1);
     setCancelledPage(1);
+    setWarrantyInPage(1);
+    setWarrantyOutPage(1);
   }, [activeTable]);
 
   const rowsPerPage = 5;
@@ -60,11 +66,187 @@ function Transactions() {
   const [showContractModal, setShowContractModal] = useState(false);
   const [contractPreviewOrder, setContractPreviewOrder] = useState(null);
   const [contractPreviewData, setContractPreviewData] = useState(null);
+  const [showWarrantyModal, setShowWarrantyModal] = useState(false);
+  const [warrantyOrder, setWarrantyOrder] = useState(null);
+  const [warrantyTerms, setWarrantyTerms] = useState("Standard parts and workmanship warranty for one year.");
+  const [warrantyStartDate, setWarrantyStartDate] = useState("");
+  const [warrantyExpiryDate, setWarrantyExpiryDate] = useState("");
+  const [warrantySaving, setWarrantySaving] = useState(false);
+  const today = getTodayIso();
 
   const canReviewTransaction = (order) => {
     const contractStatus = (order.contract_status || "").toString().toLowerCase();
     const orderStatus = (order.status || "").toString().toLowerCase();
     return contractStatus === "accepted" && orderStatus === "contract_accepted";
+  };
+
+  const isCompletedProject = (order) => {
+    const status = (order.status || "").toString().toLowerCase();
+    const contractStatus = (order.contract_status || "").toString().toLowerCase();
+    const progress = Number(order.progress || 0);
+    const invalidStatuses = ["cancelled", "declined", "contract_declined", "rejected"];
+
+    if (invalidStatuses.includes(status) || invalidStatuses.includes(contractStatus)) {
+      return false;
+    }
+
+    return status === "completed" || progress >= 100;
+  };
+
+  // Warranty helpers
+  const getCompletionDate = (order) => {
+    // prefer an explicit completed timestamp, fallback to updatedAt when status === completed
+    if (!order) return null;
+    if (order.completed_at) return new Date(order.completed_at);
+    if (order.completedAt) return new Date(order.completedAt);
+    if ((order.status || "").toString().toLowerCase() === "completed") {
+      return order.updatedAt ? new Date(order.updatedAt) : (order.createdAt ? new Date(order.createdAt) : null);
+    }
+    return null;
+  };
+
+  const parseWarrantyPeriod = (value) => {
+    // Accepts strings like '1 year', '12 months', or numeric days
+    if (!value) return null;
+    if (typeof value === "number") return { days: value };
+    const v = value.toString().toLowerCase();
+    const yearMatch = v.match(/(\d+)\s*year/);
+    if (yearMatch) return { days: Number(yearMatch[1]) * 365 };
+    const monthMatch = v.match(/(\d+)\s*month/);
+    if (monthMatch) return { days: Number(monthMatch[1]) * 30 };
+    const daysMatch = v.match(/(\d+)\s*day/);
+    if (daysMatch) return { days: Number(daysMatch[1]) };
+    const n = Number(v);
+    if (!isNaN(n)) return { days: n };
+    return null;
+  };
+
+  const getWarrantyExpiry = (order) => {
+    // Prefer explicit expiry field
+    if (!order) return null;
+    if (order.warranty_expiry_date) return new Date(order.warranty_expiry_date);
+    if (order.warrantyExpiryDate) return new Date(order.warrantyExpiryDate);
+
+    const completed = getCompletionDate(order);
+    if (!completed) return null;
+
+    // Check for warranty_period on order or items
+    const period = order.warranty_period || order.warranty || order.warrantyPeriod || (order.items && order.items[0] && (order.items[0].warranty_period || order.items[0].warranty));
+    const parsed = parseWarrantyPeriod(period);
+    if (parsed && parsed.days) {
+      const expiry = new Date(completed);
+      expiry.setDate(expiry.getDate() + parsed.days);
+      return expiry;
+    }
+
+    return null;
+  };
+
+  const hasWarrantyData = (order) => {
+    if (!order) return false;
+    return Boolean(
+      order.warranty_expiry_date ||
+      order.warrantyExpiryDate ||
+      order.warranty_period ||
+      order.warranty ||
+      order.warrantyPeriod ||
+      order.warranty_status
+    );
+  };
+
+  const canCreateWarranty = (order) => isCompletedProject(order) && !hasWarrantyData(order);
+
+  const computeWarrantyExpiryDate = (start, periodValue) => {
+    const startDate = start ? new Date(start) : new Date();
+    const parsed = parseWarrantyPeriod(periodValue) || { days: 365 };
+    const expiry = new Date(startDate);
+    expiry.setDate(expiry.getDate() + parsed.days);
+    return expiry;
+  };
+
+  const openWarrantyModal = (order) => {
+    const completionDate = getCompletionDate(order) || new Date();
+    const defaultExpiry = order.warranty_expiry_date
+      ? new Date(order.warranty_expiry_date)
+      : computeWarrantyExpiryDate(completionDate, "1 year");
+
+    setWarrantyOrder(order);
+    setWarrantyTerms(order.warranty_terms || "Standard parts and workmanship warranty for one year.");
+    setWarrantyStartDate(completionDate.toISOString().slice(0, 10));
+    setWarrantyExpiryDate(defaultExpiry.toISOString().slice(0, 10));
+    setShowWarrantyModal(true);
+  };
+
+  const closeWarrantyModal = () => {
+    setShowWarrantyModal(false);
+    setWarrantyOrder(null);
+    setWarrantySaving(false);
+    setWarrantyTerms("Standard parts and workmanship warranty for one year.");
+    setWarrantyStartDate("");
+    setWarrantyExpiryDate("");
+  };
+
+  const handleWarrantyStartDateChange = (value) => {
+    setWarrantyStartDate(value);
+    if (!warrantyExpiryDate || new Date(value) > new Date(warrantyExpiryDate)) {
+      const expiry = computeWarrantyExpiryDate(new Date(value), "1 year");
+      setWarrantyExpiryDate(expiry.toISOString().slice(0, 10));
+    }
+  };
+
+  const handleWarrantyExpiryDateChange = (value) => {
+    setWarrantyExpiryDate(value);
+  };
+
+  const formatWarrantyPeriodFromDates = (start, expiry) => {
+    const startDate = start ? new Date(start) : null;
+    const expiryDate = expiry ? new Date(expiry) : null;
+    if (!startDate || !expiryDate || expiryDate <= startDate) return "";
+    const diffDays = Math.ceil((expiryDate - startDate) / (1000 * 60 * 60 * 24));
+    if (diffDays % 365 === 0) return `${diffDays / 365} year${diffDays / 365 === 1 ? "" : "s"}`;
+    if (diffDays % 30 === 0) return `${diffDays / 30} month${diffDays / 30 === 1 ? "" : "s"}`;
+    return `${diffDays} day${diffDays === 1 ? "" : "s"}`;
+  };
+
+  const handleCreateWarranty = async () => {
+    if (!warrantyOrder) return;
+    setWarrantySaving(true);
+    const orderId = warrantyOrder._id || warrantyOrder.id;
+    try {
+      const start = warrantyStartDate ? new Date(warrantyStartDate) : getCompletionDate(warrantyOrder) || new Date();
+      const expiry = warrantyExpiryDate ? new Date(warrantyExpiryDate) : computeWarrantyExpiryDate(start, "1 year");
+      if (!isTodayOrFuture(start)) {
+        toast.error("Invalid date selection. Please select today or a future date.");
+        setWarrantySaving(false);
+        return;
+      }
+      if (!isSameOrAfter(expiry, start) || expiry.getTime() === start.getTime()) {
+        toast.error("Warranty End Date must be later than the Warranty Start Date.");
+        setWarrantySaving(false);
+        return;
+      }
+      const payload = {
+        warranty_period: formatWarrantyPeriodFromDates(start, expiry),
+        warranty_start_date: start.toISOString(),
+        warranty_expiry_date: expiry.toISOString(),
+        warranty_status: "active",
+        warranty_terms: warrantyTerms,
+      };
+
+      const response = await updateOrderStatus(orderId, payload);
+      const updated = response?.order || {};
+      updateOrderLocally(orderId, {
+        ...updated,
+        ...payload,
+      });
+      toast.success("Warranty created successfully.");
+      closeWarrantyModal();
+    } catch (error) {
+      console.error("Create warranty failed", error);
+      toast.error(error?.data?.message || error?.message || "Unable to create warranty.");
+    } finally {
+      setWarrantySaving(false);
+    }
   };
 
   const openTransactionConfirm = (action, order) => {
@@ -99,14 +281,14 @@ function Transactions() {
       }
       // Use admin endpoint to change order status (admin has permission)
       // contract_status must match schema enums (pending, sent, accepted, declined)
-      const response = await updateOrderStatus(orderId, { status: "site_inspection", contract_status: "accepted" });
+      const response = await updateOrderStatus(orderId, { status: "approved", contract_status: "accepted" });
       const updated = response?.order || {};
       const now = new Date().toISOString();
       updateOrderLocally(orderId, {
         ...updated,
         contract_status: updated.contract_status || "accepted",
         approved_at: updated.approved_at || now,
-        status: updated.status || "site_inspection",
+        status: updated.status || "approved",
       });
       toast.success("Transaction approved successfully.");
     } catch (error) {
@@ -175,15 +357,15 @@ function Transactions() {
 
     return {
       orderNumber: order.tracking || order._id || "N/A",
-      contractDate: order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : new Date(order.createdAt).toLocaleDateString(),
-      orderDate: order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "N/A",
+      contractDate: order.updatedAt ? formatDateToMMDDYYYY(order.updatedAt) : formatDateToMMDDYYYY(order.createdAt),
+      orderDate: order.createdAt ? formatDateToMMDDYYYY(order.createdAt) : "N/A",
       status: order.status?.replace(/_/g, " ") || "Pending",
       contractStatus,
       customerName: order.customer?.first_name || order.customer_name || "Customer",
       customerEmail: order.customer?.email || order.customer_email || "N/A",
       customerPhone: order.customer?.phone || order.customer_phone || "N/A",
       projectLocation: order.shipping_address || "N/A",
-      siteInspectionDate: order.inspection_date ? new Date(order.inspection_date).toLocaleDateString() : "TBD",
+      siteInspectionDate: order.inspection_date ? formatDateToMMDDYYYY(order.inspection_date) : "TBD",
       paymentTerms: order.payment_terms || "Standard payment terms apply.",
       contractTerms: order.contract_terms || "",
       subtotal: amount,
@@ -192,7 +374,7 @@ function Transactions() {
       items,
       accepted,
       acceptanceMethod: accepted ? "Online Acceptance" : null,
-      acceptanceDate: accepted && order.updatedAt ? new Date(order.updatedAt).toLocaleString() : null,
+      acceptanceDate: accepted && order.updatedAt ? formatDateTimeToMMDDYYYY(order.updatedAt) : null,
       acceptedBy: order.customer?.first_name || order.customer_name || "Customer",
       contractId: order.tracking || order._id || "N/A",
       customerAccountId: order.customer?._id || order.customer || "N/A",
@@ -383,7 +565,21 @@ function Transactions() {
   const receipts = orders.filter((o) => {
     const status = (o.contract_status || "").toString().toLowerCase();
     const cancelledStatuses = ["declined", "rejected", "cancelled", "contract_declined"];
-    return o.contract_status && o.contract_status !== "pending" && !cancelledStatuses.includes(status);
+    return (
+      o.contract_status &&
+      o.contract_status !== "pending" &&
+      !cancelledStatuses.includes(status) &&
+      !isCompletedProject(o)
+    );
+  });
+
+  const filteredReceipts = receipts.filter((o) => {
+    if (!tableSearch) return true;
+    const q = tableSearch.toLowerCase();
+    const customer = (o.customer_name || o.customer?.first_name || "").toString().toLowerCase();
+    const project = (o.items?.[0]?.name || "").toString().toLowerCase();
+    const tracking = (o.tracking || "").toString().toLowerCase();
+    return tracking.includes(q) || customer.includes(q) || project.includes(q);
   });
 
   const cancelledTransactions = orders.filter((o) => {
@@ -392,8 +588,27 @@ function Transactions() {
     return ["declined", "rejected", "cancelled", "contract_declined"].includes(contractStatus) || status === "cancelled";
   });
 
-  // Completed projects: orders with status 'completed'
-  const completedProjects = orders.filter((o) => o.status === "completed");
+  // Completed projects: orders that are completed by status or progress
+  const completedProjects = orders.filter((o) => isCompletedProject(o));
+
+  // Warranty classification
+  const inWarrantyProjects = orders.filter((o) => {
+    const warrantyStatus = (o.warranty_status || "").toString().toLowerCase();
+    if (warrantyStatus === "active") return true;
+    const expiry = getWarrantyExpiry(o);
+    if (!expiry) return false;
+    const now = new Date();
+    return now <= expiry;
+  });
+
+  const outOfWarrantyProjects = orders.filter((o) => {
+    const warrantyStatus = (o.warranty_status || "").toString().toLowerCase();
+    if (warrantyStatus === "expired") return true;
+    const expiry = getWarrantyExpiry(o);
+    if (!expiry) return false;
+    const now = new Date();
+    return now > expiry;
+  });
 
   const receiptLastIndex =
     receiptPage * rowsPerPage;
@@ -401,13 +616,13 @@ function Transactions() {
   const receiptFirstIndex =
     receiptLastIndex - rowsPerPage;
 
-  const currentReceipts = receipts.slice(
+  const currentReceipts = filteredReceipts.slice(
     receiptFirstIndex,
     receiptLastIndex
   );
 
   const receiptTotalPages = Math.max(1, Math.ceil(
-    receipts.length / rowsPerPage
+    filteredReceipts.length / rowsPerPage
   ));
 
   const projectLastIndex =
@@ -426,6 +641,45 @@ function Transactions() {
     completedProjects.length / rowsPerPage
   ));
 
+  const filteredCompleted = completedProjects.filter((o) => {
+    if (!tableSearch) return true;
+    const q = tableSearch.toLowerCase();
+    const customer = (o.customer_name || o.customer?.first_name || "").toString().toLowerCase();
+    const project = (o.items?.[0]?.name || "").toString().toLowerCase();
+    const tracking = (o.tracking || "").toString().toLowerCase();
+    return tracking.includes(q) || customer.includes(q) || project.includes(q);
+  });
+
+  const currentProjectsFiltered = filteredCompleted.slice(projectFirstIndex, projectLastIndex);
+
+  const projectTotalPagesFiltered = Math.max(1, Math.ceil(filteredCompleted.length / rowsPerPage));
+
+  const warrantyInLastIndex = warrantyInPage * rowsPerPage;
+  const warrantyInFirstIndex = warrantyInLastIndex - rowsPerPage;
+  const filteredInWarranty = inWarrantyProjects.filter((o) => {
+    if (!tableSearch) return true;
+    const q = tableSearch.toLowerCase();
+    const customer = (o.customer_name || o.customer?.first_name || "").toString().toLowerCase();
+    const project = (o.items?.[0]?.name || "").toString().toLowerCase();
+    const tracking = (o.tracking || "").toString().toLowerCase();
+    return tracking.includes(q) || customer.includes(q) || project.includes(q);
+  });
+  const currentInWarranty = filteredInWarranty.slice(warrantyInFirstIndex, warrantyInLastIndex);
+  const warrantyInTotalPages = Math.max(1, Math.ceil(filteredInWarranty.length / rowsPerPage));
+
+  const warrantyOutLastIndex = warrantyOutPage * rowsPerPage;
+  const warrantyOutFirstIndex = warrantyOutLastIndex - rowsPerPage;
+  const filteredOutWarranty = outOfWarrantyProjects.filter((o) => {
+    if (!tableSearch) return true;
+    const q = tableSearch.toLowerCase();
+    const customer = (o.customer_name || o.customer?.first_name || "").toString().toLowerCase();
+    const project = (o.items?.[0]?.name || "").toString().toLowerCase();
+    const tracking = (o.tracking || "").toString().toLowerCase();
+    return tracking.includes(q) || customer.includes(q) || project.includes(q);
+  });
+  const currentOutWarranty = filteredOutWarranty.slice(warrantyOutFirstIndex, warrantyOutLastIndex);
+  const warrantyOutTotalPages = Math.max(1, Math.ceil(filteredOutWarranty.length / rowsPerPage));
+
   const cancelledLastIndex =
     cancelledPage * rowsPerPage;
 
@@ -442,18 +696,39 @@ function Transactions() {
     cancelledTransactions.length / rowsPerPage
   ));
 
+  const filteredCancelled = cancelledTransactions.filter((o) => {
+    if (!tableSearch) return true;
+    const q = tableSearch.toLowerCase();
+    const customer = (o.customer_name || o.customer?.first_name || "").toString().toLowerCase();
+    const project = (o.items?.[0]?.name || "").toString().toLowerCase();
+    const tracking = (o.tracking || "").toString().toLowerCase();
+    return tracking.includes(q) || customer.includes(q) || project.includes(q);
+  });
+
+  const currentCancelledFiltered = filteredCancelled.slice(cancelledFirstIndex, cancelledLastIndex);
+
+  const cancelledTotalPagesFiltered = Math.max(1, Math.ceil(filteredCancelled.length / rowsPerPage));
+
   const currentData =
     activeTable === "receipts"
       ? currentReceipts
       : activeTable === "projects"
-      ? currentProjects
-      : currentCancelled;
+      ? currentProjectsFiltered
+      : activeTable === "warranty_in"
+      ? currentInWarranty
+      : activeTable === "warranty_out"
+      ? currentOutWarranty
+      : currentCancelledFiltered;
 
   const currentFirstIndex =
     activeTable === "receipts"
       ? receiptFirstIndex
       : activeTable === "projects"
       ? projectFirstIndex
+      : activeTable === "warranty_in"
+      ? warrantyInFirstIndex
+      : activeTable === "warranty_out"
+      ? warrantyOutFirstIndex
       : cancelledFirstIndex;
 
   return (
@@ -483,56 +758,65 @@ function Transactions() {
           <div className="flex gap-4 mt-6 flex-wrap">
 
             <button
-              onClick={() =>
-                setActiveTable("receipts")
-              }
+              onClick={() => setActiveTable("receipts")}
               className={`px-5 py-3 rounded-xl font-medium ${
-                activeTable === "receipts"
-                  ? "bg-red-600 text-white"
-                  : "bg-white border"
+                activeTable === "receipts" ? "bg-red-600 text-white" : "bg-white border"
               }`}
             >
-              <FileText
-                className="inline mr-2"
-                size={18}
-              />
+              <FileText className="inline mr-2" size={18} />
               Receipts & Contracts
             </button>
 
             <button
-              onClick={() =>
-                setActiveTable("projects")
-              }
+              onClick={() => setActiveTable("projects")}
               className={`px-5 py-3 rounded-xl font-medium ${
-                activeTable === "projects"
-                  ? "bg-red-600 text-white"
-                  : "bg-white border"
+                activeTable === "projects" ? "bg-red-600 text-white" : "bg-white border"
               }`}
             >
-              <CheckCircle
-                className="inline mr-2"
-                size={18}
-              />
+              <CheckCircle className="inline mr-2" size={18} />
               Completed Projects
             </button>
 
             <button
-              onClick={() =>
-                setActiveTable("cancelled")
-              }
+              onClick={() => setActiveTable("warranty_in")}
               className={`px-5 py-3 rounded-xl font-medium ${
-                activeTable === "cancelled"
-                  ? "bg-red-600 text-white"
-                  : "bg-white border"
+                activeTable === "warranty_in" ? "bg-red-600 text-white" : "bg-white border"
               }`}
             >
-              <XCircle
-                className="inline mr-2"
-                size={18}
-              />
+              <CheckCircle className="inline mr-2" size={18} />
+              In-Warranty
+            </button>
+
+            <button
+              onClick={() => setActiveTable("warranty_out")}
+              className={`px-5 py-3 rounded-xl font-medium ${
+                activeTable === "warranty_out" ? "bg-red-600 text-white" : "bg-white border"
+              }`}
+            >
+              <XCircle className="inline mr-2" size={18} />
+              Out-of-Warranty
+            </button>
+
+           <button
+              onClick={() => setActiveTable("cancelled")}
+              className={`px-5 py-3 rounded-xl font-medium ${
+                activeTable === "cancelled" ? "bg-red-600 text-white" : "bg-white border"
+              }`}
+            >
+              <XCircle className="inline mr-2" size={18} />
               Cancelled Transactions
             </button>
 
+          </div>
+
+          <div className="mt-4">
+            <input
+              type="text"
+              placeholder="Search tracking, customer, project..."
+              value={tableSearch}
+              onChange={(e) => setTableSearch(e.target.value)}
+              className="w-full md:w-1/3 pl-3 pr-3 py-2 border rounded-lg"
+            />
           </div>
 
           <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden">
@@ -542,115 +826,101 @@ function Transactions() {
               <table className="w-full">
 
                 <thead className="bg-gray-50">
-
-                  <tr>
-                    <th className="w-16 p-4 text-center">
-                      No.
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Tracking ID
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Customer
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Inspection
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Date
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Amount
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Status
-                    </th>
-
-                    <th className="p-4 text-center">
-                      Actions
-                    </th>
-                  </tr>
-
+                  {activeTable === "warranty_in" || activeTable === "warranty_out" ? (
+                    <tr>
+                      <th className="w-16 p-4 text-center">No.</th>
+                      <th className="p-4 text-left">Tracking ID</th>
+                      <th className="p-4 text-left">Customer Name</th>
+                      <th className="p-4 text-left">Project Name</th>
+                      <th className="p-4 text-left">Completion Date</th>
+                      <th className="p-4 text-left">Warranty Expiry</th>
+                      <th className="p-4 text-left">{activeTable === "warranty_in" ? "Remaining Days" : "Expired Since"}</th>
+                      <th className="p-4 text-left">Status</th>
+                      <th className="p-4 text-center">Actions</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th className="w-16 p-4 text-center">No.</th>
+                      <th className="p-4 text-left">Tracking ID</th>
+                      <th className="p-4 text-left">Customer</th>
+                      <th className="p-4 text-left">Inspection</th>
+                      <th className="p-4 text-left">Date</th>
+                      <th className="p-4 text-left">Amount</th>
+                      <th className="p-4 text-left">Status</th>
+                      <th className="p-4 text-center">Actions</th>
+                    </tr>
+                  )}
                 </thead>
 
                 <tbody>
 
                   {currentData.map((order, index) => {
+                    const now = new Date();
                     const customerName = order.customer_name || (order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : "N/A");
-                    const inspectionLabel = order.items && order.items.length > 0 ? (order.items[0].name || `${order.items.length} item(s)`) : "N/A";
-                    const date = order.createdAt ? new Date(order.createdAt).toLocaleDateString() : (order.inspection_date ? new Date(order.inspection_date).toLocaleDateString() : "N/A");
+                    const projectName = order.items && order.items.length > 0 ? (order.items[0].name || `${order.items.length} item(s)`) : "N/A";
                     const amountVal = order.contract_amount || order.total_amount || 0;
                     const amount = `₱${Number(amountVal || 0).toLocaleString()}`;
-                    const statusLabel = activeTable === "receipts" ? (order.contract_status?.replace(/_/g, " ") || "Pending") : (order.status?.replace(/_/g, " ") || "N/A");
+                    const inspectionLabel = order.items && order.items.length > 0 ? (order.items[0].name || `${order.items.length} item(s)`) : "N/A";
+                    const completionDate = getCompletionDate(order);
+                    const completionLabel = completionDate ? formatDateToMMDDYYYY(completionDate) : "N/A";
+                    const expiry = getWarrantyExpiry(order);
+                    const expiryLabel = expiry ? formatDateToMMDDYYYY(expiry) : "N/A";
+                    const msPerDay = 1000 * 60 * 60 * 24;
+                    const remainingDays = expiry ? Math.ceil((expiry - now) / msPerDay) : null;
+                    const expiredDays = expiry ? Math.ceil((now - expiry) / msPerDay) : null;
+                    const statusLabel = activeTable === "receipts"
+                      ? order.status === "contract_accepted" && (order.contract_status || "").toString().toLowerCase() === "accepted"
+                        ? "Contract Accepted — Waiting for Transaction Approval"
+                        : order.status === "approved"
+                        ? "Approved"
+                        : order.contract_status?.replace(/_/g, " ") || "Pending"
+                      : (order.status?.replace(/_/g, " ") || "N/A");
 
                     return (
                       <tr key={order._id || index} className="border-t hover:bg-gray-50">
-                        <td className="w-16 p-4 text-center font-semibold text-slate-600">
-                          {currentFirstIndex + index + 1}
-                        </td>
+                        <td className="w-16 p-4 text-center font-semibold text-slate-600">{currentFirstIndex + index + 1}</td>
 
-                        <td className="p-4">{order.tracking}</td>
+                        { (activeTable === "warranty_in" || activeTable === "warranty_out") ? (
+                          <>
+                            <td className="p-4">{order.tracking}</td>
+                            <td className="p-4">{customerName}</td>
+                            <td className="p-4">{projectName}</td>
+                            <td className="p-4">{completionLabel}</td>
+                            <td className="p-4">{expiryLabel}</td>
+                            <td className="p-4">{
+                              activeTable === "warranty_in"
+                                ? (remainingDays !== null ? `${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining` : 'N/A')
+                                : (expiredDays !== null ? `Expired ${expiredDays} day${expiredDays === 1 ? '' : 's'} ago` : 'N/A')
+                            }</td>
+                            <td className="p-4">
+                              <span className="inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold bg-amber-100 text-amber-700">
+                                {activeTable === "warranty_in" ? (
+                                  remainingDays !== null ? (
+                                    remainingDays > 30 ? 'Active Warranty' : remainingDays > 1 ? 'Warranty Expiring Soon' : remainingDays === 1 ? 'Warranty Ends Tomorrow' : remainingDays === 0 ? 'Ends Today' : 'Active'
+                                  ) : (order.warranty_status || 'Active')
+                                ) : (
+                                  order.warranty_status ? (order.warranty_status.replace(/_/g, ' ') ) : 'Expired'
+                                )}
+                              </span>
+                            </td>
+                            <td className="p-4">
+                              <div className="flex flex-wrap justify-center gap-2">
+                                <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="p-4">{order.tracking}</td>
+                            <td className="p-4">{customerName}</td>
+                            <td className="p-4">{inspectionLabel}</td>
+                            <td className="p-4">{order.createdAt ? formatDateToMMDDYYYY(order.createdAt) : (order.inspection_date ? formatDateToMMDDYYYY(order.inspection_date) : 'N/A')}</td>
+                            <td className="p-4 font-semibold text-green-600">{amount}</td>
+                            <td className="p-4"><span className="inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold bg-amber-100 text-amber-700">{statusLabel}</span></td>
+                            <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "receipts" && canReviewTransaction(order) && (<><button title="Approve Transaction" onClick={() => openTransactionConfirm("approve", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><Check size={18} /></button><button title="Reject Transaction" onClick={() => openTransactionConfirm("reject", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><XCircle size={20} /></button></>)}{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button> </div></td>
+                          </>
+                        )}
 
-                        <td className="p-4">{customerName}</td>
-
-                        <td className="p-4">{inspectionLabel}</td>
-
-                        <td className="p-4">{date}</td>
-
-                        <td className="p-4 font-semibold text-green-600">{amount}</td>
-
-                        <td className="p-4">
-                          <span className="inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold bg-amber-100 text-amber-700">
-                            {statusLabel}
-                          </span>
-                        </td>
-
-                        <td className="p-4">
-                          <div className="flex flex-wrap justify-center gap-2">
-                            {activeTable === "receipts" && canReviewTransaction(order) && (
-                              <>
-                                <button
-                                  title="Approve Transaction"
-                                  onClick={() => openTransactionConfirm("approve", order)}
-                                  disabled={processingOrderId === (order._id || order.id)}
-                                  className="p-2 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                                >
-                                  <Check size={18} />
-                                </button>
-                                <button
-                                  title="Reject Transaction"
-                                  onClick={() => openTransactionConfirm("reject", order)}
-                                  disabled={processingOrderId === (order._id || order.id)}
-                                  className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                                >
-                                  <XCircle size={18} />
-                                </button>
-                              </>
-                            )}
-                            <button
-                              title="View Transaction"
-                              onClick={() => openContractModal(order)}
-                              className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"
-                            >
-                              <Eye size={18} />
-                            </button>
-
-                            <button
-                              title="Download Receipt"
-                              onClick={() => window.open(`/orders/track/${encodeURIComponent(order.tracking)}`, "_blank")}
-                              className="p-2 rounded-lg bg-green-100 text-green-600 hover:bg-green-200 transition"
-                            >
-                              <Download size={18} />
-                            </button>
-
-                          </div>
-                        </td>
                       </tr>
                     );
                   })}
@@ -666,18 +936,26 @@ function Transactions() {
             <div className="flex justify-center items-center p-4 border-t bg-gray-50 gap-4">
 
               <span className="text-sm text-gray-600">
-                Page{" "}
+                Page {" "}
                 {activeTable === "receipts"
                   ? receiptPage
                   : activeTable === "projects"
                   ? projectPage
+                  : activeTable === "warranty_in"
+                  ? warrantyInPage
+                  : activeTable === "warranty_out"
+                  ? warrantyOutPage
                   : cancelledPage}
                 {" "}of{" "}
                 {activeTable === "receipts"
                   ? receiptTotalPages
                   : activeTable === "projects"
-                  ? projectTotalPages
-                  : cancelledTotalPages}
+                  ? projectTotalPagesFiltered
+                  : activeTable === "warranty_in"
+                  ? warrantyInTotalPages
+                  : activeTable === "warranty_out"
+                  ? warrantyOutTotalPages
+                  : cancelledTotalPagesFiltered}
               </span>
 
               <div className="flex gap-2">
@@ -688,6 +966,10 @@ function Transactions() {
                       ? receiptPage === 1
                       : activeTable === "projects"
                       ? projectPage === 1
+                      : activeTable === "warranty_in"
+                      ? warrantyInPage === 1
+                      : activeTable === "warranty_out"
+                      ? warrantyOutPage === 1
                       : cancelledPage === 1
                   }
                   onClick={() => {
@@ -695,6 +977,10 @@ function Transactions() {
                       setReceiptPage(receiptPage - 1);
                     } else if (activeTable === "projects") {
                       setProjectPage(projectPage - 1);
+                    } else if (activeTable === "warranty_in") {
+                      setWarrantyInPage(warrantyInPage - 1);
+                    } else if (activeTable === "warranty_out") {
+                      setWarrantyOutPage(warrantyOutPage - 1);
                     } else {
                       setCancelledPage(cancelledPage - 1);
                     }
@@ -708,8 +994,12 @@ function Transactions() {
                   activeTable === "receipts"
                     ? receiptTotalPages
                     : activeTable === "projects"
-                    ? projectTotalPages
-                    : cancelledTotalPages
+                    ? projectTotalPagesFiltered
+                    : activeTable === "warranty_in"
+                    ? warrantyInTotalPages
+                    : activeTable === "warranty_out"
+                    ? warrantyOutTotalPages
+                    : cancelledTotalPagesFiltered
                 )].map((_, index) => (
                   <button
                     key={index}
@@ -718,6 +1008,10 @@ function Transactions() {
                         setReceiptPage(index + 1);
                       } else if (activeTable === "projects") {
                         setProjectPage(index + 1);
+                      } else if (activeTable === "warranty_in") {
+                        setWarrantyInPage(index + 1);
+                      } else if (activeTable === "warranty_out") {
+                        setWarrantyOutPage(index + 1);
                       } else {
                         setCancelledPage(index + 1);
                       }
@@ -728,9 +1022,12 @@ function Transactions() {
                           ? receiptPage
                           : activeTable === "projects"
                           ? projectPage
+                          : activeTable === "warranty_in"
+                          ? warrantyInPage
+                          : activeTable === "warranty_out"
+                          ? warrantyOutPage
                           : cancelledPage
-                      ) ===
-                      index + 1
+                      ) === index + 1
                         ? "bg-red-600 text-white"
                         : "bg-white border"
                     }`}
@@ -744,14 +1041,22 @@ function Transactions() {
                     activeTable === "receipts"
                       ? receiptPage === receiptTotalPages
                       : activeTable === "projects"
-                      ? projectPage === projectTotalPages
-                      : cancelledPage === cancelledTotalPages
+                      ? projectPage === projectTotalPagesFiltered
+                      : activeTable === "warranty_in"
+                      ? warrantyInPage === warrantyInTotalPages
+                      : activeTable === "warranty_out"
+                      ? warrantyOutPage === warrantyOutTotalPages
+                      : cancelledPage === cancelledTotalPagesFiltered
                   }
                   onClick={() => {
                     if (activeTable === "receipts") {
                       setReceiptPage(receiptPage + 1);
                     } else if (activeTable === "projects") {
                       setProjectPage(projectPage + 1);
+                    } else if (activeTable === "warranty_in") {
+                      setWarrantyInPage(warrantyInPage + 1);
+                    } else if (activeTable === "warranty_out") {
+                      setWarrantyOutPage(warrantyOutPage + 1);
                     } else {
                       setCancelledPage(cancelledPage + 1);
                     }
@@ -780,6 +1085,86 @@ function Transactions() {
               onDownloadPNG={downloadContractPNG}
               onPrint={printContract}
             />
+          )}
+
+          {showWarrantyModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center">
+              <div className="absolute inset-0 bg-black/40" onClick={closeWarrantyModal} />
+              <div className="relative w-full max-w-2xl rounded-3xl bg-white p-6 shadow-xl">
+                <h2 className="text-2xl font-bold text-slate-900 mb-3">Create Warranty</h2>
+                <p className="text-sm text-slate-600 mb-6">
+                  Create warranty coverage for this completed project and store the start and expiry dates.
+                </p>
+
+                <div className="grid gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Customer</label>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800">
+                      {warrantyOrder?.customer_name || `${warrantyOrder?.customer?.first_name || ''} ${warrantyOrder?.customer?.last_name || ''}`.trim() || "N/A"}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Project</label>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800">
+                      {warrantyOrder?.items?.[0]?.name || "N/A"}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Warranty Start</label>
+                      <input
+                        type="date"
+                        min={today}
+                        value={warrantyStartDate}
+                        onChange={(e) => handleWarrantyStartDateChange(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-4 py-2"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Warranty Expiry</label>
+                      <input
+                        type="date"
+                        min={warrantyStartDate || today}
+                        value={warrantyExpiryDate}
+                        onChange={(e) => handleWarrantyExpiryDateChange(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 px-4 py-2"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Terms</label>
+                    <textarea
+                      rows={4}
+                      value={warrantyTerms}
+                      onChange={(e) => setWarrantyTerms(e.target.value)}
+                      className="w-full rounded-xl border border-slate-300 px-4 py-3"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={closeWarrantyModal}
+                    className="rounded-2xl px-5 py-3 bg-gray-100 text-slate-700 hover:bg-gray-200 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreateWarranty}
+                    disabled={warrantySaving}
+                    className={`rounded-2xl px-5 py-3 text-white transition ${warrantySaving ? "bg-amber-300" : "bg-amber-600 hover:bg-amber-700"}`}
+                  >
+                    {warrantySaving ? "Saving..." : "Create Warranty"}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           {confirmModal.open && (

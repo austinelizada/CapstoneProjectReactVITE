@@ -279,11 +279,30 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { status, contract_status, payment_status, inspection_notes, inspection_date } = req.body;
+    const {
+      status,
+      contract_status,
+      payment_status,
+      inspection_notes,
+      inspection_date,
+      warranty_period,
+      warranty_start_date,
+      warranty_expiry_date,
+      warranty_status,
+      warranty_terms,
+    } = req.body;
 
     const order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const isOrderCompleted = order.status === "completed" || Number(order.progress) >= 100;
+    if (String(status || "").toLowerCase() === "cancelled" && isOrderCompleted) {
+      return res.status(400).json({
+        success: false,
+        message: "This project has already been completed and can no longer be cancelled.",
+      });
     }
 
     if (status) order.status = status;
@@ -291,6 +310,17 @@ export const updateOrderStatus = async (req, res) => {
     if (payment_status) order.payment_status = payment_status;
     if (inspection_date) order.inspection_date = inspection_date;
     if (inspection_notes) order.inspection_notes = inspection_notes;
+    if (warranty_period !== undefined) order.warranty_period = warranty_period;
+    if (warranty_start_date !== undefined) order.warranty_start_date = warranty_start_date;
+    if (warranty_expiry_date !== undefined) {
+      order.warranty_expiry_date = warranty_expiry_date;
+      if (!warranty_status) {
+        const expiry = new Date(warranty_expiry_date);
+        order.warranty_status = expiry > new Date() ? "active" : "expired";
+      }
+    }
+    if (warranty_status !== undefined) order.warranty_status = warranty_status;
+    if (warranty_terms !== undefined) order.warranty_terms = warranty_terms;
 
     await order.save();
 
@@ -354,8 +384,8 @@ export const respondToInstallationSchedule = async (req, res) => {
     const { orderId } = req.params;
     const { action, reason, preferredInstallationDate, preferredInstallationTime, notes } = req.body;
 
-    if (!action || !["accept", "reschedule"].includes(action)) {
-      return res.status(400).json({ success: false, message: "Schedule action must be accept or reschedule." });
+    if (!action || !["accept", "reschedule", "accept_preferred"].includes(action)) {
+      return res.status(400).json({ success: false, message: "Schedule action must be accept, reschedule, or accept_preferred." });
     }
 
     const order = await Order.findById(orderId);
@@ -363,22 +393,41 @@ export const respondToInstallationSchedule = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    if (!order.customer || order.customer.toString() !== req.user.id) {
-      return res.status(403).json({ success: false, message: "Not authorized to respond to this installation schedule." });
+    const isCustomer = order.customer && order.customer.toString() === req.user.id;
+    const isAdmin = req.user.role === "admin";
+
+    // Accept preferred requires admin, other actions require customer
+    if (action === "accept_preferred") {
+      if (!isAdmin) {
+        return res.status(403).json({ success: false, message: "Only admins can accept preferred schedules." });
+      }
+    } else {
+      if (!isCustomer) {
+        return res.status(403).json({ success: false, message: "Not authorized to respond to this installation schedule." });
+      }
     }
 
-    const scheduleStage = Array.isArray(order.progress_stages)
-      ? order.progress_stages.find((stage) =>
-          ["installation_scheduling", "installation_scheduled"].includes((stage.key || "").toString().toLowerCase())
-        )
-      : null;
+    const scheduleStageKeys = ["installation_scheduling", "installation_scheduled", "installation_agreement"];
+    const scheduleStages = Array.isArray(order.progress_stages)
+      ? order.progress_stages.filter((stage) => {
+          const scheduleStageKey = (stage.key || stage.name || "").toString().toLowerCase().replace(/\s+/g, "_");
+          return scheduleStageKeys.includes(scheduleStageKey);
+        })
+      : [];
+    const scheduleStage =
+      scheduleStages.find((stage) => stage.customerResponse === "reschedule_requested") ||
+      scheduleStages.find((stage) => stage.proposedInstallationDate || stage.proposedInstallationTime) ||
+      scheduleStages[0] ||
+      null;
 
     if (!scheduleStage) {
       return res.status(400).json({ success: false, message: "Installation schedule is not available for response." });
     }
 
     const hasProposal = scheduleStage.proposedInstallationDate || scheduleStage.proposedInstallationTime;
-    if (!hasProposal) {
+    const hasPreferredProposal = scheduleStage.customerPreferredInstallationDate || scheduleStage.customerPreferredInstallationTime;
+
+    if (action !== "accept_preferred" && !hasProposal) {
       return res.status(400).json({ success: false, message: "No installation proposal is available to respond to." });
     }
 
@@ -398,6 +447,60 @@ export const respondToInstallationSchedule = async (req, res) => {
       scheduleStage.status = "done";
       scheduleStage.date = new Date();
       order.status = order.status === "contract_accepted" ? "contract_accepted" : order.status;
+    } else if (action === "accept_preferred") {
+      // Admin accepting customer's preferred reschedule
+      const alreadyAcceptedPreferred =
+        scheduleStage.customerResponse === "accepted" &&
+        scheduleStage.completed &&
+        (scheduleStage.customerPreferredInstallationDate || scheduleStage.customerPreferredInstallationTime);
+      if (alreadyAcceptedPreferred) {
+        const installationStage = Array.isArray(order.progress_stages)
+          ? order.progress_stages.find((stage) => {
+              const stageKey = (stage.key || stage.name || "").toString().toLowerCase().replace(/\s+/g, "_");
+              return stageKey === "installation";
+            })
+          : null;
+        if (installationStage && !installationStage.completed && installationStage.status !== "in_progress") {
+          installationStage.status = "in_progress";
+          await order.save();
+        }
+        return res.json({ success: true, order, message: "Customer preferred schedule already accepted." });
+      }
+
+      if (scheduleStage.customerResponse !== "reschedule_requested") {
+        return res.status(400).json({
+          success: false,
+          message: `Customer has not requested a reschedule. Current status: ${scheduleStage.customerResponse || "unknown"}.`,
+        });
+      }
+
+      if (!hasPreferredProposal) {
+        return res.status(400).json({
+          success: false,
+          message: "No customer preferred schedule is available to accept. Missing date or time.",
+        });
+      }
+
+      // Update the proposed date/time to the customer's preferred values
+      scheduleStage.proposedInstallationDate = scheduleStage.customerPreferredInstallationDate
+        ? new Date(scheduleStage.customerPreferredInstallationDate)
+        : null;
+      scheduleStage.proposedInstallationTime = scheduleStage.customerPreferredInstallationTime || "";
+      scheduleStage.customerResponse = "accepted";
+      scheduleStage.customerResponseAt = new Date();
+      scheduleStage.completed = true;
+      scheduleStage.status = "done";
+      scheduleStage.date = new Date();
+      const installationStage = Array.isArray(order.progress_stages)
+        ? order.progress_stages.find((stage) => {
+            const stageKey = (stage.key || stage.name || "").toString().toLowerCase().replace(/\s+/g, "_");
+            return stageKey === "installation";
+          })
+        : null;
+      if (installationStage && !installationStage.completed) {
+        installationStage.status = "in_progress";
+      }
+      order.status = order.status === "contract_accepted" ? "contract_accepted" : order.status;
     } else {
       if (!reason || !preferredInstallationDate || !preferredInstallationTime) {
         return res.status(400).json({
@@ -414,7 +517,6 @@ export const respondToInstallationSchedule = async (req, res) => {
       scheduleStage.customerRescheduleNotes = notes ? notes.trim() : "";
       scheduleStage.completed = false;
       scheduleStage.status = "pending";
-      scheduleStage.date = null;
       order.status = order.status === "contract_accepted" ? "contract_accepted" : order.status;
     }
 

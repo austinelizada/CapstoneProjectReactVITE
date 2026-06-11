@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import OrderTimeline from "@/components/OrderTimeline";
 
-export default function ProgressViewModal({ project, onClose }) {
+export default function ProgressViewModal({ project, onClose, onOrderChange }) {
   if (!project) return null;
   const order = project.rawOrder || project;
   const modalRef = useRef(null);
@@ -72,7 +72,7 @@ export default function ProgressViewModal({ project, onClose }) {
         </div>
 
         <div className="overflow-y-auto max-h-[70vh] pr-2">
-          <OrderTimeline order={order} audience="admin" />
+          <OrderTimeline order={order} audience="admin" onOrderChange={onOrderChange} />
       </div>
       </div>
     </div>

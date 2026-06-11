@@ -111,6 +111,7 @@ const OrderSchema = new mongoose.Schema(
         "site_inspection",
         "contract_sent",
         "contract_accepted",
+        "approved",
         "contract_declined",
         "processing",
         "completed",
@@ -256,6 +257,29 @@ const OrderSchema = new mongoose.Schema(
     contract_amount: {
       type: Number,
       default: 0,
+    },
+    warranty_period: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    warranty_start_date: {
+      type: Date,
+      default: null,
+    },
+    warranty_expiry_date: {
+      type: Date,
+      default: null,
+    },
+    warranty_status: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    warranty_terms: {
+      type: String,
+      trim: true,
+      default: "",
     },
   },
   {

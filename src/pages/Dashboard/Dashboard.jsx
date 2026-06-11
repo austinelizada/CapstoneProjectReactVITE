@@ -5,8 +5,11 @@ import {
   FolderOpen,
   ShieldCheck,
   Package,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import { getOrders, getAdminOrders, updateOrderStatus } from "@/api/orders";
+import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -87,6 +90,8 @@ function Dashboard() {
     action: "",
     order: null,
   });
+
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
 
   const [contractNotifications, setContractNotifications] = useState([]);
   const [contractNotificationsLoading, setContractNotificationsLoading] = useState(false);
@@ -356,7 +361,12 @@ function Dashboard() {
                 </p>
               </button>
 
-              <button className="bg-blue-50/50 border border-blue-500 rounded-2xl p-4 text-left hover:bg-blue-100 transition">
+              <button
+                onClick={() =>
+                  navigate("/progress-monitor")
+                }
+                className="bg-blue-50/50 border border-blue-500 rounded-2xl p-4 text-left hover:bg-blue-100 transition"
+              >
                 <FolderOpen
                   className="text-blue-600 mb-2"
                   size={28}
@@ -386,7 +396,12 @@ function Dashboard() {
                 </p>
               </button>
 
-              <button className="bg-purple-50 border border-purple-500 rounded-2xl p-4 text-left hover:bg-purple-100 transition">
+              <button
+                onClick={() =>
+                  navigate("/product")
+                }
+                className="bg-purple-50 border border-purple-500 rounded-2xl p-4 text-left hover:bg-purple-100 transition"
+              >
                 <Package
                   className="text-purple-600 mb-2"
                   size={28}
@@ -494,7 +509,7 @@ function Dashboard() {
                       const address = order.customer
                         ? getCustomerAddress(order.customer) || "—"
                         : "—";
-                      const date = order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—";
+                      const date = order.createdAt ? formatDateToMMDDYYYY(order.createdAt) : "—";
                       const estimation = order.total_amount ? `₱${order.total_amount.toLocaleString()}` : "—";
 
                       return (

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { X, UploadCloud, Plus, CheckCircle2, Lock, Trash2 } from "lucide-react";
+import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, getTodayIso } from "@/lib/dateUtils";
 
 const focusableSelectors = [
   "button",
@@ -34,8 +35,9 @@ const normalizeStage = (source = {}, key, name) => {
     key,
     name,
     status: effectiveStatus,
-    saved: completed,
     completed,
+    saved: completed,
+    canUndoCompletion: false,
     previousStatus: null,
     date: source.date ? new Date(source.date) : null,
     images: Array.isArray(source.images) ? source.images : [],
@@ -131,6 +133,9 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   const [removeStageIndex, setRemoveStageIndex] = useState(null);
   const [removeSubStageIndex, setRemoveSubStageIndex] = useState(null);
   const [removeModalError, setRemoveModalError] = useState("");
+  const [showMarkDoneConfirmation, setShowMarkDoneConfirmation] = useState(false);
+  const [stagePendingCompletion, setStagePendingCompletion] = useState(null);
+  const [markDoneValidationError, setMarkDoneValidationError] = useState("");
   const modalRef = useRef(null);
   const previousActiveElement = useRef(null);
 
@@ -182,19 +187,25 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     };
   }, [onClose]);
 
-  const isStageLocked = (index) =>
-    stages[index]?.completed && stages[index]?.saved;
+  const isStageLocked = (index) => {
+    const stage = stages[index];
+    return stage?.completed && stage?.saved && !stage?.canUndoCompletion;
+  };
 
   const currentStageIndex = stages.findIndex(
-    (stage) => !(stage.completed && stage.saved)
+    (stage) => !(stage.completed && stage.saved && !stage.canUndoCompletion)
   );
   const activeStageIndex = currentStageIndex === -1 ? stages.length - 1 : currentStageIndex;
 
-  const isStageEditable = (index) =>
-    index === activeStageIndex && !(stages[index]?.completed && stages[index]?.saved);
+  const isStageEditable = (index) => {
+    const stage = stages[index];
+    return index === activeStageIndex && !(stage?.completed && stage?.saved && !stage?.canUndoCompletion);
+  };
 
-  const canAcceptSubStages = (index) =>
-    index === activeStageIndex && !(stages[index]?.completed && stages[index]?.saved);
+  const canAcceptSubStages = (index) => {
+    const stage = stages[index];
+    return index === activeStageIndex && !(stage?.completed && stage?.saved && !stage?.canUndoCompletion);
+  };
 
 
   const openAddSubStageModal = (stageIndex) => {
@@ -448,6 +459,40 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     setRemoveModalError("");
   };
 
+  const openMarkDoneConfirmation = (stageIndex) => {
+    const stage = stages[stageIndex];
+    
+    // Validation: check if all sub-stages are done
+    const incompleteSubs = stage.subStages.filter(sub => !sub.completed);
+    if (incompleteSubs.length > 0) {
+      const pendingOrInProgress = incompleteSubs.filter(sub => 
+        sub.status === "pending" || sub.status === "in_progress"
+      );
+      if (pendingOrInProgress.length > 0) {
+        setMarkDoneValidationError(
+          `Cannot mark ${stage.name} as done. Please complete all sub-stages first. Pending: ${pendingOrInProgress.map(s => s.name).join(", ")}`
+        );
+        return;
+      }
+    }
+    
+    setStagePendingCompletion(stageIndex);
+    setMarkDoneValidationError("");
+    setShowMarkDoneConfirmation(true);
+  };
+
+  const closeMarkDoneConfirmation = () => {
+    setShowMarkDoneConfirmation(false);
+    setStagePendingCompletion(null);
+    setMarkDoneValidationError("");
+  };
+
+  const confirmMarkStageDone = () => {
+    if (stagePendingCompletion === null) return;
+    handleMarkStageDone(stagePendingCompletion);
+    closeMarkDoneConfirmation();
+  };
+
   const handleRemoveSubStage = () => {
     if (removeStageIndex === null || removeSubStageIndex === null) {
       setRemoveModalError("Unable to remove this sub-stage.");
@@ -593,7 +638,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
 
   const undoStageCompletion = (stageIndex) => {
     const stage = stages[stageIndex];
-    if (!stage || !stage.completed || stage.saved) return;
+    if (!stage || !stage.completed || (stage.saved && !stage.canUndoCompletion)) return;
     updateStage(stageIndex, {
       status: stage.previousStatus || "pending",
       completed: false,
@@ -613,56 +658,69 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     });
   };
 
-  const buildPayloadStages = () =>
-    stages.map((stage) => ({
-      key: stage.key,
-      name: stage.name,
-      status: stage.status,
-      completed: stage.completed,
-      date: stage.date ? stage.date.toISOString() : null,
-      images: stage.images,
-      delayReason: stage.delayReason || "",
-      delayExpectedResolution: stage.delayExpectedResolution ? stage.delayExpectedResolution.toISOString() : null,
-      delayNotes: stage.delayNotes || "",
-      delayReportedAt: stage.delayReportedAt ? stage.delayReportedAt.toISOString() : null,
-      delayReportedBy: stage.delayReportedBy || "",
-      delayHistory: Array.isArray(stage.delayHistory)
-        ? stage.delayHistory.map((entry) => ({
-            reason: entry.reason || "",
-            expectedResolution: entry.expectedResolution ? entry.expectedResolution.toISOString() : null,
-            notes: entry.notes || "",
-            reportedAt: entry.reportedAt ? entry.reportedAt.toISOString() : null,
-            reportedBy: entry.reportedBy || "",
-            status: entry.status || "",
-            resolvedAt: entry.resolvedAt ? entry.resolvedAt.toISOString() : null,
-          }))
-        : [],
-      proposedInstallationDate: stage.proposedInstallationDate ? stage.proposedInstallationDate.toISOString() : null,
-      proposedInstallationTime: stage.proposedInstallationTime || null,
-      contactMethods: Array.isArray(stage.contactMethods) ? stage.contactMethods : [],
-      schedulingNotes: stage.schedulingNotes || "",
-      contactAttempts: Array.isArray(stage.contactAttempts)
-        ? stage.contactAttempts.map((attempt) => ({
-            attemptedAt: attempt.attemptedAt || null,
-            methods: Array.isArray(attempt.methods) ? attempt.methods : [],
-            notes: attempt.notes || "",
-          }))
-        : [],
-      customerResponse: stage.customerResponse || "pending",
-      customerResponseAt: stage.customerResponseAt ? stage.customerResponseAt.toISOString() : null,
-      customerDeclineReason: stage.customerDeclineReason || "",
-      customerPreferredInstallationDate: stage.customerPreferredInstallationDate ? stage.customerPreferredInstallationDate.toISOString() : null,
-      customerPreferredInstallationTime: stage.customerPreferredInstallationTime || "",
-      customerRescheduleNotes: stage.customerRescheduleNotes || "",
-      subStages: stage.subStages.map((sub) => ({
-        name: sub.name,
-        description: sub.description,
-        status: sub.status,
-        completed: sub.completed,
-        date: sub.date ? sub.date.toISOString() : null,
-        images: sub.images,
-      })),
-    }));
+  const buildPayloadStages = () => {
+    const schedulingDone = stages.some(
+      (stage) => stage.key === "installation_scheduling" && stage.completed
+    );
+
+    return stages.map((stage) => {
+      const shouldStartInstallation =
+        schedulingDone &&
+        stage.key === "installation" &&
+        !stage.completed &&
+        !["in_progress", "delayed", "on_hold"].includes(stage.status);
+
+      return {
+        key: stage.key,
+        name: stage.name,
+        status: shouldStartInstallation ? "in_progress" : stage.status,
+        completed: stage.completed,
+        date: stage.date ? stage.date.toISOString() : null,
+        images: stage.images,
+        delayReason: stage.delayReason || "",
+        delayExpectedResolution: stage.delayExpectedResolution ? stage.delayExpectedResolution.toISOString() : null,
+        delayNotes: stage.delayNotes || "",
+        delayReportedAt: stage.delayReportedAt ? stage.delayReportedAt.toISOString() : null,
+        delayReportedBy: stage.delayReportedBy || "",
+        delayHistory: Array.isArray(stage.delayHistory)
+          ? stage.delayHistory.map((entry) => ({
+              reason: entry.reason || "",
+              expectedResolution: entry.expectedResolution ? entry.expectedResolution.toISOString() : null,
+              notes: entry.notes || "",
+              reportedAt: entry.reportedAt ? entry.reportedAt.toISOString() : null,
+              reportedBy: entry.reportedBy || "",
+              status: entry.status || "",
+              resolvedAt: entry.resolvedAt ? entry.resolvedAt.toISOString() : null,
+            }))
+          : [],
+        proposedInstallationDate: stage.proposedInstallationDate ? stage.proposedInstallationDate.toISOString() : null,
+        proposedInstallationTime: stage.proposedInstallationTime || null,
+        contactMethods: Array.isArray(stage.contactMethods) ? stage.contactMethods : [],
+        schedulingNotes: stage.schedulingNotes || "",
+        contactAttempts: Array.isArray(stage.contactAttempts)
+          ? stage.contactAttempts.map((attempt) => ({
+              attemptedAt: attempt.attemptedAt || null,
+              methods: Array.isArray(attempt.methods) ? attempt.methods : [],
+              notes: attempt.notes || "",
+            }))
+          : [],
+        customerResponse: stage.customerResponse || "pending",
+        customerResponseAt: stage.customerResponseAt ? stage.customerResponseAt.toISOString() : null,
+        customerDeclineReason: stage.customerDeclineReason || "",
+        customerPreferredInstallationDate: stage.customerPreferredInstallationDate ? stage.customerPreferredInstallationDate.toISOString() : null,
+        customerPreferredInstallationTime: stage.customerPreferredInstallationTime || "",
+        customerRescheduleNotes: stage.customerRescheduleNotes || "",
+        subStages: stage.subStages.map((sub) => ({
+          name: sub.name,
+          description: sub.description,
+          status: sub.status,
+          completed: sub.completed,
+          date: sub.date ? sub.date.toISOString() : null,
+          images: sub.images,
+        })),
+      };
+    });
+  };
 
   const buildFileContexts = () => {
     const contexts = [];
@@ -744,6 +802,12 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
       onClick={handleOverlayClick}
       role="presentation"
     >
+      <style>{`@keyframes glowPulse {
+          0%, 100% { box-shadow: 0 0 4px 2px rgba(29, 158, 117, 0.4); }
+          50% { box-shadow: 0 0 14px 6px rgba(29, 158, 117, 0.65); }
+        }
+        .glow-bar { animation: glowPulse 2s ease-in-out infinite; }
+      `}</style>
       <div
         className="bg-white rounded-3xl p-6 w-full max-w-3xl shadow-lg outline-none max-h-[90vh] overflow-y-auto"
         role="dialog"
@@ -770,54 +834,25 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
           </button>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-1">
           <div>
-            <label htmlFor="progress-value" className="text-sm text-gray-600 block">
-              Progress %
-            </label>
-            <input
-              id="progress-value"
-              type="number"
-              className="w-full border p-2 rounded-lg bg-slate-100"
-              value={progress}
-              onChange={(e) => setProgress(Number(e.target.value))}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            />
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xl font-medium">{Math.round(Math.max(0, Math.min(progress, 100)))}%</span>
+              <span className="text-sm text-slate-500">auto-calculated</span>
+            </div>
+            <div className="relative h-2.5 rounded-full bg-gray-100 overflow-visible">
+              <div
+                className="glow-bar h-full rounded-full bg-emerald-500 relative transition-all duration-700 ease-in-out"
+                style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }}
+              >
+                {progress > 0 && (
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full bg-emerald-500">
+                    <span className="absolute inset-0 block rounded-full bg-emerald-500 opacity-70 animate-ping" />
+                  </div>
+                )}
+              </div>
+            </div>
             <p className="text-xs text-slate-500 mt-1">Automatically calculated from stage and sub-stage completion.</p>
-          </div>
-
-          <div>
-            <label htmlFor="progress-status" className="text-sm text-gray-600 block">
-              Status
-            </label>
-            <select
-              id="progress-status"
-              className="w-full border p-2 rounded-lg"
-              value={status}
-              onChange={(e) => handleProjectStatusChange(e.target.value)}
-            >
-              <option>Pending</option>
-              <option>Cutting</option>
-              <option>Fabrication</option>
-              <option>Installation</option>
-              <option>Completed</option>
-              <option>Delayed</option>
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="installation-date" className="text-sm text-gray-600 block">
-              Estimated Installation Date
-            </label>
-            <input
-              id="installation-date"
-              type="date"
-              className="w-full border p-2 rounded-lg"
-              value={installationDate ? installationDate.toISOString().slice(0, 10) : ""}
-              onChange={(e) => setInstallationDate(e.target.value ? new Date(e.target.value) : null)}
-              aria-label="Estimated installation date"
-            />
           </div>
         </div>
 
@@ -860,7 +895,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                     <p className="text-sm text-slate-500 mt-1">
                       {stage.completed
                         ? stage.saved
-                          ? `Completed on ${stage.date?.toLocaleString() ?? "Unknown"}`
+                          ? `Completed on ${stage.date ? formatDateTimeToMMDDYYYY(stage.date) : "Unknown"}`
                           : "Marked as Done (Unsaved). Review before saving."
                         : stage.status === "delayed"
                         ? "This stage is delayed. Update the status once it resumes."
@@ -893,32 +928,32 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                   </div>
                 </div>
 
-                <div className="grid gap-4 mt-5 md:grid-cols-2">
-                  <label className="text-sm text-gray-600 block">
-                    Stage State
-                    <select
-                      className="mt-2 w-full border p-2 rounded-lg"
-                      value={stage.status}
-                      disabled={!stageEditable}
-                      onChange={(e) => handleStageStatusChange(stageIndex, e.target.value)}
-                    >
-                      <option value="pending">Pending</option>
-                      <option value="in_progress">In Progress</option>
-                      <option value="done">Done</option>
-                      <option value="delayed">Delayed</option>
-                      <option value="on_hold">On Hold</option>
-                    </select>
-                  </label>
-                </div>
+                {stage.key !== "installation_scheduling" && (
+                  <div className="grid gap-4 mt-5 md:grid-cols-2">
+                    <label className="text-sm text-gray-600 block">
+                      Stage State
+                      <select
+                        className="mt-2 w-full border p-2 rounded-lg"
+                        value={stage.status}
+                        disabled={!stageEditable}
+                        onChange={(e) => handleStageStatusChange(stageIndex, e.target.value)}
+                      >
+                        <option value="in_progress">In Progress</option>
+                        <option value="delayed">Delayed</option>
+                        <option value="done">Done</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
 
                 {stage.key === "installation_scheduling" && (
                   <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm font-semibold text-slate-900">Installation Scheduling</p>
                     <div className="grid gap-4 mt-4 sm:grid-cols-2">
                       <label className="text-sm text-gray-600 block">
                         Proposed Installation Date
                         <input
                           type="date"
+                          min={getTodayIso()}
                           className="mt-2 w-full border p-2 rounded-lg"
                           value={stage.proposedInstallationDate ? stage.proposedInstallationDate.toISOString().slice(0, 10) : ""}
                           disabled={!stageEditable}
@@ -945,343 +980,332 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                         onChange={(e) => updateStage(stageIndex, { schedulingNotes: e.target.value })}
                       />
                     </div>
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        disabled={!stageEditable}
-                        onClick={() => handleContactCustomer(stageIndex)}
-                        className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Send Installation Schedule
-                      </button>
-                      {stage.contactAttempts?.length > 0 && (
-                        <span className="text-sm text-slate-600">
-                          {stage.contactAttempts.length} contact attempt(s) recorded
-                        </span>
-                      )}
-                    </div>
                     {stage.completed && stage.saved && stage.proposedInstallationDate && stage.proposedInstallationTime && (
                       <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-700">
-                        Installation schedule proposed for {stage.proposedInstallationDate.toLocaleDateString()} at {stage.proposedInstallationTime}.
+                        Installation schedule proposed for {formatDateToMMDDYYYY(stage.proposedInstallationDate)} at {stage.proposedInstallationTime}.
                       </div>
                     )}
                   </div>
                 )}
 
-                <div className="mt-5 border rounded-2xl border-dashed border-slate-200 bg-white p-4">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                    <UploadCloud />
-                    Parent Stage Proof
-                  </div>
-                  <p className="text-xs text-slate-500 mt-2">Photos are optional; upload if available.</p>
-                  <div className="mt-3">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      disabled={!stageEditable}
-                      onChange={(e) => handleStageFiles(stageIndex, e)}
-                      aria-label={`Upload proof images for ${stage.name}`}
-                    />
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    {stage.imagePreviews.map((src, i) => (
-                      <img
-                        key={`${stage.key}-preview-${i}`}
-                        src={src}
-                        alt={`${stage.name} preview ${i + 1}`}
-                        className="h-20 w-full object-cover rounded-lg"
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {(stage.status === "delayed" || (Array.isArray(stage.delayHistory) && stage.delayHistory.length > 0)) && (
-                  <div className="mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-4">
-                    <p className="text-sm font-semibold text-amber-900">Delay Information</p>
-                    <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Delay Reason</p>
-                        <p className="mt-1 text-sm text-slate-700">
-                          {stage.delayReason || (stage.delayHistory[stage.delayHistory.length - 1]?.reason || "Not specified")}
-                        </p>
+                {stage.key !== "installation_scheduling" && (
+                  <>
+                    <div className="mt-5 border rounded-2xl border-dashed border-slate-200 bg-white p-4">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                        <UploadCloud />
+                        Parent Stage Proof
                       </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Date Reported</p>
-                        <p className="mt-1 text-sm text-slate-700">
-                          {stage.delayReportedAt
-                            ? stage.delayReportedAt.toLocaleString()
-                            : stage.delayHistory[stage.delayHistory.length - 1]?.reportedAt
-                            ? new Date(stage.delayHistory[stage.delayHistory.length - 1].reportedAt).toLocaleString()
-                            : "Not recorded"}
-                        </p>
+                      <p className="text-xs text-slate-500 mt-2">Photos are optional; upload if available.</p>
+                      <div className="mt-3">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          disabled={!stageEditable}
+                          onChange={(e) => handleStageFiles(stageIndex, e)}
+                          aria-label={`Upload proof images for ${stage.name}`}
+                        />
                       </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Expected Resolution Date</p>
-                        <p className="mt-1 text-sm text-slate-700">
-                          {stage.delayExpectedResolution
-                            ? stage.delayExpectedResolution.toLocaleDateString()
-                            : stage.delayHistory[stage.delayHistory.length - 1]?.expectedResolution
-                            ? new Date(stage.delayHistory[stage.delayHistory.length - 1].expectedResolution).toLocaleDateString()
-                            : "Not set"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Reported By</p>
-                        <p className="mt-1 text-sm text-slate-700">
-                          {stage.delayReportedBy || stage.delayHistory[stage.delayHistory.length - 1]?.reportedBy || "Admin"}
-                        </p>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {stage.imagePreviews.map((src, i) => (
+                          <img
+                            key={`${stage.key}-preview-${i}`}
+                            src={src}
+                            alt={`${stage.name} preview ${i + 1}`}
+                            className="h-20 w-full object-cover rounded-lg"
+                          />
+                        ))}
                       </div>
                     </div>
-                    {stage.delayNotes || stage.delayHistory[stage.delayHistory.length - 1]?.notes ? (
-                      <div className="mt-4">
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Additional Notes</p>
-                        <p className="mt-1 text-sm text-slate-700">
-                          {stage.delayNotes || stage.delayHistory[stage.delayHistory.length - 1]?.notes}
-                        </p>
-                      </div>
-                    ) : null}
-                  </div>
-                )}
 
-                <div className="mt-5">
-                  <div className="flex items-center justify-between gap-4 mb-4">
-                    <div>
-                      <p className="text-sm font-semibold">Sub-stages</p>
-                      <p className="text-xs text-slate-500">
-                        Manage sub-stages created for this phase.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Sub-stages container with left border */}
-                  <div className="border-l-2 border-slate-200 pl-4 space-y-4">
-                    {stage.subStages.length === 0 ? (
-                      <div className="text-center py-6">
-                        <p className="text-sm text-slate-500 mb-3">No sub-stages created yet.</p>
-                        {canAcceptSubStages(stageIndex) && (
-                          <button
-                            type="button"
-                            onClick={() => openAddSubStageModal(stageIndex)}
-                            className="inline-flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white"
-                            aria-label={`Add sub-stage to ${stage.name}`}
-                          >
-                            <Plus size={16} /> Add Sub-Stage
-                          </button>
-                        )}
+                    {(stage.status === "delayed" || (Array.isArray(stage.delayHistory) && stage.delayHistory.length > 0)) && (
+                      <div className="mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-4">
+                        <p className="text-sm font-semibold text-amber-900">Delay Information</p>
+                        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Delay Reason</p>
+                            <p className="mt-1 text-sm text-slate-700">
+                              {stage.delayReason || (stage.delayHistory[stage.delayHistory.length - 1]?.reason || "Not specified")}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Date Reported</p>
+                            <p className="mt-1 text-sm text-slate-700">
+                              {stage.delayReportedAt
+                                ? formatDateTimeToMMDDYYYY(stage.delayReportedAt)
+                                : stage.delayHistory[stage.delayHistory.length - 1]?.reportedAt
+                                ? formatDateTimeToMMDDYYYY(new Date(stage.delayHistory[stage.delayHistory.length - 1].reportedAt))
+                                : "Not recorded"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Expected Resolution Date</p>
+                            <p className="mt-1 text-sm text-slate-700">
+                              {stage.delayExpectedResolution
+                                ? formatDateToMMDDYYYY(stage.delayExpectedResolution)
+                                : stage.delayHistory[stage.delayHistory.length - 1]?.expectedResolution
+                                ? formatDateToMMDDYYYY(new Date(stage.delayHistory[stage.delayHistory.length - 1].expectedResolution))
+                                : "Not set"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Reported By</p>
+                            <p className="mt-1 text-sm text-slate-700">
+                              {stage.delayReportedBy || stage.delayHistory[stage.delayHistory.length - 1]?.reportedBy || "Admin"}
+                            </p>
+                          </div>
+                        </div>
+                        {stage.delayNotes || stage.delayHistory[stage.delayHistory.length - 1]?.notes ? (
+                          <div className="mt-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Additional Notes</p>
+                            <p className="mt-1 text-sm text-slate-700">
+                              {stage.delayNotes || stage.delayHistory[stage.delayHistory.length - 1]?.notes}
+                            </p>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : (
-                      <>
-                        {stage.subStages.map((sub, subIndex) => {
-                          const subLocked = sub.completed && sub.saved;
-                          const subEditable = stageEditable && !subLocked;
-                          return (
-                            <div
-                              key={`${stage.key}-sub-${subIndex}`}
-                              className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                            >
-                              {/* Header with status indicator */}
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-3 mb-2">
-                                    <div
-                                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold ${
-                                        sub.completed
-                                          ? "border-emerald-600 bg-emerald-600 text-white"
-                                          : sub.status === "in_progress"
-                                          ? "border-amber-300 bg-amber-100 text-amber-700"
-                                          : "border-slate-200 bg-white text-slate-500"
-                                      }`}
-                                    >
-                                      {sub.completed ? "✓" : subIndex + 1}
-                                    </div>
-                                    <div>
-                                      <p className="font-semibold text-slate-900">{sub.name || "Untitled sub-stage"}</p>
-                                      {sub.completed && (
-                                        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
-                                          Completed
-                                        </span>
+                    )}
+
+                    <div className="mt-5">
+                      <div className="flex items-center justify-between gap-4 mb-4">
+                        <div>
+                          <p className="text-sm font-semibold">Sub-stages</p>
+                          <p className="text-xs text-slate-500">
+                            Manage sub-stages created for this phase.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Sub-stages container with left border */}
+                      <div className="border-l-2 border-slate-200 pl-4 space-y-4">
+                        {stage.subStages.length === 0 ? (
+                          <div className="text-center py-6">
+                            <p className="text-sm text-slate-500 mb-3">No sub-stages created yet.</p>
+                            {canAcceptSubStages(stageIndex) && (
+                              <button
+                                type="button"
+                                onClick={() => openAddSubStageModal(stageIndex)}
+                                className="inline-flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white"
+                                aria-label={`Add sub-stage to ${stage.name}`}
+                              >
+                                <Plus size={16} /> Add Sub-Stage
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            {stage.subStages.map((sub, subIndex) => {
+                              const subLocked = sub.completed && sub.saved;
+                              const subEditable = stageEditable && !subLocked;
+                              return (
+                                <div
+                                  key={`${stage.key}-sub-${subIndex}`}
+                                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                                >
+                                  {/* Header with status indicator */}
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-3 mb-2">
+                                        <div
+                                          className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold ${
+                                            sub.completed
+                                              ? "border-emerald-600 bg-emerald-600 text-white"
+                                              : sub.status === "in_progress"
+                                              ? "border-amber-300 bg-amber-100 text-amber-700"
+                                              : "border-slate-200 bg-white text-slate-500"
+                                          }`}
+                                        >
+                                          {sub.completed ? "✓" : subIndex + 1}
+                                        </div>
+                                        <div>
+                                          <p className="font-semibold text-slate-900">{sub.name || "Untitled sub-stage"}</p>
+                                          {sub.completed && (
+                                            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
+                                              Completed
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      {sub.date && (
+                                        <p className="text-xs text-slate-500 ml-11">
+                                          Completed on {formatDateTimeToMMDDYYYY(sub.date) ?? "Unknown"}
+                                        </p>
                                       )}
                                     </div>
+                                    <div className="flex flex-wrap gap-2">
+                                      <span
+                                        className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${
+                                          sub.completed
+                                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                            : sub.status === "in_progress"
+                                            ? "border-amber-200 bg-amber-50 text-amber-700"
+                                            : "border-slate-200 bg-white text-slate-600"
+                                        }`}
+                                      >
+                                        {sub.completed
+                                          ? "Done"
+                                          : sub.status === "in_progress"
+                                          ? "In Progress"
+                                          : sub.status === "delayed"
+                                          ? "Delayed"
+                                          : "Pending"}
+                                      </span>
+                                      <span className="text-xs text-slate-500">
+                                        {getPhotoCount(sub)} photo(s)
+                                      </span>
+                                    </div>
                                   </div>
-                                  {sub.date && (
-                                    <p className="text-xs text-slate-500 ml-11">
-                                      Completed on {sub.date?.toLocaleString() ?? "Unknown"}
-                                    </p>
+
+                                  {/* Description */}
+                                  {sub.description && !subEditable && (
+                                    <p className="mt-3 text-sm text-slate-600">{sub.description}</p>
                                   )}
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  <span
-                                    className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${
-                                      sub.completed
-                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                        : sub.status === "in_progress"
-                                        ? "border-amber-200 bg-amber-50 text-amber-700"
-                                        : "border-slate-200 bg-white text-slate-600"
-                                    }`}
-                                  >
-                                    {sub.completed
-                                      ? "Done"
-                                      : sub.status === "in_progress"
-                                      ? "In Progress"
-                                      : sub.status === "delayed"
-                                      ? "Delayed"
-                                      : "Pending"}
-                                  </span>
-                                  <span className="text-xs text-slate-500">
-                                    {getPhotoCount(sub)} photo(s)
-                                  </span>
-                                </div>
-                              </div>
 
-                              {/* Description */}
-                              {sub.description && !subEditable && (
-                                <p className="mt-3 text-sm text-slate-600">{sub.description}</p>
-                              )}
-
-                              {/* Editable Fields */}
-                              {subEditable && (
-                                <>
-                                  <div className="grid gap-4 mt-4 sm:grid-cols-2">
-                                    <label className="text-sm text-gray-600 block">
-                                      Title
-                                      <input
-                                        type="text"
-                                        value={sub.name}
-                                        onChange={(e) => updateSubStage(stageIndex, subIndex, { name: e.target.value })}
-                                        disabled={!subEditable}
-                                        className="mt-2 w-full border p-2 rounded-lg"
-                                        aria-label={`Sub-stage title for ${stage.name}`}
-                                      />
-                                    </label>
-
-                                    <label className="text-sm text-gray-600 block">
-                                      Sub-Stage State
-                                      <select
-                                        value={sub.status}
-                                        disabled={!subEditable}
-                                        onChange={(e) => updateSubStage(stageIndex, subIndex, { status: e.target.value })}
-                                        className="mt-2 w-full border p-2 rounded-lg"
-                                      >
-                                        <option value="pending">Pending</option>
-                                        <option value="in_progress">In Progress</option>
-                                        <option value="done">Done</option>
-                                        <option value="delayed">Delayed</option>
-                                        <option value="on_hold">On Hold</option>
-                                      </select>
-                                    </label>
-                                  </div>
-
-                                  <div className="mt-4">
-                                    <label className="text-sm text-gray-600 block">
-                                      Description
-                                      <textarea
-                                        value={sub.description}
-                                        onChange={(e) => updateSubStage(stageIndex, subIndex, { description: e.target.value })}
-                                        disabled={!subEditable}
-                                        className="mt-2 w-full min-h-[80px] border p-2 rounded-lg"
-                                        aria-label={`Sub-stage description for ${stage.name}`}
-                                      />
-                                    </label>
-                                  </div>
-                                </>
-                              )}
-
-                              {/* Photos Section */}
-                              <div className="mt-4 border rounded-2xl border-dashed border-slate-200 bg-white p-4">
-                                <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                                  <UploadCloud size={16} />
-                                  Proof Photos
-                                </div>
-                                <p className="text-xs text-slate-500 mt-2">
-                                  {getPhotoCount(sub) > 0
-                                    ? `${getPhotoCount(sub)} photo(s) uploaded`
-                                    : "Photos are required before this sub-stage can be marked as done."}
-                                </p>
-                                {subEditable && (
-                                  <div className="mt-3">
-                                    <input
-                                      type="file"
-                                      accept="image/*"
-                                      multiple
-                                      disabled={!subEditable}
-                                      onChange={(e) => handleSubStageFiles(stageIndex, subIndex, e)}
-                                      aria-label={`Upload proof images for ${sub.name || "sub-stage"}`}
-                                    />
-                                  </div>
-                                )}
-                                {sub.imagePreviews.length > 0 && (
-                                  <div className="mt-3 grid grid-cols-3 gap-2">
-                                    {sub.imagePreviews.map((src, i) => (
-                                      <img
-                                        key={`${stage.key}-sub-${subIndex}-preview-${i}`}
-                                        src={src}
-                                        alt={`${sub.name || "Sub-stage"} preview ${i + 1}`}
-                                        className="h-20 w-full object-cover rounded-lg"
-                                      />
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Action Buttons */}
-                              {subEditable && (
-                                <div className="mt-4 flex justify-end gap-3">
-                                  {sub.completed && !sub.saved ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => undoSubStageCompletion(stageIndex, subIndex)}
-                                      className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 px-3 py-2 text-sm font-semibold"
-                                    >
-                                      Undo Completion
-                                    </button>
-                                  ) : (
+                                  {/* Editable Fields */}
+                                  {subEditable && (
                                     <>
-                                      <button
-                                        type="button"
-                                        onClick={() => openRemoveSubStageModal(stageIndex, subIndex)}
-                                        className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 px-3 py-2 text-sm font-semibold"
-                                      >
-                                        <Trash2 size={14} />
-                                        Remove
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={!canMarkSubStageDone(stageIndex, subIndex)}
-                                        onClick={() => handleMarkSubStageDone(stageIndex, subIndex)}
-                                        className="inline-flex items-center gap-2 rounded-full bg-emerald-600 hover:bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                                      >
-                                        <CheckCircle2 size={14} />
-                                        Mark as Done
-                                      </button>
+                                      <div className="grid gap-4 mt-4 sm:grid-cols-2">
+                                        <label className="text-sm text-gray-600 block">
+                                          Title
+                                          <input
+                                            type="text"
+                                            value={sub.name}
+                                            onChange={(e) => updateSubStage(stageIndex, subIndex, { name: e.target.value })}
+                                            disabled={!subEditable}
+                                            className="mt-2 w-full border p-2 rounded-lg"
+                                            aria-label={`Sub-stage title for ${stage.name}`}
+                                          />
+                                        </label>
+
+                                        <label className="text-sm text-gray-600 block">
+                                          Sub-Stage State
+                                          <select
+                                            value={sub.status}
+                                            disabled={!subEditable}
+                                            onChange={(e) => updateSubStage(stageIndex, subIndex, { status: e.target.value })}
+                                            className="mt-2 w-full border p-2 rounded-lg"
+                                          >
+                                            <option value="pending">Pending</option>
+                                            <option value="in_progress">In Progress</option>
+                                            <option value="done">Done</option>
+                                            <option value="delayed">Delayed</option>
+                                            <option value="on_hold">On Hold</option>
+                                          </select>
+                                        </label>
+                                      </div>
+
+                                      <div className="mt-4">
+                                        <label className="text-sm text-gray-600 block">
+                                          Description
+                                          <textarea
+                                            value={sub.description}
+                                            onChange={(e) => updateSubStage(stageIndex, subIndex, { description: e.target.value })}
+                                            disabled={!subEditable}
+                                            className="mt-2 w-full min-h-[80px] border p-2 rounded-lg"
+                                            aria-label={`Sub-stage description for ${stage.name}`}
+                                          />
+                                        </label>
+                                      </div>
                                     </>
                                   )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
 
-                        {/* Add Sub-Stage button at the bottom */}
-                        {canAcceptSubStages(stageIndex) && (
-                          <div className="mt-4 flex justify-center">
-                            <button
-                              type="button"
-                              onClick={() => openAddSubStageModal(stageIndex)}
-                              className="inline-flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white"
-                              aria-label={`Add sub-stage to ${stage.name}`}
-                            >
-                              <Plus size={16} /> Add Sub-Stage
-                            </button>
-                          </div>
+                                  {/* Photos Section */}
+                                  <div className="mt-4 border rounded-2xl border-dashed border-slate-200 bg-white p-4">
+                                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                                      <UploadCloud size={16} />
+                                      Proof Photos
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-2">
+                                      {getPhotoCount(sub) > 0
+                                        ? `${getPhotoCount(sub)} photo(s) uploaded`
+                                        : "Photos are required before this sub-stage can be marked as done."}
+                                    </p>
+                                    {subEditable && (
+                                      <div className="mt-3">
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          multiple
+                                          disabled={!subEditable}
+                                          onChange={(e) => handleSubStageFiles(stageIndex, subIndex, e)}
+                                          aria-label={`Upload proof images for ${sub.name || "sub-stage"}`}
+                                        />
+                                      </div>
+                                    )}
+                                    {sub.imagePreviews.length > 0 && (
+                                      <div className="mt-3 grid grid-cols-3 gap-2">
+                                        {sub.imagePreviews.map((src, i) => (
+                                          <img
+                                            key={`${stage.key}-sub-${subIndex}-preview-${i}`}
+                                            src={src}
+                                            alt={`${sub.name || "Sub-stage"} preview ${i + 1}`}
+                                            className="h-20 w-full object-cover rounded-lg"
+                                          />
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Action Buttons */}
+                                  {subEditable && (
+                                    <div className="mt-4 flex justify-end gap-3">
+                                      {sub.completed && !sub.saved ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => undoSubStageCompletion(stageIndex, subIndex)}
+                                          className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 px-3 py-2 text-sm font-semibold"
+                                        >
+                                          Undo Completion
+                                        </button>
+                                      ) : (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={() => openRemoveSubStageModal(stageIndex, subIndex)}
+                                            className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 px-3 py-2 text-sm font-semibold"
+                                          >
+                                            <Trash2 size={14} />
+                                            Remove
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={!canMarkSubStageDone(stageIndex, subIndex)}
+                                            onClick={() => handleMarkSubStageDone(stageIndex, subIndex)}
+                                            className="inline-flex items-center gap-2 rounded-full bg-emerald-600 hover:bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                          >
+                                            <CheckCircle2 size={14} />
+                                            Mark as Done
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            {/* Add Sub-Stage button at the bottom */}
+                            {canAcceptSubStages(stageIndex) && (
+                              <div className="mt-4 flex justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() => openAddSubStageModal(stageIndex)}
+                                  className="inline-flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white"
+                                  aria-label={`Add sub-stage to ${stage.name}`}
+                                >
+                                  <Plus size={16} /> Add Sub-Stage
+                                </button>
+                              </div>
+                            )}
+                          </>
                         )}
-                      </>
-                    )}
-                  </div>
-                </div>
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 <div className="mt-5 flex justify-end gap-3">
-                  {!stage.completed && stage.key !== "installation_scheduling" && (
+                  {!stage.completed && (
                     <button
                       type="button"
                       disabled={!canMarkStageDone(stage, stageIndex)}
@@ -1292,7 +1316,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                       Mark {stage.name} Done
                     </button>
                   )}
-                  {stage.completed && !stage.saved && (
+                  {(stage.completed && !stage.saved) || (stage.completed && stage.saved && stage.canUndoCompletion) ? (
                     <button
                       type="button"
                       onClick={() => undoStageCompletion(stageIndex)}
@@ -1300,7 +1324,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                     >
                       Undo Completion
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
@@ -1498,6 +1522,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                   Expected Resolution Date
                   <input
                     type="date"
+                    min={getTodayIso()}
                     className="mt-2 w-full border p-2 rounded-lg"
                     value={delayExpectedResolution}
                     onChange={(e) => setDelayExpectedResolution(e.target.value)}

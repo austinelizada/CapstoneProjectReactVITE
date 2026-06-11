@@ -1,26 +1,4 @@
-const formatDateTime = (value) => {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-};
-
-const formatDateOnly = (value) => {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString([], {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-};
+import { formatDateTimeToMMDDYYYY, formatDateToMMDDYYYY } from "@/lib/dateUtils";
 
 const stageDefinitions = [
   { key: "order_submitted", label: "Order Request Submitted", assignedTo: "Sales Team" },
@@ -155,7 +133,7 @@ export const buildOrderTimelineStages = (order) => {
           : status === "cancelled"
           ? "Cancelled"
           : "Pending",
-      date: formatDateTime(getStageDate(order, stage.key)),
+      date: formatDateTimeToMMDDYYYY(getStageDate(order, stage.key)),
       assignedTo: stage.assignedTo,
       notes: getStageNotes(order, stage.key),
     };
@@ -190,7 +168,9 @@ export const buildOrderTimelineStages = (order) => {
         ? stageMap["installation_scheduling"] || stageMap["installation_scheduled"] || {}
         : stageMap[definition.key] || {};
 
-      const completed = !!sourceStage.completed || sourceStage.customerResponse === "accepted";
+      const completed = isAgreementStage
+        ? sourceStage.customerResponse === "accepted" || sourceStage.customerResponse === "reschedule_requested"
+        : !!sourceStage.completed || sourceStage.customerResponse === "accepted";
       const delayed = !completed && sourceStage.status === "delayed";
       const inProgress = !completed && sourceStage.status === "in_progress";
       const status = completed ? "completed" : delayed ? "delayed" : inProgress ? "in-progress" : "pending";
@@ -204,7 +184,7 @@ export const buildOrderTimelineStages = (order) => {
               : sub.status === "in_progress"
               ? "in-progress"
               : "pending",
-            date: formatDateTime(sub.date),
+            date: formatDateTimeToMMDDYYYY(sub.date),
             notes: sub.description || null,
             images: Array.isArray(sub.images) ? sub.images : [],
           }))
@@ -220,21 +200,27 @@ export const buildOrderTimelineStages = (order) => {
         ? sourceStage.delayHistory[sourceStage.delayHistory.length - 1]
         : null;
 
+      const activeSubStage = subStages.find((sub) => sub.status !== "completed");
+      const latestCompletedSubStage = [...subStages].reverse().find((sub) => sub.status === "completed");
+      const subStageNotes = activeSubStage?.notes || latestCompletedSubStage?.notes || null;
+
       const defaultNotes =
         subStages.length > 0
-          ? `${completedSubCount}/${subStages.length} sub-stages completed`
+          ? subStageNotes ?? "No notes available."
           : `Current phase: ${definition.label}`;
 
       const schedulingNotes =
         definition.key === "installation_scheduling"
           ? sourceStage.proposedInstallationDate && sourceStage.proposedInstallationTime
             ? sourceStage.customerResponse === "accepted"
-              ? `Installation schedule confirmed for ${formatDateOnly(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
+              ? sourceStage.customerPreferredInstallationDate || sourceStage.customerPreferredInstallationTime
+                ? `Customer preferred installation schedule accepted for ${formatDateToMMDDYYYY(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
+                : `Installation schedule confirmed for ${formatDateToMMDDYYYY(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
               : sourceStage.customerResponse === "reschedule_requested"
-              ? `Customer requested a reschedule from ${formatDateOnly(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
+              ? `Customer requested a reschedule from ${formatDateToMMDDYYYY(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
               : sourceStage.customerResponse === "declined"
               ? "Customer declined the proposed schedule. Awaiting a new installation proposal."
-              : `Waiting for customer confirmation - proposed ${formatDateOnly(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
+              : `Waiting for customer confirmation - proposed ${formatDateToMMDDYYYY(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}`
             : "Waiting for customer confirmation"
           : null;
 
@@ -273,46 +259,48 @@ export const buildOrderTimelineStages = (order) => {
         status,
         statusText,
         date: isAgreementStage
-          ? sourceStage.customerResponseAt ? formatDateTime(sourceStage.customerResponseAt) : null
-          : formatDateTime(sourceStage.date),
+          ? sourceStage.customerResponseAt ? formatDateTimeToMMDDYYYY(sourceStage.customerResponseAt) : null
+          : formatDateTimeToMMDDYYYY(sourceStage.date),
         assignedTo: "Production Team",
         notes: isAgreementStage
           ? sourceStage.customerResponse === "reschedule_requested"
-            ? `Customer requested a new installation time: ${sourceStage.customerPreferredInstallationDate ? formatDateOnly(sourceStage.customerPreferredInstallationDate) : "TBD"} at ${sourceStage.customerPreferredInstallationTime || "TBD"}. ${sourceStage.customerRescheduleNotes || ""}`
+            ? `Customer requested a new installation time: ${sourceStage.customerPreferredInstallationDate ? formatDateToMMDDYYYY(sourceStage.customerPreferredInstallationDate) : "TBD"} at ${sourceStage.customerPreferredInstallationTime || "TBD"}. ${sourceStage.customerRescheduleNotes || ""}`
             : sourceStage.customerResponse === "accepted"
-            ? `Installation agreement accepted for ${sourceStage.proposedInstallationDate ? formatDateOnly(sourceStage.proposedInstallationDate) : "TBD"} at ${sourceStage.proposedInstallationTime || "TBD"}.`
+            ? sourceStage.customerPreferredInstallationDate || sourceStage.customerPreferredInstallationTime
+              ? `Your preferred installation schedule was approved for ${sourceStage.proposedInstallationDate ? formatDateToMMDDYYYY(sourceStage.proposedInstallationDate) : "TBD"} at ${sourceStage.proposedInstallationTime || "TBD"}.`
+              : `Installation agreement accepted for ${sourceStage.proposedInstallationDate ? formatDateToMMDDYYYY(sourceStage.proposedInstallationDate) : "TBD"} at ${sourceStage.proposedInstallationTime || "TBD"}.`
             : sourceStage.proposedInstallationDate && sourceStage.proposedInstallationTime
-            ? `Please agree or request a change for the proposed installation on ${formatDateOnly(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}.`
+            ? `Please agree or request a change for the proposed installation on ${formatDateToMMDDYYYY(sourceStage.proposedInstallationDate)} at ${sourceStage.proposedInstallationTime}.`
             : "Awaiting installation agreement."
           : schedulingNotes || defaultNotes,
         images: Array.isArray(sourceStage.images) ? sourceStage.images : [],
         subStages,
-        proposedInstallationDate: formatDateOnly(sourceStage.proposedInstallationDate),
+        proposedInstallationDate: formatDateToMMDDYYYY(sourceStage.proposedInstallationDate),
         proposedInstallationTime: sourceStage.proposedInstallationTime || null,
         customerResponse: sourceStage.customerResponse || null,
-        customerResponseAt: sourceStage.customerResponseAt ? formatDateTime(sourceStage.customerResponseAt) : null,
+        customerResponseAt: sourceStage.customerResponseAt ? formatDateTimeToMMDDYYYY(sourceStage.customerResponseAt) : null,
         customerDeclineReason: sourceStage.customerDeclineReason || null,
-        customerPreferredInstallationDate: formatDateOnly(sourceStage.customerPreferredInstallationDate),
+        customerPreferredInstallationDate: formatDateToMMDDYYYY(sourceStage.customerPreferredInstallationDate),
         customerPreferredInstallationTime: sourceStage.customerPreferredInstallationTime || null,
         customerRescheduleNotes: sourceStage.customerRescheduleNotes || null,
         delayReason: sourceStage.delayReason || (latestDelayEntry?.reason || null),
-        delayExpectedResolution: formatDateTime(sourceStage.delayExpectedResolution || latestDelayEntry?.expectedResolution),
+        delayExpectedResolution: formatDateTimeToMMDDYYYY(sourceStage.delayExpectedResolution || latestDelayEntry?.expectedResolution),
         delayNotes: sourceStage.delayNotes || (latestDelayEntry?.notes || null),
-        delayReportedAt: formatDateTime(sourceStage.delayReportedAt || latestDelayEntry?.reportedAt),
+        delayReportedAt: formatDateTimeToMMDDYYYY(sourceStage.delayReportedAt || latestDelayEntry?.reportedAt),
         delayReportedBy: sourceStage.delayReportedBy || (latestDelayEntry?.reportedBy || null),
         delayHistory: Array.isArray(sourceStage.delayHistory) ? sourceStage.delayHistory.map((entry) => ({
           ...entry,
-          expectedResolution: formatDateTime(entry.expectedResolution),
-          reportedAt: formatDateTime(entry.reportedAt),
-          resolvedAt: formatDateTime(entry.resolvedAt),
+          expectedResolution: formatDateTimeToMMDDYYYY(entry.expectedResolution),
+          reportedAt: formatDateTimeToMMDDYYYY(entry.reportedAt),
+          resolvedAt: formatDateTimeToMMDDYYYY(entry.resolvedAt),
         })) : [],
         latestDelayEntry: latestDelayEntry ? {
           reason: latestDelayEntry.reason || null,
-          expectedResolution: formatDateTime(latestDelayEntry.expectedResolution),
+          expectedResolution: formatDateTimeToMMDDYYYY(latestDelayEntry.expectedResolution),
           notes: latestDelayEntry.notes || null,
-          reportedAt: formatDateTime(latestDelayEntry.reportedAt),
+          reportedAt: formatDateTimeToMMDDYYYY(latestDelayEntry.reportedAt),
           reportedBy: latestDelayEntry.reportedBy || null,
-          resolvedAt: formatDateTime(latestDelayEntry.resolvedAt),
+          resolvedAt: formatDateTimeToMMDDYYYY(latestDelayEntry.resolvedAt),
         } : null,
       };
     })
@@ -325,7 +313,7 @@ export const buildOrderTimelineStages = (order) => {
     label: "Completed",
     status: installationComplete ? "completed" : "pending",
     statusText: installationComplete ? "Completed" : "Pending",
-    date: installationComplete ? formatDateTime(installationStage.date || order.updatedAt) : null,
+    date: installationComplete ? formatDateTimeToMMDDYYYY(installationStage.date || order.updatedAt) : null,
     assignedTo: "Project Manager",
     notes: installationComplete ? "Project execution complete." : "Final project completion pending.",
   };

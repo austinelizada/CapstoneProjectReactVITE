@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getAdminOrders } from "@/api/orders";
 import { Bell } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState([]);
@@ -57,7 +58,7 @@ export default function Notifications() {
                   <div className="flex-1">
                     <div className="flex justify-between items-center">
                       <div className="font-semibold text-slate-900">{n.tracking}</div>
-                      <div className="text-xs text-slate-400">{new Date(n.updatedAt || n.createdAt).toLocaleString()}</div>
+                      <div className="text-xs text-slate-400">{formatDateTimeToMMDDYYYY(n.updatedAt || n.createdAt)}</div>
                     </div>
                     <div className="text-sm text-slate-600 mt-1">{n.notificationType === "accepted" ? `Customer accepted the contract for ₱${Number(n.contract_amount || n.total_amount || 0).toLocaleString()}` : "Customer declined the contract"}</div>
                   </div>

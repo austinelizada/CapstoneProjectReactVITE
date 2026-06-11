@@ -21,7 +21,7 @@ router.get("/", authMiddleware, listOrders);
 router.post("/", authMiddleware, roleMiddleware("customer"), createOrder);
 router.get("/track/:tracking", authMiddleware, trackOrder);
 router.put("/:orderId/contract", authMiddleware, roleMiddleware("customer"), respondToContract);
-router.put("/:orderId/installation-schedule", authMiddleware, roleMiddleware("customer"), respondToInstallationSchedule);
+router.put("/:orderId/installation-schedule", authMiddleware, respondToInstallationSchedule);
 
 // Admin routes
 router.get("/admin/list", authMiddleware, roleMiddleware("admin"), getAdminOrders);
