@@ -8,6 +8,7 @@ import {
 
 import { getAdminOrders, updateOrderProgress, updateOrderStatus } from "@/api/orders";
 import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
+import { getProgressColor } from "@/lib/utils";
 import toast, { Toaster } from "react-hot-toast";
 import { uploadFiles } from "@/api/uploads";
 import ProgressViewModal from "../../components/ProgressViewModal";
@@ -41,13 +42,16 @@ const formatOrderStatus = (status, contractStatus) => {
 const getProjectStatus = (order) => {
   if (hasDelayedStage(order.progress_stages)) return "Delayed";
 
-  const scheduleStage = Array.isArray(order.progress_stages)
-    ? order.progress_stages.find((stage) =>
+  const scheduleStages = Array.isArray(order.progress_stages)
+    ? order.progress_stages.filter((stage) =>
         ["installation_scheduling", "installation_scheduled", "installation_agreement"].includes(
           (stage.key || "").toString().toLowerCase()
         )
       )
-    : null;
+    : [];
+  const scheduleStage = [...scheduleStages].reverse().find((stage) =>
+    ["accepted", "reschedule_requested"].includes(stage.customerResponse)
+  ) || scheduleStages.slice(-1)[0] || null;
 
   if (scheduleStage?.customerResponse === "reschedule_requested") {
     return "Installation Reschedule Requested";
@@ -57,11 +61,16 @@ const getProjectStatus = (order) => {
 };
 
 const mapProgressFromStatus = (status, progress) => {
-  if (typeof progress === "number") return progress;
+  // If API already provided a numeric progress, respect it but avoid showing 100%
+  // for non-completed orders (cap at 90).
+  if (typeof progress === "number") {
+    return progress >= 100 && status !== "completed" ? 90 : progress;
+  }
+
   if (status === "completed") return 100;
+  if (status === "approved") return 0;
   if (status === "site_inspection") return 70;
   if (status === "processing") return 65;
-  if (status === "approved") return 25;
   if (status === "contract_accepted") return 50;
   if (status === "contract_sent") return 25;
   return 15;
@@ -135,7 +144,7 @@ function ProgressMonitor() {
         statusFilter === "All"
           ? true
           : statusFilter === "Pending"
-          ? ["Pending", "Installation Reschedule Requested", "Accepted"].includes(project.status)
+          ? ["Pending", "Installation Reschedule Requested"].includes(project.status)
           : statusFilter === "Installation Reschedule Requested"
           ? project.status === "Installation Reschedule Requested"
           : project.status === statusFilter;
@@ -615,24 +624,17 @@ function ProgressMonitor() {
                         <td className="p-4">
 
                           <div className="w-full bg-gray-200 rounded-full h-3">
-
-                            <div
-                              className={`h-3 rounded-full ${
-                                project.progress <= 25
-                                  ? "bg-red-500"
-                                  : project.progress <= 50
-                                  ? "bg-orange-500"
-                                  : project.progress <= 75
-                                  ? "bg-yellow-500"
-                                  : project.progress < 100
-                                  ? "bg-blue-500"
-                                  : "bg-green-600"
-                              }`}
-                              style={{
-                                width: `${project.progress}%`,
-                              }}
-                            />
-
+                            {(() => {
+                              const progressColor = getProgressColor(project.progress);
+                              return (
+                                <div
+                                  className={`h-3 rounded-full ${progressColor.bar}`}
+                                  style={{
+                                    width: `${project.progress}%`,
+                                  }}
+                                />
+                              );
+                            })()}
                           </div>
 
                           <span className="font-semibold text-sm">
@@ -658,15 +660,17 @@ function ProgressMonitor() {
                                 }} />
                             </button>
 
-                            <button
-                              onClick={() => {
-                                setSelectedProject(project);
-                                setShowEditModal(true);
-                              }}
-                              className="bg-yellow-100 text-yellow-600 p-2 rounded-lg"
-                            >
-                              <Pencil size={18} />
-                            </button>
+                            {Number(project.progress) < 100 && (
+                              <button
+                                onClick={() => {
+                                  setSelectedProject(project);
+                                  setShowEditModal(true);
+                                }}
+                                className="bg-yellow-100 text-yellow-600 p-2 rounded-lg"
+                              >
+                                <Pencil size={18} />
+                              </button>
+                            )}
 
                             {canCancelProject(project) && (
                               <button

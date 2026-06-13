@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { X, UploadCloud, Plus, CheckCircle2, Lock, Trash2 } from "lucide-react";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, getTodayIso } from "@/lib/dateUtils";
+import { getProgressColor } from "@/lib/utils";
 
 const focusableSelectors = [
   "button",
@@ -187,9 +188,20 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     };
   }, [onClose]);
 
+  const getLatestCompletedStageIndex = () => {
+    return stages.reduce((latestIndex, stage, index) => {
+      return stage?.completed && stage?.saved ? index : latestIndex;
+    }, -1);
+  };
+
+  const hasLaterStageStarted = (index) => {
+    return stages.slice(index + 1).some((stage) => stage?.status !== "pending");
+  };
+
   const isStageLocked = (index) => {
     const stage = stages[index];
-    return stage?.completed && stage?.saved && !stage?.canUndoCompletion;
+    if (!stage?.completed || !stage?.saved) return false;
+    return hasLaterStageStarted(index);
   };
 
   const currentStageIndex = stages.findIndex(
@@ -202,9 +214,13 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     return index === activeStageIndex && !(stage?.completed && stage?.saved && !stage?.canUndoCompletion);
   };
 
-  const canAcceptSubStages = (index) => {
+  const canManageSubStages = (index) => {
     const stage = stages[index];
-    return index === activeStageIndex && !(stage?.completed && stage?.saved && !stage?.canUndoCompletion);
+    return stage?.completed && stage?.saved && !isStageLocked(index) && index === getLatestCompletedStageIndex();
+  };
+
+  const canAcceptSubStages = (index) => {
+    return canManageSubStages(index);
   };
 
 
@@ -333,13 +349,20 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
       if (stage.completed) return sum + 1;
       return sum + getCompletedSubStageFraction(stage);
     }, 0);
-    return Math.round((stageProgress / stages.length) * 100);
+    let pct = Math.round((stageProgress / stages.length) * 100);
+    // If installation stage exists and is not completed, avoid showing 100%
+    const installation = stages.find((s) => s.key === "installation");
+    if (installation && !installation.completed) {
+      pct = Math.min(pct, 90);
+    }
+    return pct;
   }, [stages]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setProgress(calculateProgress());
   }, [calculateProgress]);
+
 
   const updateStage = (index, patch) => {
     setStages((prev) => {
@@ -440,8 +463,8 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     const sub = stage.subStages[subIndex];
     if (!sub) return false;
     if (sub.completed || sub.status === "done") return false;
-    if (stage.completed || isStageLocked(stageIndex)) return false;
-    return true;
+    if (stage.completed && stage.saved) return canManageSubStages(stageIndex);
+    return isStageEditable(stageIndex);
   };
 
   const openRemoveSubStageModal = (stageIndex, subIndex) => {
@@ -579,11 +602,67 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     e.target.value = "";
   };
 
+  const removeStagePreview = (stageIndex, previewIndex) => {
+    setStages((prev) => {
+      const next = [...prev];
+      const stage = { ...next[stageIndex] };
+      const previews = [...(stage.imagePreviews || [])];
+      if (previewIndex < 0 || previewIndex >= previews.length) return next;
+      const previewUrl = previews[previewIndex];
+      if (previewUrl?.startsWith?.("blob:")) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      const images = Array.isArray(stage.images) ? [...stage.images] : [];
+      const newFiles = Array.isArray(stage.newFiles) ? [...stage.newFiles] : [];
+      previews.splice(previewIndex, 1);
+      if (previewIndex < images.length) {
+        images.splice(previewIndex, 1);
+      } else {
+        newFiles.splice(previewIndex - images.length, 1);
+      }
+      stage.imagePreviews = previews;
+      stage.images = images;
+      stage.newFiles = newFiles;
+      next[stageIndex] = stage;
+      return next;
+    });
+  };
+
   const handleSubStageFiles = (stageIndex, subIndex, e) => {
     const selected = Array.from(e.target.files || []);
     if (selected.length === 0) return;
     appendSubStageFiles(stageIndex, subIndex, selected);
     e.target.value = "";
+  };
+
+  const removeSubStagePreview = (stageIndex, subIndex, previewIndex) => {
+    setStages((prev) => {
+      const next = [...prev];
+      const stage = { ...next[stageIndex] };
+      const subs = [...(stage.subStages || [])];
+      const sub = { ...subs[subIndex] };
+      const previews = [...(sub.imagePreviews || [])];
+      if (previewIndex < 0 || previewIndex >= previews.length) return next;
+      const previewUrl = previews[previewIndex];
+      if (previewUrl?.startsWith?.("blob:")) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      const images = Array.isArray(sub.images) ? [...sub.images] : [];
+      const newFiles = Array.isArray(sub.newFiles) ? [...sub.newFiles] : [];
+      previews.splice(previewIndex, 1);
+      if (previewIndex < images.length) {
+        images.splice(previewIndex, 1);
+      } else {
+        newFiles.splice(previewIndex - images.length, 1);
+      }
+      sub.imagePreviews = previews;
+      sub.images = images;
+      sub.newFiles = newFiles;
+      subs[subIndex] = sub;
+      stage.subStages = subs;
+      next[stageIndex] = stage;
+      return next;
+    });
   };
 
   const getPhotoCount = (item) => (item.images?.length || 0) + (item.newFiles?.length || 0);
@@ -592,7 +671,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     const stage = stages[stageIndex];
     const sub = stage.subStages[subIndex];
     return (
-      isStageEditable(stageIndex) &&
+      (isStageEditable(stageIndex) || canManageSubStages(stageIndex)) &&
       !sub.completed &&
       !!sub.name.trim()
     );
@@ -841,16 +920,21 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
               <span className="text-sm text-slate-500">auto-calculated</span>
             </div>
             <div className="relative h-2.5 rounded-full bg-gray-100 overflow-visible">
-              <div
-                className="glow-bar h-full rounded-full bg-emerald-500 relative transition-all duration-700 ease-in-out"
-                style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }}
-              >
-                {progress > 0 && (
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full bg-emerald-500">
-                    <span className="absolute inset-0 block rounded-full bg-emerald-500 opacity-70 animate-ping" />
+              {(() => {
+                const color = getProgressColor(progress);
+                return (
+                  <div
+                    className={`glow-bar h-full rounded-full ${color.bar} relative transition-all duration-700 ease-in-out`}
+                    style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }}
+                  >
+                    {progress > 0 && (
+                      <div className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full ${color.dot}`}>
+                        <span className={`absolute inset-0 block rounded-full ${color.ping} opacity-70 animate-ping`} />
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                );
+              })()}
             </div>
             <p className="text-xs text-slate-500 mt-1">Automatically calculated from stage and sub-stage completion.</p>
           </div>
@@ -1008,12 +1092,23 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                       </div>
                       <div className="mt-3 grid grid-cols-3 gap-2">
                         {stage.imagePreviews.map((src, i) => (
-                          <img
-                            key={`${stage.key}-preview-${i}`}
-                            src={src}
-                            alt={`${stage.name} preview ${i + 1}`}
-                            className="h-20 w-full object-cover rounded-lg"
-                          />
+                          <div key={`${stage.key}-preview-${i}`} className="relative">
+                            <img
+                              src={src}
+                              alt={`${stage.name} preview ${i + 1}`}
+                              className="h-20 w-full object-cover rounded-lg"
+                            />
+                            {stageEditable && (
+                              <button
+                                type="button"
+                                onClick={() => removeStagePreview(stageIndex, i)}
+                                className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-600 shadow-sm hover:bg-red-100 hover:text-red-700"
+                                aria-label={`Remove photo ${i + 1} from ${stage.name}`}
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -1076,217 +1171,12 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                         </div>
                       </div>
 
-                      {/* Sub-stages container with left border */}
-                      <div className="border-l-2 border-slate-200 pl-4 space-y-4">
-                        {stage.subStages.length === 0 ? (
-                          <div className="text-center py-6">
-                            <p className="text-sm text-slate-500 mb-3">No sub-stages created yet.</p>
-                            {canAcceptSubStages(stageIndex) && (
-                              <button
-                                type="button"
-                                onClick={() => openAddSubStageModal(stageIndex)}
-                                className="inline-flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white"
-                                aria-label={`Add sub-stage to ${stage.name}`}
-                              >
-                                <Plus size={16} /> Add Sub-Stage
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <>
-                            {stage.subStages.map((sub, subIndex) => {
-                              const subLocked = sub.completed && sub.saved;
-                              const subEditable = stageEditable && !subLocked;
-                              return (
-                                <div
-                                  key={`${stage.key}-sub-${subIndex}`}
-                                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                                >
-                                  {/* Header with status indicator */}
-                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-3 mb-2">
-                                        <div
-                                          className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold ${
-                                            sub.completed
-                                              ? "border-emerald-600 bg-emerald-600 text-white"
-                                              : sub.status === "in_progress"
-                                              ? "border-amber-300 bg-amber-100 text-amber-700"
-                                              : "border-slate-200 bg-white text-slate-500"
-                                          }`}
-                                        >
-                                          {sub.completed ? "✓" : subIndex + 1}
-                                        </div>
-                                        <div>
-                                          <p className="font-semibold text-slate-900">{sub.name || "Untitled sub-stage"}</p>
-                                          {sub.completed && (
-                                            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
-                                              Completed
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                      {sub.date && (
-                                        <p className="text-xs text-slate-500 ml-11">
-                                          Completed on {formatDateTimeToMMDDYYYY(sub.date) ?? "Unknown"}
-                                        </p>
-                                      )}
-                                    </div>
-                                    <div className="flex flex-wrap gap-2">
-                                      <span
-                                        className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${
-                                          sub.completed
-                                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                            : sub.status === "in_progress"
-                                            ? "border-amber-200 bg-amber-50 text-amber-700"
-                                            : "border-slate-200 bg-white text-slate-600"
-                                        }`}
-                                      >
-                                        {sub.completed
-                                          ? "Done"
-                                          : sub.status === "in_progress"
-                                          ? "In Progress"
-                                          : sub.status === "delayed"
-                                          ? "Delayed"
-                                          : "Pending"}
-                                      </span>
-                                      <span className="text-xs text-slate-500">
-                                        {getPhotoCount(sub)} photo(s)
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {/* Description */}
-                                  {sub.description && !subEditable && (
-                                    <p className="mt-3 text-sm text-slate-600">{sub.description}</p>
-                                  )}
-
-                                  {/* Editable Fields */}
-                                  {subEditable && (
-                                    <>
-                                      <div className="grid gap-4 mt-4 sm:grid-cols-2">
-                                        <label className="text-sm text-gray-600 block">
-                                          Title
-                                          <input
-                                            type="text"
-                                            value={sub.name}
-                                            onChange={(e) => updateSubStage(stageIndex, subIndex, { name: e.target.value })}
-                                            disabled={!subEditable}
-                                            className="mt-2 w-full border p-2 rounded-lg"
-                                            aria-label={`Sub-stage title for ${stage.name}`}
-                                          />
-                                        </label>
-
-                                        <label className="text-sm text-gray-600 block">
-                                          Sub-Stage State
-                                          <select
-                                            value={sub.status}
-                                            disabled={!subEditable}
-                                            onChange={(e) => updateSubStage(stageIndex, subIndex, { status: e.target.value })}
-                                            className="mt-2 w-full border p-2 rounded-lg"
-                                          >
-                                            <option value="pending">Pending</option>
-                                            <option value="in_progress">In Progress</option>
-                                            <option value="done">Done</option>
-                                            <option value="delayed">Delayed</option>
-                                            <option value="on_hold">On Hold</option>
-                                          </select>
-                                        </label>
-                                      </div>
-
-                                      <div className="mt-4">
-                                        <label className="text-sm text-gray-600 block">
-                                          Description
-                                          <textarea
-                                            value={sub.description}
-                                            onChange={(e) => updateSubStage(stageIndex, subIndex, { description: e.target.value })}
-                                            disabled={!subEditable}
-                                            className="mt-2 w-full min-h-[80px] border p-2 rounded-lg"
-                                            aria-label={`Sub-stage description for ${stage.name}`}
-                                          />
-                                        </label>
-                                      </div>
-                                    </>
-                                  )}
-
-                                  {/* Photos Section */}
-                                  <div className="mt-4 border rounded-2xl border-dashed border-slate-200 bg-white p-4">
-                                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                                      <UploadCloud size={16} />
-                                      Proof Photos
-                                    </div>
-                                    <p className="text-xs text-slate-500 mt-2">
-                                      {getPhotoCount(sub) > 0
-                                        ? `${getPhotoCount(sub)} photo(s) uploaded`
-                                        : "Photos are required before this sub-stage can be marked as done."}
-                                    </p>
-                                    {subEditable && (
-                                      <div className="mt-3">
-                                        <input
-                                          type="file"
-                                          accept="image/*"
-                                          multiple
-                                          disabled={!subEditable}
-                                          onChange={(e) => handleSubStageFiles(stageIndex, subIndex, e)}
-                                          aria-label={`Upload proof images for ${sub.name || "sub-stage"}`}
-                                        />
-                                      </div>
-                                    )}
-                                    {sub.imagePreviews.length > 0 && (
-                                      <div className="mt-3 grid grid-cols-3 gap-2">
-                                        {sub.imagePreviews.map((src, i) => (
-                                          <img
-                                            key={`${stage.key}-sub-${subIndex}-preview-${i}`}
-                                            src={src}
-                                            alt={`${sub.name || "Sub-stage"} preview ${i + 1}`}
-                                            className="h-20 w-full object-cover rounded-lg"
-                                          />
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  {/* Action Buttons */}
-                                  {subEditable && (
-                                    <div className="mt-4 flex justify-end gap-3">
-                                      {sub.completed && !sub.saved ? (
-                                        <button
-                                          type="button"
-                                          onClick={() => undoSubStageCompletion(stageIndex, subIndex)}
-                                          className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 px-3 py-2 text-sm font-semibold"
-                                        >
-                                          Undo Completion
-                                        </button>
-                                      ) : (
-                                        <>
-                                          <button
-                                            type="button"
-                                            onClick={() => openRemoveSubStageModal(stageIndex, subIndex)}
-                                            className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 px-3 py-2 text-sm font-semibold"
-                                          >
-                                            <Trash2 size={14} />
-                                            Remove
-                                          </button>
-                                          <button
-                                            type="button"
-                                            disabled={!canMarkSubStageDone(stageIndex, subIndex)}
-                                            onClick={() => handleMarkSubStageDone(stageIndex, subIndex)}
-                                            className="inline-flex items-center gap-2 rounded-full bg-emerald-600 hover:bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                                          >
-                                            <CheckCircle2 size={14} />
-                                            Mark as Done
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-
-                            {/* Add Sub-Stage button at the bottom */}
-                            {canAcceptSubStages(stageIndex) && (
-                              <div className="mt-4 flex justify-center">
+                      {stage.completed && stage.saved ? (
+                        <div className="border-l-2 border-slate-200 pl-4 space-y-4">
+                          {stage.subStages.length === 0 ? (
+                            <div className="text-center py-6">
+                              <p className="text-sm text-slate-500 mb-3">No sub-stages created yet.</p>
+                              {canAcceptSubStages(stageIndex) && (
                                 <button
                                   type="button"
                                   onClick={() => openAddSubStageModal(stageIndex)}
@@ -1295,11 +1185,234 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                                 >
                                   <Plus size={16} /> Add Sub-Stage
                                 </button>
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
+                              )}
+                            </div>
+                          ) : (
+                            <>
+                              {stage.subStages.map((sub, subIndex) => {
+                                const subLocked = sub.completed && sub.saved;
+                                const subEditable = (stageEditable || canManageSubStages(stageIndex)) && !subLocked;
+                                return (
+                                  <div
+                                    key={`${stage.key}-sub-${subIndex}`}
+                                    className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                                  >
+                                    {/* Header with status indicator */}
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                      <div className="flex-1">
+                                        <div className="flex items-center gap-3 mb-2">
+                                          <div
+                                            className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold ${
+                                              sub.completed
+                                                ? "border-emerald-600 bg-emerald-600 text-white"
+                                                : sub.status === "in_progress"
+                                                ? "border-amber-300 bg-amber-100 text-amber-700"
+                                                : "border-slate-200 bg-white text-slate-500"
+                                            }`}
+                                          >
+                                            {sub.completed ? "✓" : subIndex + 1}
+                                          </div>
+                                          <div>
+                                            <p className="font-semibold text-slate-900">{sub.name || "Untitled sub-stage"}</p>
+                                            {sub.completed && (
+                                              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
+                                                Completed
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        {sub.date && (
+                                          <p className="text-xs text-slate-500 ml-11">
+                                            Completed on {formatDateTimeToMMDDYYYY(sub.date) ?? "Unknown"}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        <span
+                                          className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${
+                                            sub.completed
+                                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                              : sub.status === "in_progress"
+                                              ? "border-amber-200 bg-amber-50 text-amber-700"
+                                              : "border-slate-200 bg-white text-slate-600"
+                                          }`}
+                                        >
+                                          {sub.completed
+                                            ? "Done"
+                                            : sub.status === "in_progress"
+                                            ? "In Progress"
+                                            : sub.status === "delayed"
+                                            ? "Delayed"
+                                            : "Pending"}
+                                        </span>
+                                        <span className="text-xs text-slate-500">
+                                          {getPhotoCount(sub)} photo(s)
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Description */}
+                                    {sub.description && !subEditable && (
+                                      <p className="mt-3 text-sm text-slate-600">{sub.description}</p>
+                                    )}
+
+                                    {/* Editable Fields */}
+                                    {subEditable && (
+                                      <>
+                                        <div className="grid gap-4 mt-4 sm:grid-cols-2">
+                                          <label className="text-sm text-gray-600 block">
+                                            Title
+                                            <input
+                                              type="text"
+                                              value={sub.name}
+                                              onChange={(e) => updateSubStage(stageIndex, subIndex, { name: e.target.value })}
+                                              disabled={!subEditable}
+                                              className="mt-2 w-full border p-2 rounded-lg"
+                                              aria-label={`Sub-stage title for ${stage.name}`}
+                                            />
+                                          </label>
+
+                                          <label className="text-sm text-gray-600 block">
+                                            Sub-Stage State
+                                            <select
+                                              value={sub.status}
+                                              disabled={!subEditable}
+                                              onChange={(e) => updateSubStage(stageIndex, subIndex, { status: e.target.value })}
+                                              className="mt-2 w-full border p-2 rounded-lg"
+                                            >
+                                              <option value="pending">Pending</option>
+                                              <option value="in_progress">In Progress</option>
+                                              <option value="done">Done</option>
+                                              <option value="delayed">Delayed</option>
+                                              <option value="on_hold">On Hold</option>
+                                            </select>
+                                          </label>
+                                        </div>
+
+                                        <div className="mt-4">
+                                          <label className="text-sm text-gray-600 block">
+                                            Description
+                                            <textarea
+                                              value={sub.description}
+                                              onChange={(e) => updateSubStage(stageIndex, subIndex, { description: e.target.value })}
+                                              disabled={!subEditable}
+                                              className="mt-2 w-full min-h-[80px] border p-2 rounded-lg"
+                                              aria-label={`Sub-stage description for ${stage.name}`}
+                                            />
+                                          </label>
+                                        </div>
+                                      </>
+                                    )}
+
+                                    {/* Photos Section */}
+                                    <div className="mt-4 border rounded-2xl border-dashed border-slate-200 bg-white p-4">
+                                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                                        <UploadCloud size={16} />
+                                        Proof Photos
+                                      </div>
+                                      <p className="text-xs text-slate-500 mt-2">
+                                        {getPhotoCount(sub) > 0
+                                          ? `${getPhotoCount(sub)} photo(s) uploaded`
+                                          : "Photos are required before this sub-stage can be marked as done."}
+                                      </p>
+                                      {subEditable && (
+                                        <div className="mt-3">
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            multiple
+                                            disabled={!subEditable}
+                                            onChange={(e) => handleSubStageFiles(stageIndex, subIndex, e)}
+                                            aria-label={`Upload proof images for ${sub.name || "sub-stage"}`}
+                                          />
+                                        </div>
+                                      )}
+                                      {sub.imagePreviews.length > 0 && (
+                                        <div className="mt-3 grid grid-cols-3 gap-2">
+                                          {sub.imagePreviews.map((src, i) => (
+                                            <div key={`${stage.key}-sub-${subIndex}-preview-${i}`} className="relative">
+                                              <img
+                                                src={src}
+                                                alt={`${sub.name || "Sub-stage"} preview ${i + 1}`}
+                                                className="h-20 w-full object-cover rounded-lg"
+                                              />
+                                              {subEditable && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => removeSubStagePreview(stageIndex, subIndex, i)}
+                                                  className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-600 shadow-sm hover:bg-red-100 hover:text-red-700"
+                                                  aria-label={`Remove photo ${i + 1} from ${sub.name || "sub-stage"}`}
+                                                >
+                                                  <X size={14} />
+                                                </button>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Action Buttons */}
+                                    {subEditable && (
+                                      <div className="mt-4 flex justify-end gap-3">
+                                        {sub.completed && !sub.saved ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => undoSubStageCompletion(stageIndex, subIndex)}
+                                            className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 px-3 py-2 text-sm font-semibold"
+                                          >
+                                            Undo Completion
+                                          </button>
+                                        ) : (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => openRemoveSubStageModal(stageIndex, subIndex)}
+                                              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 px-3 py-2 text-sm font-semibold"
+                                            >
+                                              <Trash2 size={14} />
+                                              Remove
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={!canMarkSubStageDone(stageIndex, subIndex)}
+                                              onClick={() => handleMarkSubStageDone(stageIndex, subIndex)}
+                                              className="inline-flex items-center gap-2 rounded-full bg-emerald-600 hover:bg-emerald-700 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                              <CheckCircle2 size={14} />
+                                              Mark as Done
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+
+                              {/* Add Sub-Stage button at the bottom */}
+                              {canAcceptSubStages(stageIndex) && (
+                                <div className="mt-4 flex justify-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => openAddSubStageModal(stageIndex)}
+                                    className="inline-flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 px-4 py-2 text-sm font-semibold text-white"
+                                    aria-label={`Add sub-stage to ${stage.name}`}
+                                  >
+                                    <Plus size={16} /> Add Sub-Stage
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                          {stage.completed && !stage.saved
+                            ? "Sub-stages will become available after saving this completed parent stage."
+                            : "Sub-stages will become available after this parent stage is marked as completed."}
+                        </div>
+                      )}
                     </div>
                   </>
                 )}

@@ -27,10 +27,13 @@ import {
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { getProducts } from "@/api/products";
+import { API_BASE } from "@/api/client";
 import { createOrder, getOrders, trackOrder, acceptContract, declineContract } from "@/api/orders";
 import ContractModal from "../../components/ContractModal";
 import OrderTimeline from "@/components/OrderTimeline";
 import { calculateEstimate } from "@/lib/estimator";
+import { buildOrderTimelineStages } from "@/lib/orderTimeline";
+import { getProgressColor } from "@/lib/utils";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -87,6 +90,24 @@ const buildFullAddress = (user) => {
 };
 
 function CustomerDashboard() {
+  const API_HOST = (function getApiHost() {
+    try {
+      return (API_BASE || "").replace(/\/api$/, "");
+    } catch (e) {
+      return "";
+    }
+  })();
+
+  const isLocalBlobOrFile = (url) => typeof url === "string" && (url.startsWith("blob:") || url.startsWith("file:"));
+
+  const ensureAbsoluteUrl = (url) => {
+    if (!url) return PRODUCT_IMAGE_PLACEHOLDER;
+    if (isLocalBlobOrFile(url)) return PRODUCT_IMAGE_PLACEHOLDER;
+    if (/^https?:\/\//i.test(url)) return url;
+    if (url.startsWith("/")) return API_HOST ? `${API_HOST}${url}` : url;
+    if (url.startsWith("uploads/")) return API_HOST ? `${API_HOST}/${url}` : `/${url}`;
+    return API_HOST ? `${API_HOST}/${url}` : url;
+  };
   const { user, loading, updateProfile, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -235,6 +256,17 @@ function CustomerDashboard() {
       }
     }
   }, [selectedOrderForModal]);
+
+  const selectedOrderContractStatus = selectedOrderForModal?.contract_status?.toString().toLowerCase() || "";
+  const selectedOrderStatus = selectedOrderForModal?.status?.toString().toLowerCase() || "";
+  const selectedOrderHasContractSummary =
+    Boolean(selectedOrderForModal?.contract_terms) ||
+    selectedOrderStatus === "contract_sent" ||
+    selectedOrderContractStatus === "sent";
+  const selectedOrderCanRespondToContract =
+    (selectedOrderStatus === "contract_sent" || selectedOrderContractStatus === "sent") &&
+    !["accepted", "declined"].includes(selectedOrderContractStatus) &&
+    !["contract_accepted", "contract_declined", "cancelled"].includes(selectedOrderStatus);
 
   useEffect(() => {
     let active = true;
@@ -879,25 +911,27 @@ function CustomerDashboard() {
   };
 
   const getProductImage = (product) => {
-    if (product?.image_url) return product.image_url;
-    if (product?.image) return product.image;
-    if (Array.isArray(product?.images) && product.images.length > 0) {
-      return product.images[0];
+    let candidate = null;
+    if (product?.image_url) candidate = product.image_url;
+    if (!candidate && product?.image) candidate = product.image;
+    if (!candidate && Array.isArray(product?.images) && product.images.length > 0) {
+      candidate = product.images[0];
     }
-    if (product?.images && typeof product.images === "object") {
+    if (!candidate && product?.images && typeof product.images === "object") {
       const images = Object.values(product.images).flat().filter(Boolean);
-      if (images.length > 0) return images[0];
+      if (images.length > 0) candidate = images[0];
     }
-    return PRODUCT_IMAGE_PLACEHOLDER;
+    return ensureAbsoluteUrl(candidate);
   };
 
   const getOrderItemImage = (item) => {
     if (!item) return PRODUCT_IMAGE_PLACEHOLDER;
-    if (item.image_url) return item.image_url;
-    if (item.image) return item.image;
+    let candidate = null;
+    if (item.image_url) candidate = item.image_url;
+    if (!candidate && item.image) candidate = item.image;
     const product = item.product_id || item.product;
-    if (product) return getProductImage(product);
-    return PRODUCT_IMAGE_PLACEHOLDER;
+    if (!candidate && product) candidate = getProductImage(product);
+    return ensureAbsoluteUrl(candidate);
   };
 
   const formatCurrency = (amount) => {
@@ -1060,10 +1094,17 @@ function CustomerDashboard() {
   };
 
   const getOrderProgressPercent = (order) => {
-    if (order.status === "cancelled") return 0;
-    const steps = getOrderProgressSteps(order);
-    const completed = steps.filter((step) => step.done || step.active).length;
-    return Math.round((completed / steps.length) * 100);
+    if (!order || order.status === "cancelled") return 0;
+
+    const steps = buildOrderTimelineStages(order).filter((step) => step.key !== "installation_agreement");
+    const completedCount = steps.filter((step) => step.status === "completed").length;
+    const totalCount = steps.length || 1;
+    const percent = Math.round((completedCount / totalCount) * 100);
+
+    const installationStep = steps.find((step) => step.key === "installation");
+    const installationIncomplete = installationStep && installationStep.status !== "completed";
+
+    return installationIncomplete ? Math.min(percent, 90) : percent;
   };
 
   const activeOrdersCount = orders.filter((order) => order.status !== "completed" && order.status !== "cancelled").length;
@@ -2314,16 +2355,21 @@ function CustomerDashboard() {
                                 <span className="text-xs text-slate-500">auto-calculated</span>
                               </div>
                               <div className="relative h-2.5 rounded-full bg-gray-100 overflow-visible">
-                                <div
-                                  className="glow-bar h-full rounded-full bg-emerald-500 relative transition-all duration-700 ease-in-out"
-                                  style={{ width: `${progressPercent}%` }}
-                                >
-                                  {progressPercent > 0 && (
-                                    <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full bg-emerald-500">
-                                      <span className="absolute inset-0 block rounded-full bg-emerald-500 opacity-70 animate-ping" />
+                                {(() => {
+                                  const color = getProgressColor(progressPercent);
+                                  return (
+                                    <div
+                                      className={`glow-bar h-full rounded-full ${color.bar} relative transition-all duration-700 ease-in-out`}
+                                      style={{ width: `${progressPercent}%` }}
+                                    >
+                                      {progressPercent > 0 && (
+                                        <div className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full ${color.dot}`}>
+                                          <span className={`absolute inset-0 block rounded-full ${color.ping} opacity-70 animate-ping`} />
+                                        </div>
+                                      )}
                                     </div>
-                                  )}
-                                </div>
+                                  );
+                                })()}
                               </div>
                               <p className="mt-2 text-[10px] text-slate-500">Automatically calculated from stage and sub-stage completion.</p>
                             </div>
@@ -2426,7 +2472,7 @@ function CustomerDashboard() {
                   </div>
                 </div>
 
-                {(selectedOrderForModal.contract_terms || selectedOrderForModal.status === "contract_sent") && (
+                {selectedOrderHasContractSummary && (
                   <div className="rounded-[28px] bg-slate-50 p-6 shadow-sm space-y-4">
                     <div className="flex items-center justify-between">
                       <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Contract Summary</h5>
@@ -2458,11 +2504,11 @@ function CustomerDashboard() {
                             <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.contract_status?.replace(/_/g, " ") || "Pending"}</p>
                           </div>
                         </div>
-                        {selectedOrderForModal.status === "contract_sent" && (
-                          <div className="flex items-center gap-3">
+                        {selectedOrderCanRespondToContract && (
+                          <div className="flex items-center gap-3 mt-4">
                           </div>
                         )}
-                        {contractActionError && selectedOrderForModal.status === "contract_sent" && (
+                        {contractActionError && selectedOrderCanRespondToContract && (
                           <p className="text-sm text-red-600">{contractActionError}</p>
                         )}
                         {contractActionMessage && contractActionOrderId === selectedOrderForModal._id && (

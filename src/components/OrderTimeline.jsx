@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { buildOrderTimelineStages, getOrderTimelineStatusClass, getOrderTimelineLineClass } from "@/lib/orderTimeline";
 import { respondToInstallationSchedule } from "@/api/orders";
-import { Check, X, Image, ChevronRight } from "lucide-react";
+import { Check, Clock, Play, X, Image, ChevronRight } from "lucide-react";
+import { getProgressColor } from "@/lib/utils";
 import toast from "react-hot-toast";
+
+const isValidImageSource = (src) => {
+  if (!src || typeof src !== "string") return false;
+  if (src.startsWith("blob:")) {
+    return typeof window !== "undefined" && src.startsWith(`blob:${window.location.origin}`);
+  }
+  return true;
+};
+
+const getValidImages = (images) => (Array.isArray(images) ? images.filter(isValidImageSource) : []);
 
 export default function OrderTimeline({ order, onOrderChange, audience = "customer", onViewContract = null }) {
   const [photoGallery, setPhotoGallery] = useState(null);
@@ -10,24 +21,64 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
   const [scheduleActionError, setScheduleActionError] = useState("");
   const [scheduleActionMessage, setScheduleActionMessage] = useState("");
   const [agreementModal, setAgreementModal] = useState(null);
+  const [showAcceptConfirmationModal, setShowAcceptConfirmationModal] = useState(false);
+  const [showRescheduleConfirmationModal, setShowRescheduleConfirmationModal] = useState(false);
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [preferredDate, setPreferredDate] = useState("");
   const [preferredTime, setPreferredTime] = useState("");
   const [rescheduleNotes, setRescheduleNotes] = useState("");
-  const canRespondToSchedule = audience === "customer" && typeof onOrderChange === "function";
   const steps = buildOrderTimelineStages(order).filter(
     (step) => audience === "customer" || step.key !== "installation_agreement"
   );
   const [selectedStepIndex, setSelectedStepIndex] = useState(0);
+  const [selectedSubIndex, setSelectedSubIndex] = useState(null);
   const stageRefs = useRef([]);
   const selectedStep = steps[selectedStepIndex] || steps[0] || null;
-  const canAcceptPreferredSchedule = audience === "admin" && selectedStep?.customerResponse === "reschedule_requested";
+  const scheduleStageKeys = ["installation_agreement", "installation_scheduled", "installation_scheduling"];
+  const normalizedProgressStages = Array.isArray(order?.progress_stages)
+    ? order.progress_stages.map((stage) => ({
+        ...stage,
+        normalizedKey: (stage.key || stage.name || "").toString().toLowerCase().replace(/\s+/g, "_"),
+      }))
+    : [];
+  const scheduleStages = normalizedProgressStages.filter((stage) => scheduleStageKeys.includes(stage.normalizedKey));
+  const currentScheduleStage = [...scheduleStages]
+    .reverse()
+    .find((stage) => ["accepted", "reschedule_requested"].includes(stage.customerResponse?.toString().toLowerCase())) ||
+    scheduleStages.slice(-1)[0] ||
+    null;
+  const currentScheduleResponse = currentScheduleStage?.customerResponse?.toString().toLowerCase() || "pending";
+  const scheduleResponseDate =
+    currentScheduleResponse === "reschedule_requested"
+      ? currentScheduleStage?.customerPreferredInstallationDate
+      : currentScheduleStage?.proposedInstallationDate || currentScheduleStage?.customerPreferredInstallationDate || currentScheduleStage?.date || selectedStep?.date;
+  const hasCustomerScheduledResponse = ["accepted", "reschedule_requested"].includes(currentScheduleResponse);
+  const canRespondToSchedule =
+    audience === "customer" &&
+    typeof onOrderChange === "function" &&
+    !hasCustomerScheduledResponse &&
+    ["installation_agreement", "installation_scheduling", "installation_scheduled"].includes(selectedStep?.key);
+  const isInstallationStage = [
+    "installation_agreement",
+    "installation_scheduling",
+    "installation_scheduled",
+    "installation",
+  ].includes(selectedStep?.key);
+  const canAcceptPreferredSchedule = audience === "admin" && currentScheduleResponse === "reschedule_requested";
   const selectedStepAcceptedPreferredSchedule =
-    selectedStep?.customerResponse === "accepted" &&
-    (selectedStep?.customerPreferredInstallationDate || selectedStep?.customerPreferredInstallationTime);
+    currentScheduleResponse === "accepted" &&
+    (selectedStep?.customerPreferredInstallationDate || selectedStep?.customerPreferredInstallationTime || currentScheduleStage?.customerPreferredInstallationDate || currentScheduleStage?.customerPreferredInstallationTime);
   const completedCount = steps.filter((step) => step.status === "completed").length;
   const totalCount = steps.length;
-  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+  let progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+  // Avoid showing 100% while an 'installation' stage is still in progress.
+  // Only allow 100% when installation stage is completed.
+  const installationStage = steps.find((s) => s.key === "installation");
+  const installationCompleted = !installationStage || installationStage.status === "completed";
+  if (!installationCompleted) {
+    progressPercent = Math.min(progressPercent, 90);
+  }
 
   const getDotClass = (step, index) => {
     const isCompleted = step.status === "completed";
@@ -42,8 +93,11 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
       ? "bg-emerald-600"
       : "bg-slate-200";
 
+  const getSubStageLineClass = (sub) =>
+    sub.status === "completed" ? "bg-emerald-600" : "bg-slate-300";
+
   const selectedStepPhotoCount = selectedStep
-    ? (selectedStep.images?.length || 0) + (selectedStep.subStages?.reduce((sum, sub) => sum + (sub.images?.length || 0), 0) || 0)
+    ? getValidImages(selectedStep.images).length + (selectedStep.subStages?.reduce((sum, sub) => sum + getValidImages(sub.images).length, 0) || 0)
     : 0;
 
   const determineDefaultSelectedStepIndex = () => {
@@ -74,6 +128,12 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
 
   const handleStageSelect = (index) => {
     setSelectedStepIndex(index);
+    setSelectedSubIndex(null);
+  };
+
+  const handleSubSelect = (stepIndex, subIndex) => {
+    setSelectedStepIndex(stepIndex);
+    setSelectedSubIndex(subIndex);
   };
 
   const handleScheduleResponse = async (action, payload = {}) => {
@@ -81,6 +141,13 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
     setScheduleActionLoading(true);
     setScheduleActionError("");
     setScheduleActionMessage("");
+    const hasCurrentScheduleResponse = ["accepted", "reschedule_requested"].includes(currentScheduleResponse);
+    // Prevent duplicate customer responses to the current schedule
+    if ((action === "accept" || action === "reschedule") && hasCurrentScheduleResponse) {
+      setScheduleActionError("You have already responded to this installation schedule.");
+      setScheduleActionLoading(false);
+      return;
+    }
 
     try {
       const response = await respondToInstallationSchedule(order._id || order.id, {
@@ -136,9 +203,38 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
   };
 
   const openRescheduleModal = () => {
+    const hasCurrentScheduleResponse = ["accepted", "reschedule_requested"].includes(currentScheduleResponse);
+    if (hasCurrentScheduleResponse) {
+      setScheduleActionError("You have already responded to this installation schedule.");
+      return;
+    }
     setAgreementModal("reschedule");
     setScheduleActionError("");
     setScheduleActionMessage("");
+  };
+
+  const handleAcceptInstallationClick = () => {
+    setShowAcceptConfirmationModal(true);
+    setScheduleActionError("");
+    setScheduleActionMessage("");
+  };
+
+  const closeAcceptConfirmationModal = () => {
+    setShowAcceptConfirmationModal(false);
+  };
+
+  const closeRescheduleConfirmationModal = () => {
+    setShowRescheduleConfirmationModal(false);
+  };
+
+  const handleConfirmRescheduleSubmit = () => {
+    setShowRescheduleConfirmationModal(false);
+    handleScheduleResponse("reschedule", {
+      reason: rescheduleReason,
+      preferredInstallationDate: preferredDate,
+      preferredInstallationTime: preferredTime,
+      notes: rescheduleNotes,
+    });
   };
 
   const closeAgreementModal = () => {
@@ -148,6 +244,51 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
     setPreferredTime("");
     setRescheduleNotes("");
     setScheduleActionError("");
+  };
+
+  // Minimum allowed preferred date: tomorrow (disallow today and past dates)
+  const getTomorrowDateString = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const minPreferredDate = getTomorrowDateString();
+
+  const formatDisplayDate = (dateStr) => {
+    if (!dateStr) return "-";
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      return `${mm}-${dd}-${yyyy}`;
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
+  const submitReschedule = () => {
+    setScheduleActionError("");
+    const hasCurrentScheduleResponse = ["accepted", "reschedule_requested"].includes(currentScheduleResponse);
+    if (hasCurrentScheduleResponse) {
+      setScheduleActionError("You have already responded to this installation schedule.");
+      return;
+    }
+    if (!preferredDate) {
+      setScheduleActionError("Please select a preferred date for rescheduling.");
+      return;
+    }
+    if (preferredDate < minPreferredDate) {
+      setScheduleActionError("Please choose a date at least one day in the future.");
+      return;
+    }
+
+    setShowRescheduleConfirmationModal(true);
   };
 
   return (
@@ -172,23 +313,28 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
                 <span className="text-xl font-medium">{progressPercent}%</span>
               </div>
               <div className="relative h-2.5 rounded-full bg-gray-100 overflow-visible">
-                <div
-                  className="glow-bar h-full rounded-full bg-emerald-500 relative transition-all duration-700 ease-in-out"
-                  style={{ width: `${progressPercent}%` }}
-                >
-                  {progressPercent > 0 && (
-                    <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full bg-emerald-500">
-                      <span className="absolute inset-0 block rounded-full bg-emerald-500 opacity-70 animate-ping" />
+                {(() => {
+                  const color = getProgressColor(progressPercent);
+                  return (
+                    <div
+                      className={`glow-bar h-full rounded-full ${color.bar} relative transition-all duration-700 ease-in-out`}
+                      style={{ width: `${progressPercent}%` }}
+                    >
+                      {progressPercent > 0 && (
+                        <div className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full ${color.dot}`}>
+                          <span className={`absolute inset-0 block rounded-full ${color.ping} opacity-70 animate-ping`} />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })()}
               </div>
               <p className="text-xs text-slate-500 mt-3">Automatically calculated from stage and sub-stage completion.</p>
             </div>
           </div>
 
           <div className="overflow-x-auto pb-3">
-            <div className="min-w-[850px]">
+            <div className="min-w-[180px]">
               <div className="relative flex items-center gap-8 px-3">
                 {steps.map((step, index) => (
                   <div
@@ -196,10 +342,8 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
                 ref={(el) => {
                   stageRefs.current[index] = el;
                 }}
-                className={`relative flex min-w-[160px] flex-col items-center text-center rounded-3xl border px-4 py-4 transition ${
-                  selectedStepIndex === index
-                    ? "border-emerald-200 bg-emerald-50 shadow-sm"
-                    : "border-transparent bg-white"
+                className={`relative flex min-w-[180px] flex-col items-center text-center transition ${
+                  selectedStepIndex === index ? "z-10" : "z-0 opacity-70 hover:opacity-100"
                 }`}
               >
                     <button
@@ -217,10 +361,42 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
                       <p className="mt-1 text-xs text-slate-500">{step.date || "Pending"}</p>
                     </div>
                     {index < steps.length - 1 && (
-                      <div
-                        className={`absolute left-1/2 top-6 h-0.5 w-full translate-x-6 ${getConnectorClass(step, steps[index + 1])}`}
-                        aria-hidden="true"
-                      />
+                      <>
+                        <div
+                      className={`absolute left-1/2 top-6 h-0.5 w-full translate-x-6 ${getConnectorClass(step, steps[index + 1])}`}
+                      aria-hidden="true"
+                    />
+                    {step.subStages?.length > 0 && (
+                      <div className="absolute left-1/2 top-6 flex w-full -translate-x-0.5 justify-center gap-1 text-center">
+                        {step.subStages.map((sub, subIndex) => {
+                          const isCompleted = sub.status === "completed";
+                          const isInProgress = sub.status === "in-progress" || sub.status === "in progress";
+                          const dotClass = isCompleted
+                            ? "border-emerald-600 bg-emerald-600 text-white"
+                            : isInProgress
+                            ? "border-emerald-600 bg-white text-emerald-600"
+                            : "border-slate-300 bg-white text-slate-500";
+
+                          const Icon = isCompleted ? Check : isInProgress ? Play : Clock;
+
+                          return (
+                            <div
+                              key={`${step.key}-sub-${subIndex}`}
+                              role="button"
+                              onClick={() => handleSubSelect(index, subIndex)}
+                              className="relative flex flex-col items-center pt-4 min-w-[36px] cursor-pointer"
+                            >
+                              <div className={`absolute top-[2px] h-3.5 w-px ${getSubStageLineClass(sub)}`} />
+                              <div className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0.55rem] font-semibold ${dotClass}`}>
+                                <Icon size={10} aria-hidden="true" />
+                              </div>
+                              <p className="mt-1 max-w-[64px] break-words text-[8px] text-slate-600">{sub.name || sub.label || "Sub-stage"}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                      </>
                     )}
                   </div>
                 ))}
@@ -231,281 +407,190 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             {selectedStep ? (
               <>
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">{selectedStep.label}</p>
-                    <p className="mt-1 text-sm text-slate-500">{selectedStep.description || selectedStep.statusText}</p>
-                  </div>
-                  <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getOrderTimelineStatusClass(
-                    selectedStep.status
-                  )}`}>{selectedStep.statusText}</span>
-                </div>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Stage Date</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">{selectedStep.date || "Pending"}</p>
-                  </div>
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Assigned</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">{selectedStep.assignedTo || "TBD"}</p>
-                  </div>
-                </div>
-
-                {(selectedStep.key === "contract_sent" || selectedStep.key === "contract_accepted") && typeof onViewContract === "function" && (
-                  <div className="mt-4">
-                    <button
-                      type="button"
-                      onClick={() => onViewContract(order)}
-                      className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
-                    >
-                      View Contract
-                    </button>
-                  </div>
-                )}
-
-                {canRespondToSchedule && selectedStep.key === "installation_agreement" && selectedStep.proposedInstallationDate && selectedStep.proposedInstallationTime && (
-                  <div className="mt-4 rounded-3xl border border-emerald-100 bg-white p-4 shadow-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
+                {selectedSubIndex !== null ? (
+                  // Sub-stage details view
+                  (() => {
+                    const sub = selectedStep.subStages?.[selectedSubIndex] || null;
+                    return (
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">Installation Agreement</p>
-                        <p className="mt-1 text-sm text-slate-600">
-                          Proposed appointment: <span className="font-semibold text-slate-900">{selectedStep.proposedInstallationDate}</span> at <span className="font-semibold text-slate-900">{selectedStep.proposedInstallationTime}</span>
-                        </p>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{sub?.name || "Sub-stage"}</p>
+                            <p className="text-xs text-slate-400">Sub-stage details</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getOrderTimelineStatusClass(
+                              sub?.status
+                            )}`}>{sub?.status === "completed" ? "Done" : sub?.statusText || (sub?.status || "Pending")}</span>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Completed / Date</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{sub?.date || "Pending"}</p>
+                          </div>
+                          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Assigned</p>
+                            <p className="mt-2 text-sm font-semibold text-slate-900">{selectedStep.assignedTo || "TBD"}</p>
+                          </div>
+                        </div>
+
+                        {sub?.notes && (
+                          <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-sm font-semibold text-slate-900">Description</p>
+                            <p className="mt-2 text-sm text-slate-600">{sub.notes}</p>
+                          </div>
+                        )}
+
+                        <div className="mt-4">
+                          <p className="text-sm font-medium text-gray-900">Proof Photos</p>
+                          <p className="text-xs text-gray-400">{getValidImages(sub.images).length} photo{getValidImages(sub.images).length === 1 ? "" : "s"}</p>
+                          {getValidImages(sub.images).length > 0 ? (
+                            <div className="mt-3 grid grid-cols-3 gap-2">
+                              {getValidImages(sub.images).map((src, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => setPhotoGallery({ title: `${selectedStep.label} — ${sub.name}`, images: getValidImages(sub.images) })}
+                                  className="aspect-square bg-gray-50 border border-gray-100 rounded-lg flex items-center justify-center overflow-hidden hover:bg-gray-100 transition"
+                                >
+                                  <img src={src} alt={`Proof photo ${idx + 1}`} className="object-cover w-full h-full" />
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="mt-3 text-xs text-gray-400">No proof photos uploaded yet.</p>
+                          )}
+                        </div>
                       </div>
-                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        selectedStep.customerResponse === "accepted"
-                          ? "bg-emerald-50 text-emerald-700"
-                          : selectedStep.customerResponse === "reschedule_requested"
-                          ? "bg-amber-50 text-amber-700"
-                          : "bg-slate-100 text-slate-600"
-                      }`}>{
-                        selectedStep.customerResponse === "accepted"
-                          ? "Accepted"
-                          : selectedStep.customerResponse === "reschedule_requested"
-                          ? "Reschedule Requested"
-                          : "Action Needed"
-                      }</span>
+                    );
+                  })()
+                ) : (
+                  // Parent stage details view (no sub-stage detail elements merged)
+                  <>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{selectedStep.label}</p>
+                        <p className="mt-1 text-sm text-slate-500">{selectedStep.description || selectedStep.statusText}</p>
+                      </div>
+                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getOrderTimelineStatusClass(
+                        selectedStep.status
+                      )}`}>{selectedStep.statusText}</span>
                     </div>
 
-                    {selectedStep.customerResponse === "accepted" ? (
-                      <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                        {selectedStepAcceptedPreferredSchedule
-                          ? "Your preferred installation schedule has been approved. No further action is needed."
-                          : "Your installation schedule has been confirmed. No further action is needed."}
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Stage Date</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">{selectedStep.date || "Pending"}</p>
                       </div>
-                    ) : selectedStep.customerResponse === "reschedule_requested" ? (
-                      <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-slate-700">
-                        <p className="font-semibold text-amber-800">Reschedule Requested</p>
-                        <p className="mt-2">Preferred date: <span className="font-semibold text-slate-900">{selectedStep.customerPreferredInstallationDate || "TBD"}</span></p>
-                        <p>Preferred time: <span className="font-semibold text-slate-900">{selectedStep.customerPreferredInstallationTime || "TBD"}</span></p>
-                        {selectedStep.customerRescheduleNotes && <p className="mt-2">Notes: {selectedStep.customerRescheduleNotes}</p>}
+                      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Assigned</p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">{selectedStep.assignedTo || "TBD"}</p>
                       </div>
-                    ) : (
-                      <p className="mt-3 text-sm text-slate-600">Please review the proposed installation schedule.</p>
-                    )}
+                    </div>
 
-                    {selectedStep.customerResponse !== "accepted" && (
-                      <div className="mt-4 flex flex-wrap items-center gap-3">
-                        <button
-                          type="button"
-                          disabled={scheduleActionLoading}
-                          onClick={() => handleScheduleResponse("accept")}
-                          className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {scheduleActionLoading ? "Processing..." : "Accept Schedule"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={scheduleActionLoading}
-                          onClick={openRescheduleModal}
-                          className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Request Reschedule
-                        </button>
-                      </div>
-                    )}
-
-                    {scheduleActionError && <p className="mt-3 text-sm text-red-600">{scheduleActionError}</p>}
-                    {scheduleActionMessage && <p className="mt-3 text-sm text-emerald-700">{scheduleActionMessage}</p>}
-                  </div>
-                )}
-
-                {selectedStep.notes && (
-                  <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm font-semibold text-slate-900">Notes</p>
-                    <p className="mt-2 text-sm text-slate-600">{selectedStep.notes}</p>
-                  </div>
-                )}
-
-                {(selectedStep.key === "installation_scheduling" || selectedStep.key === "installation_agreement") && selectedStep.proposedInstallationDate && selectedStep.proposedInstallationTime && (
-                  <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm font-semibold text-slate-900">Installation Schedule Proposal</p>
-                    <p className="mt-2 text-sm text-slate-600">
-                      Proposed time: <span className="font-semibold text-slate-900">{selectedStep.proposedInstallationDate}</span> at <span className="font-semibold text-slate-900">{selectedStep.proposedInstallationTime}</span>
-                    </p>
-                    {selectedStep.customerResponse === "accepted" ? (
-                      <p className="mt-3 text-sm text-emerald-700">
-                        {audience === "admin" && selectedStepAcceptedPreferredSchedule
-                          ? "Customer preferred schedule accepted by admin."
-                          : audience === "customer" && selectedStepAcceptedPreferredSchedule
-                          ? "Your preferred schedule was accepted by admin."
-                          : "Customer agreed to this schedule."}
-                      </p>
-                    ) : selectedStep.customerResponse === "reschedule_requested" ? (
-                      <div className="mt-3 rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-slate-700">
-                        <p className="font-semibold text-amber-800">Reschedule Requested</p>
-                        <p className="mt-2">Preferred date: <span className="font-semibold text-slate-900">{selectedStep.customerPreferredInstallationDate || "TBD"}</span></p>
-                        <p>Preferred time: <span className="font-semibold text-slate-900">{selectedStep.customerPreferredInstallationTime || "TBD"}</span></p>
-                        {selectedStep.customerRescheduleNotes && <p className="mt-2">Notes: {selectedStep.customerRescheduleNotes}</p>}
+                    {selectedStep.notes && (
+                      <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-sm font-semibold text-slate-900">Notes</p>
+                        <p className="mt-2 text-sm text-slate-600">{selectedStep.notes}</p>
+                        {/* If customer already responded, show a status message instead of buttons */}
+                        {currentScheduleResponse === "accepted" ? (
+                          <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-4 text-sm text-slate-800">
+                            <p className="font-semibold text-emerald-700">
+                              {audience === "admin" ? "✓ Customer accepted the installation schedule." : "✓ You accepted the installation schedule."}
+                            </p>
+                            <p className="mt-2 text-xs text-slate-600">Approved Installation Date:</p>
+                            <p className="font-medium">{formatDisplayDate(scheduleResponseDate)}</p>
+                            <p className="mt-2 text-xs text-slate-500">Waiting for installation to begin.</p>
+                          </div>
+                        ) : currentScheduleResponse === "reschedule_requested" ? (
+                          <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-4 text-sm text-slate-800">
+                            <p className="font-semibold text-amber-700">
+                              {audience === "admin" ? "⏳ Customer requested a reschedule." : "⏳ Your reschedule request has been submitted."}
+                            </p>
+                            <p className="mt-2 text-xs text-slate-600">Requested Installation Date:</p>
+                            <p className="font-medium">{formatDisplayDate(scheduleResponseDate)}</p>
+                            <p className="mt-2 text-xs text-slate-500">
+                              {audience === "admin" ? "Respond to the customer request or accept the preferred schedule." : "Waiting for administrator approval."}
+                            </p>
+                          </div>
+                        ) : currentScheduleResponse === "pending" ? (
+                          isInstallationStage && canRespondToSchedule && selectedStep?.status !== "completed" && (
+                            <div className="mt-3 flex flex-wrap items-center gap-3">
+                              <button
+                                type="button"
+                                disabled={scheduleActionLoading}
+                                onClick={handleAcceptInstallationClick}
+                                className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {scheduleActionLoading ? "Accepting..." : "Accept Installation"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={openRescheduleModal}
+                                disabled={scheduleActionLoading}
+                                className="rounded-2xl border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Request Reschedule
+                              </button>
+                            </div>
+                          )
+                        ) : (
+                          // No customer response yet — show buttons to customer when allowed
+                          isInstallationStage && canRespondToSchedule && selectedStep?.status !== "completed" && (
+                            <div className="mt-3 flex flex-wrap items-center gap-3">
+                              <button
+                                type="button"
+                                disabled={scheduleActionLoading}
+                                onClick={handleAcceptInstallationClick}
+                                className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {scheduleActionLoading ? "Accepting..." : "Accept Installation"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={openRescheduleModal}
+                                disabled={scheduleActionLoading}
+                                className="rounded-2xl border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Request Reschedule
+                              </button>
+                            </div>
+                          )
+                        )}
                         {canAcceptPreferredSchedule && (
-                          <div className="mt-3 flex flex-wrap items-center gap-3">
+                          <div className="mt-3">
                             <button
                               type="button"
                               disabled={scheduleActionLoading}
                               onClick={handleAcceptPreferredSchedule}
-                              className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                              {scheduleActionLoading ? "Processing..." : "Accept Preferred Schedule"}
+                              {scheduleActionLoading ? "Accepting..." : "Accept Preferred Schedule"}
                             </button>
                           </div>
                         )}
                       </div>
-                    ) : (
-                      <p className="mt-3 text-sm text-slate-600">Awaiting customer agreement on this proposed schedule.</p>
                     )}
-                  </div>
-                )}
 
-                {(selectedStep.subStages?.length > 0 || selectedStep.images?.length > 0) && (
-                  <div className="mt-4 rounded-2xl border border-gray-100 bg-white overflow-hidden">
-                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">{selectedStep.label}</p>
-                        <p className="text-xs text-gray-400">{selectedStep.statusText}</p>
-                      </div>
-                      {selectedStep.status === "completed" && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-                          <Check size={12} aria-hidden="true" />
-                          Completed
-                        </span>
-                      )}
-                    </div>
+                    {/* Sub-stages list removed from parent stage details to keep parent and sub-stage details separate */}
 
-                    <div className="grid grid-cols-2 border-b border-gray-100">
-                      <div className="px-4 py-3 border-r border-gray-100">
-                        <p className="text-[10px] uppercase tracking-widest text-gray-400 mb-1">Stage Date</p>
-                        <p className="text-xs font-medium text-gray-800">{selectedStep.date || "Pending"}</p>
-                      </div>
-                      <div className="px-4 py-3">
-                        <p className="text-[10px] uppercase tracking-widest text-gray-400 mb-1">Assigned</p>
-                        <p className="text-xs font-medium text-gray-800">{selectedStep.assignedTo || "TBD"}</p>
-                      </div>
-                    </div>
-
-                    <div className="px-4 py-3 border-b border-gray-100">
-                      <p className="text-[10px] uppercase tracking-widest text-gray-400 mb-2">Notes</p>
-                      <p className="text-xs text-gray-500">{selectedStep.notes || "No notes available."}</p>
-                      <p className="text-xs text-gray-400 mt-1">{selectedStep.subStages?.length ?? 0} sub-stage{selectedStep.subStages?.length === 1 ? "" : "s"}</p>
-                    </div>
-
-                    <div className="px-4 py-3 border-b border-gray-100">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium text-gray-900">Sub-stages</p>
-                        <span className="text-xs bg-gray-50 border border-gray-100 rounded-full px-2 py-0.5 text-gray-400">
-                          {selectedStep.subStages?.length ?? 0}
-                        </span>
-                      </div>
-                      <div className="mt-3 space-y-2">
-                        {selectedStep.subStages?.length > 0 ? (
-                          selectedStep.subStages.map((sub, subIndex) => {
-                            const hasSubImages = sub.images?.length > 0;
-                            return (
-                              <button
-                                key={`${selectedStep.key}-sub-${subIndex}`}
-                                type="button"
-                                disabled={!hasSubImages}
-                                onClick={() =>
-                                  hasSubImages &&
-                                  setPhotoGallery({
-                                    title: `${selectedStep.label} — ${sub.name}`,
-                                    images: sub.images,
-                                  })
-                                }
-                                className={`w-full text-left rounded-3xl border border-gray-100 bg-white p-4 shadow-sm transition ${
-                                  hasSubImages
-                                    ? "cursor-pointer hover:border-emerald-200 hover:bg-emerald-50"
-                                    : "cursor-default opacity-80"
-                                }`}
-                                aria-label={hasSubImages ? `View proof photos for ${sub.name}` : `${sub.name} sub-stage`}
-                              >
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-3">
-                                      <span
-                                        className={`inline-block h-2.5 w-2.5 rounded-full ${
-                                          sub.status === "completed"
-                                            ? "bg-emerald-500"
-                                            : sub.status === "in-progress"
-                                            ? "bg-amber-500"
-                                            : sub.status === "delayed"
-                                            ? "bg-orange-500"
-                                            : "bg-slate-400"
-                                        }`}
-                                      />
-                                      <div className="min-w-0">
-                                        <p className="text-sm font-semibold text-gray-900 truncate">{sub.name}</p>
-                                        {sub.notes && (
-                                          <p className="mt-1 text-xs text-gray-500 line-clamp-2">{sub.notes}</p>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                                    <span className={`rounded-full px-2 py-1 font-semibold ${getOrderTimelineStatusClass(sub.status)}`}>
-                                      {sub.status === "completed"
-                                        ? "Done"
-                                        : sub.status === "in-progress"
-                                        ? "In Progress"
-                                        : sub.status === "delayed"
-                                        ? "Delayed"
-                                        : "Pending"}
-                                    </span>
-                                    <span className="rounded-full bg-slate-50 px-2 py-1 text-slate-500">
-                                      {sub.images?.length ?? 0} photo{sub.images?.length === 1 ? "" : "s"}
-                                    </span>
-                                    <ChevronRight size={14} className={`text-gray-300 ${hasSubImages ? "" : "opacity-30"}`} />
-                                  </div>
-                                </div>
-                              </button>
-                            );
-                          })
-                        ) : (
-                          <p className="text-xs text-gray-400">No sub-stages available.</p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="px-4 py-3">
+                    {/* Stage proof photos */}
+                    <div className="mt-4">
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-medium text-gray-900">Stage Proof Photos</p>
                         <span className="text-xs bg-gray-50 border border-gray-100 rounded-full px-2 py-0.5 text-gray-400">
-                          {selectedStep.images?.length ?? 0} photo{selectedStep.images?.length === 1 ? "" : "s"}
+                          {getValidImages(selectedStep.images).length} photo{getValidImages(selectedStep.images).length === 1 ? "" : "s"}
                         </span>
                       </div>
-                      {selectedStep.images?.length > 0 ? (
+                      {getValidImages(selectedStep.images).length > 0 ? (
                         <div className="mt-3 grid grid-cols-3 gap-2">
-                          {selectedStep.images.map((src, index) => (
+                          {getValidImages(selectedStep.images).map((src, index) => (
                             <button
                               key={`${selectedStep.key}-photo-${index}`}
                               type="button"
-                              onClick={() =>
-                                setPhotoGallery({
-                                  title: selectedStep.label,
-                                  images: selectedStep.images,
-                                })
-                              }
+                              onClick={() => setPhotoGallery({ title: selectedStep.label, images: getValidImages(selectedStep.images) })}
                               className="aspect-square bg-gray-50 border border-gray-100 rounded-lg flex items-center justify-center overflow-hidden hover:bg-gray-100 transition"
                             >
                               <img src={src} alt={`Proof photo ${index + 1}`} className="object-cover w-full h-full" />
@@ -516,7 +601,7 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
                         <p className="mt-3 text-xs text-gray-400">No proof photos uploaded yet.</p>
                       )}
                     </div>
-                  </div>
+                  </>
                 )}
               </>
             ) : (
@@ -604,6 +689,7 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
                     type="date"
                     value={preferredDate}
                     onChange={(e) => setPreferredDate(e.target.value)}
+                    min={minPreferredDate}
                     className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
                   />
                 </div>
@@ -631,22 +717,7 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
 
               {scheduleActionError && <p className="text-sm text-red-600">{scheduleActionError}</p>}
 
-              <div className="flex flex-wrap items-center gap-3 pt-3">
-                <button
-                  type="button"
-                  disabled={scheduleActionLoading}
-                  onClick={() =>
-                    handleScheduleResponse("reschedule", {
-                      reason: rescheduleReason,
-                      preferredInstallationDate: preferredDate,
-                      preferredInstallationTime: preferredTime,
-                      notes: rescheduleNotes,
-                    })
-                  }
-                  className="rounded-2xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {scheduleActionLoading ? "Submitting..." : "Submit Reschedule Request"}
-                </button>
+              <div className="flex flex-wrap items-center justify-end gap-3 pt-3">
                 <button
                   type="button"
                   onClick={closeAgreementModal}
@@ -654,7 +725,121 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
                 >
                   Cancel
                 </button>
+                <button
+                  type="button"
+                  disabled={scheduleActionLoading}
+                  onClick={submitReschedule}
+                  className="rounded-2xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {scheduleActionLoading ? "Submitting..." : "Submit Reschedule Request"}
+                </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAcceptConfirmationModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-xl" role="dialog" aria-modal="true">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Confirm Installation Acceptance</h3>
+                <p className="mt-2 text-sm text-slate-500">Do you want to accept the proposed installation schedule?</p>
+              </div>
+              <button
+                onClick={closeAcceptConfirmationModal}
+                className="text-slate-500 hover:text-slate-700"
+                aria-label="Close accept confirmation"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {scheduleActionError && <p className="mt-4 text-sm text-red-600">{scheduleActionError}</p>}
+
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={scheduleActionLoading}
+                onClick={() => {
+                  handleScheduleResponse("accept");
+                  closeAcceptConfirmationModal();
+                }}
+                className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {scheduleActionLoading ? "Accepting..." : "Confirm Accept"}
+              </button>
+              <button
+                type="button"
+                onClick={closeAcceptConfirmationModal}
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRescheduleConfirmationModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-xl" role="dialog" aria-modal="true">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Confirm Reschedule Request</h3>
+                <p className="mt-2 text-sm text-slate-500">Submit this request to change your installation schedule?</p>
+              </div>
+              <button
+                onClick={closeRescheduleConfirmationModal}
+                className="text-slate-500 hover:text-slate-700"
+                aria-label="Close reschedule confirmation"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-3 text-sm text-slate-600">
+              <div>
+                <p className="font-semibold text-slate-900">Preferred date</p>
+                <p>{preferredDate || "Not selected"}</p>
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">Preferred time</p>
+                <p>{preferredTime || "No time selected"}</p>
+              </div>
+              {rescheduleReason && (
+                <div>
+                  <p className="font-semibold text-slate-900">Reason</p>
+                  <p>{rescheduleReason}</p>
+                </div>
+              )}
+              {rescheduleNotes && (
+                <div>
+                  <p className="font-semibold text-slate-900">Additional notes</p>
+                  <p>{rescheduleNotes}</p>
+                </div>
+              )}
+            </div>
+
+            {scheduleActionError && <p className="mt-4 text-sm text-red-600">{scheduleActionError}</p>}
+
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={scheduleActionLoading}
+                onClick={handleConfirmRescheduleSubmit}
+                className="rounded-2xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {scheduleActionLoading ? "Submitting..." : "Confirm Request"}
+              </button>
+              <button
+                type="button"
+                onClick={closeRescheduleConfirmationModal}
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>

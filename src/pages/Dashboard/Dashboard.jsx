@@ -381,7 +381,10 @@ function Dashboard() {
                 </p>
               </button>
 
-              <button className="bg-green-50/50 border border-green-500 rounded-2xl p-4 text-left hover:bg-green-100 transition">
+              <button
+                onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+                className="bg-green-50/50 border border-green-500 rounded-2xl p-4 text-left hover:bg-green-100 transition"
+              >
                 <ShieldCheck
                   className="text-green-600 mb-2"
                   size={28}

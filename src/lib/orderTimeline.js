@@ -164,8 +164,9 @@ export const buildOrderTimelineStages = (order) => {
   const progressStages = progressStageKeys
     .map((definition) => {
       const isAgreementStage = definition.key === "installation_agreement";
+      const scheduleStageCandidates = ["installation_scheduling", "installation_scheduled"].map((key) => stageMap[key]).filter(Boolean);
       const sourceStage = isAgreementStage
-        ? stageMap["installation_scheduling"] || stageMap["installation_scheduled"] || {}
+        ? scheduleStageCandidates.find((stage) => ["accepted", "reschedule_requested"].includes(stage.customerResponse)) || scheduleStageCandidates[scheduleStageCandidates.length - 1] || {}
         : stageMap[definition.key] || {};
 
       const completed = isAgreementStage
@@ -190,22 +191,24 @@ export const buildOrderTimelineStages = (order) => {
           }))
         : [];
 
+      const visibleSubStages = completed ? subStages : [];
+
       if (isAgreementStage) {
         const hasProposal = sourceStage.proposedInstallationDate && sourceStage.proposedInstallationTime;
         if (!hasProposal) return null;
       }
 
-      const completedSubCount = subStages.filter((sub) => sub.status === "completed").length;
+      const completedSubCount = visibleSubStages.filter((sub) => sub.status === "completed").length;
       const latestDelayEntry = Array.isArray(sourceStage.delayHistory) && sourceStage.delayHistory.length > 0
         ? sourceStage.delayHistory[sourceStage.delayHistory.length - 1]
         : null;
 
-      const activeSubStage = subStages.find((sub) => sub.status !== "completed");
-      const latestCompletedSubStage = [...subStages].reverse().find((sub) => sub.status === "completed");
+      const activeSubStage = visibleSubStages.find((sub) => sub.status !== "completed");
+      const latestCompletedSubStage = [...visibleSubStages].reverse().find((sub) => sub.status === "completed");
       const subStageNotes = activeSubStage?.notes || latestCompletedSubStage?.notes || null;
 
       const defaultNotes =
-        subStages.length > 0
+        visibleSubStages.length > 0
           ? subStageNotes ?? "No notes available."
           : `Current phase: ${definition.label}`;
 
@@ -274,7 +277,7 @@ export const buildOrderTimelineStages = (order) => {
             : "Awaiting installation agreement."
           : schedulingNotes || defaultNotes,
         images: Array.isArray(sourceStage.images) ? sourceStage.images : [],
-        subStages,
+        subStages: visibleSubStages,
         proposedInstallationDate: formatDateToMMDDYYYY(sourceStage.proposedInstallationDate),
         proposedInstallationTime: sourceStage.proposedInstallationTime || null,
         customerResponse: sourceStage.customerResponse || null,

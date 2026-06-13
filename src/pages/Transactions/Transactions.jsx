@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   FileText,
   ShieldCheck,
@@ -27,6 +28,19 @@ function Transactions() {
 
   const [activeTable, setActiveTable] =
     useState("receipts");
+
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location && location.state && location.state.activeTable) {
+      setActiveTable(location.state.activeTable);
+      try {
+        window.history.replaceState({}, document.title);
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
@@ -290,7 +304,7 @@ function Transactions() {
         approved_at: updated.approved_at || now,
         status: updated.status || "approved",
       });
-      toast.success("Transaction approved successfully.");
+      toast.success("Transaction approved successfully. Project has been moved to Progress Monitor.");
     } catch (error) {
       console.error("Approve transaction failed", error);
       toast.error(error?.data?.message || error?.message || "Unable to approve transaction.");

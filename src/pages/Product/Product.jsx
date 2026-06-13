@@ -9,6 +9,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { API_BASE } from "@/api/client";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -25,6 +26,55 @@ const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
 
 function Products() {
+
+  const API_HOST = (function getApiHost() {
+    try {
+      return (API_BASE || "").replace(/\/api$/, "");
+    } catch (e) {
+      return "";
+    }
+  })();
+
+  const isLocalBlobOrFile = (url) => typeof url === "string" && (url.startsWith("blob:") || url.startsWith("file:"));
+
+  const ensureAbsoluteUrl = (url) => {
+    if (!url) return PRODUCT_IMAGE_PLACEHOLDER;
+    if (isLocalBlobOrFile(url)) return PRODUCT_IMAGE_PLACEHOLDER;
+    if (/^https?:\/\//i.test(url)) return url;
+    if (url.startsWith("/")) return API_HOST ? `${API_HOST}${url}` : url;
+    if (url.startsWith("uploads/")) return API_HOST ? `${API_HOST}/${url}` : `/${url}`;
+    return API_HOST ? `${API_HOST}/${url}` : url;
+  };
+
+  const resolveProductImage = (product) => {
+    if (!product) return PRODUCT_IMAGE_PLACEHOLDER;
+    if (product.image && !isLocalBlobOrFile(product.image)) return ensureAbsoluteUrl(product.image);
+    if (product.image_url && !isLocalBlobOrFile(product.image_url)) return ensureAbsoluteUrl(product.image_url);
+    const imgs = product.images;
+    if (!imgs) return PRODUCT_IMAGE_PLACEHOLDER;
+    if (typeof imgs === "string") return ensureAbsoluteUrl(imgs);
+    if (Array.isArray(imgs) && imgs.length > 0) {
+      const first = imgs[0];
+      if (typeof first === "string") return ensureAbsoluteUrl(first);
+      if (first && typeof first === "object" && first.url) return ensureAbsoluteUrl(first.url);
+    }
+    if (typeof imgs === "object") {
+      if (imgs.main && !isLocalBlobOrFile(imgs.main)) return ensureAbsoluteUrl(imgs.main);
+      const keys = Object.keys(imgs);
+      for (let k of keys) {
+        const val = imgs[k];
+        if (!val) continue;
+        if (typeof val === "string" && !isLocalBlobOrFile(val)) return ensureAbsoluteUrl(val);
+        if (Array.isArray(val) && val.length > 0) {
+          const f = val[0];
+          if (typeof f === "string") return ensureAbsoluteUrl(f);
+          if (f && f.url) return ensureAbsoluteUrl(f.url);
+        }
+        if (val && val.url && !isLocalBlobOrFile(val.url)) return ensureAbsoluteUrl(val.url);
+      }
+    }
+    return PRODUCT_IMAGE_PLACEHOLDER;
+  };
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
       if (typeof window === "undefined") return true;
@@ -259,7 +309,7 @@ function Products() {
           price:
             product.price ||
             `₱${(product.unit_price || 0).toLocaleString()}`,
-          image: product.image || product.image_url || "",
+          image: resolveProductImage(product),
           category: product.category || "",
           type: product.type ||
             (product.category?.toLowerCase() === "glass"
@@ -701,13 +751,15 @@ function Products() {
                 <p className="text-gray-500">No products match the selected filters.</p>
               </div>
             ) : (
-              currentProducts.map((product) => {
+                currentProducts.map((product) => {
                 const productType = getProductType(product);
+                
+                  const imageSrc = resolveProductImage(product);
                 return (
                   <div key={product.id} className="group bg-white/5 border border-white/10 backdrop-blur-2xl rounded-[35px] overflow-hidden shadow-2xl">
                     <div className="h-60 bg-gradient-to-br from-blue-600/20 to-white/5">
                       <img
-                        src={product.image || PRODUCT_IMAGE_PLACEHOLDER}
+                        src={imageSrc}
                         alt={product.name}
                         className="h-full w-full object-cover"
                         onError={(e) => {
