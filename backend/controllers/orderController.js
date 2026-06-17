@@ -1,4 +1,7 @@
+import fs from "fs";
+import path from "path";
 import Order from "../models/Order.js";
+import { sendMail } from "../config/mailer.js";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -50,6 +53,25 @@ const buildAddressFromUser = (user) => {
   return normalizeAddress(
     [user.street_address, user.city, user.province, user.zip_code].filter(Boolean).join(", ")
   );
+};
+
+const getLocalUploadedAttachment = (fileUrl) => {
+  if (!fileUrl || typeof fileUrl !== "string") return null;
+  try {
+    const url = new URL(fileUrl, "http://localhost");
+    const pathname = url.pathname || "";
+    if (!pathname.startsWith("/uploads/")) return null;
+    const filename = pathname.replace(/^\/uploads\//, "");
+    if (!filename) return null;
+    const filepath = path.join(process.cwd(), "uploads", filename);
+    if (!fs.existsSync(filepath)) return null;
+    return {
+      filename,
+      path: filepath,
+    };
+  } catch (err) {
+    return null;
+  }
 };
 
 const normalizeProductId = (productId) => {
@@ -153,10 +175,33 @@ export const createOrder = async (req, res) => {
 
 export const createOrderAsAdmin = async (req, res) => {
   try {
-    const { items, shipping_address, order_type, attachments, payment_terms, customer_name, customer_phone, customer_email, customer_id } = req.body;
+    const { 
+      items, 
+      shipping_address, 
+      order_type, 
+      attachments, 
+      payment_terms, 
+      customer_name, 
+      customer_phone, 
+      customer_email, 
+      customer_id,
+      // Walk-in customer fields
+      signed_contract_url,
+      contract_number,
+      contract_signed_date,
+      inspection_date,
+      inspection_notes,
+    } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Order items are required" });
+    }
+
+    // Validate walk-in customer requirements
+    if (order_type === "walk_in_customer") {
+      if (!signed_contract_url) {
+        return res.status(400).json({ success: false, message: "Signed contract is required for walk-in customers" });
+      }
     }
 
     const sanitizedItems = sanitizeOrderItems(items);
@@ -181,10 +226,17 @@ export const createOrderAsAdmin = async (req, res) => {
       attachments: Array.isArray(attachments) ? attachments : [],
       tracking: generateTrackingNumber(),
       order_type: order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
-      contract_status: "pending",
+      contract_status: order_type === "walk_in_customer" ? "accepted" : "pending",
       payment_status: "not_paid",
       status: "site_inspection",
-      inspection_status: "pending",
+      inspection_status: order_type === "walk_in_customer" ? "completed" : "pending",
+      inspection_date: inspection_date ? new Date(inspection_date) : null,
+      inspection_notes: inspection_notes || "",
+      // Walk-in specific
+      acceptance_method: order_type === "walk_in_customer" ? "walk_in_signed_contract" : "online",
+      signed_contract_url: signed_contract_url || "",
+      contract_number: contract_number || "",
+      contract_signed_date: contract_signed_date ? new Date(contract_signed_date) : null,
     });
 
     await order.save();
@@ -801,5 +853,101 @@ export const generateContract = async (req, res) => {
   } catch (error) {
     console.error("Generate contract error:", error);
     res.status(500).json({ success: false, message: "Unable to generate contract", error: error.message });
+  }
+};
+
+export const sendWalkInApprovalEmail = async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Admin access required" });
+    }
+
+    const { orderId } = req.params;
+    const { customerName, customerEmail, contractUrl } = req.body;
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (!customerEmail) {
+      return res.status(400).json({ success: false, message: "Customer email is required" });
+    }
+
+    // Prepare email content
+    const customerNameValue = customerName || order.customer_name || "Valued Customer";
+    const orderNumber = order.tracking || "N/A";
+    const inspectionDate = order.inspection_date
+      ? new Date(order.inspection_date).toLocaleDateString()
+      : "N/A";
+    const totalAmount = typeof order.total_amount === "number"
+      ? `₱${order.total_amount.toFixed(2)}`
+      : "N/A";
+    const siteAddress = order.shipping_address || "N/A";
+    const contractLink = contractUrl || order.signed_contract_url || "";
+    const fromAddress = process.env.EMAIL_FROM || "ACGC Site Inspection <no-reply@acgc.com>";
+
+    const htmlBody = `
+      <p>Hi ${customerNameValue},</p>
+      <p>Your walk-in site inspection has been completed and the proposal is ready for review.</p>
+      <p><strong>Order Number:</strong> ${orderNumber}</p>
+      <p><strong>Inspection Date:</strong> ${inspectionDate}</p>
+      <p><strong>Total Amount:</strong> ${totalAmount}</p>
+      <p><strong>Site Address:</strong> ${siteAddress}</p>
+      ${contractLink ? `<p><strong>Signed Contract:</strong> <a href="${contractLink}">View signed contract</a></p>` : "<p>No signed contract link was provided.</p>"}
+      <p>If you have any questions, reply to this email or contact our support team.</p>
+      <p>Thank you,<br/>ACGC Site Inspection Team</p>
+    `;
+
+    const textBody = `
+Hi ${customerNameValue},
+
+Your walk-in site inspection has been completed and the proposal is ready for review.
+
+Order Number: ${orderNumber}
+Inspection Date: ${inspectionDate}
+Total Amount: ${totalAmount}
+Site Address: ${siteAddress}
+
+${contractLink ? `View signed contract: ${contractLink}` : "No signed contract link was provided."}
+
+If you have any questions, reply to this email or contact our support team.
+
+Thank you,
+ACGC Site Inspection Team
+`;
+
+    const attachments = [];
+    const contractAttachment = getLocalUploadedAttachment(contractLink);
+    if (contractAttachment) {
+      attachments.push(contractAttachment);
+    }
+
+    try {
+      await sendMail({
+        from: fromAddress,
+        to: customerEmail,
+        subject: "ACGC Site Inspection & Proposal",
+        text: textBody,
+        html: htmlBody,
+        attachments: attachments.length > 0 ? attachments : undefined,
+      });
+
+      res.json({
+        success: true,
+        message: "Approval email sent successfully",
+      });
+    } catch (emailError) {
+      console.error("Approval email send failed:", emailError);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to send email",
+        error: emailError?.message || "Email sending failed",
+        code: emailError?.code,
+      });
+    }
+  } catch (error) {
+    console.error("Send approval email error:", error);
+    res.status(500).json({ success: false, message: "Unable to send email", error: error.message });
   }
 };

@@ -61,15 +61,28 @@ function LandingPage() {
     loadFeaturedProducts();
   }, []);
 
+  const isLocalBlobOrFile = (url) =>
+    typeof url === "string" && (url.startsWith("blob:") || url.startsWith("file:"));
+
   const getProductImage = (product) => {
     if (!product) return "";
-    if (product.image_url) return product.image_url;
-    if (product.image) return product.image;
-    if (Array.isArray(product.images) && product.images.length > 0) return product.images[0];
+    const imageCandidates = [product.image_url, product.image];
+    if (Array.isArray(product.images) && product.images.length > 0) {
+      imageCandidates.push(product.images[0]);
+    }
     if (product.images && typeof product.images === "object") {
       const images = Object.values(product.images).flat().filter(Boolean);
-      return images[0] || "";
+      if (images.length > 0) imageCandidates.push(images[0]);
     }
+
+    for (const candidate of imageCandidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        if (!isLocalBlobOrFile(candidate)) {
+          return candidate;
+        }
+      }
+    }
+
     return "";
   };
 

@@ -13,6 +13,7 @@ import {
   generateContract,
   respondToContract,
   respondToInstallationSchedule,
+  sendWalkInApprovalEmail,
 } from "../controllers/orderController.js";
 
 const router = express.Router();
@@ -31,5 +32,6 @@ router.put("/admin/:orderId/status", authMiddleware, roleMiddleware("admin"), up
 router.put("/admin/:orderId/inspection", authMiddleware, roleMiddleware("admin"), updateOrderInspection);
 router.put("/admin/:orderId/progress", authMiddleware, roleMiddleware("admin"), updateOrderProgress);
 router.post("/admin/:orderId/contract", authMiddleware, roleMiddleware("admin"), generateContract);
+router.post("/admin/:orderId/send-approval-email", authMiddleware, roleMiddleware("admin"), sendWalkInApprovalEmail);
 
 export default router;

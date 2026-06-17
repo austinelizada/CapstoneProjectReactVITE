@@ -60,3 +60,9 @@ export const generateContract = (orderId, payload = {}) =>
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+export const sendWalkInApprovalEmail = (orderId, payload = {}) =>
+  apiFetch(`/orders/admin/${orderId}/send-approval-email`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });

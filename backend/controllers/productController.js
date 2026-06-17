@@ -3,13 +3,11 @@ import Product from "../models/Product.js";
 export const listProducts = async (req, res) => {
   try {
     const { search, category, adminOnly } = req.query;
-    const filter = { is_active: true };
+    const filter = {};
 
-    if (adminOnly === "true") {
-      filter.$or = [
-        { created_by: { $exists: true, $ne: null } },
-        { created_by: null },
-      ];
+    // By default only show active products to non-admin (public) requests
+    if (adminOnly !== "true") {
+      filter.is_active = true;
     }
 
     if (category && category !== "all") {
@@ -116,6 +114,7 @@ export const createProduct = async (req, res) => {
       estimated_area: Number(estimated_area) || 0,
       estimated_price: Number(estimated_price) || 0,
       images: images || {},
+      is_active: req.body.is_active !== undefined ? Boolean(req.body.is_active) : true,
     });
 
     await product.save();
@@ -172,6 +171,7 @@ export const updateProduct = async (req, res) => {
       estimated_area: req.body.estimated_area != null ? Number(req.body.estimated_area) : product.estimated_area,
       estimated_price: req.body.estimated_price != null ? Number(req.body.estimated_price) : product.estimated_price,
       images: req.body.images ?? product.images,
+      is_active: req.body.is_active != null ? Boolean(req.body.is_active) : product.is_active,
     };
 
     Object.assign(product, updates);

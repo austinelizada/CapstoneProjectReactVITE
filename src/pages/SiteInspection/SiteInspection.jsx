@@ -10,9 +10,10 @@ import {
 } from "lucide-react";
 import toast, { Toaster } from 'react-hot-toast';
 
-import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection } from "@/api/orders";
+import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection, sendWalkInApprovalEmail } from "@/api/orders";
 import { getProducts } from "@/api/products";
 import { searchCustomers } from "@/api/users";
+import { uploadFiles } from "@/api/uploads";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import ContractModal from "../../components/ContractModal";
@@ -33,7 +34,17 @@ const getDefaultInspection = () => ({
   ],
   payment_terms: "",
   estimation_mode: "auto",
+  // Walk-in customer fields
+  signed_contract_file: null,
+  contract_number: "",
+  contract_signed_date: new Date().toISOString().split("T")[0],
 });
+
+const generateTrackingId = () => {
+  const year = new Date().getFullYear();
+  const random = Math.floor(1000 + Math.random() * 9000);
+  return `ACGC-TRK-${year}-${random}`;
+};
 
 const SITE_INSPECTION_STATUS = "site_inspection";
 const PENDING_CONTRACT_STATUSES = new Set(["", "pending"]);
@@ -101,6 +112,8 @@ function SiteInspection() {
   const [showContractModal, setShowContractModal] = useState(false);
   const [contractData, setContractData] = useState(null);
   const [contractInspection, setContractInspection] = useState(null);
+  const [uploadingContractFile, setUploadingContractFile] = useState(false);
+  const [contractUploadError, setContractUploadError] = useState("");
   
   const today = new Date().toISOString().split("T")[0];
   const pageSize = 8;
@@ -135,6 +148,8 @@ function SiteInspection() {
     setCustomerSuggestions([]);
     setCustomerSearchError("");
     setSelectedCustomer(null);
+    setUploadingContractFile(false);
+    setContractUploadError("");
   };
 
   const closeNewInspectionModal = () => {
@@ -225,6 +240,11 @@ function SiteInspection() {
     if (!payload.siteAddress?.trim()) nextErrors.siteAddress = "Site address is required.";
     if (!payload.inspection_date) nextErrors.inspection_date = "Inspection date is required.";
     if (!payload.items || payload.items.length === 0) nextErrors.items = "Add at least one measurement row.";
+
+    // Walk-in customer validation
+    if (payload.order_type === "walk_in_customer" && !payload.signed_contract_file) {
+      nextErrors.signed_contract_file = "Signed contract is required for walk-in customers.";
+    }
 
     const itemErrors = payload.items?.map((item) => {
       const rowErrors = {};
@@ -391,8 +411,8 @@ function SiteInspection() {
     }
   };
 
-const buildInspectionPayload = async (payload) => {
-    return {
+  const buildInspectionPayload = async (payload) => {
+    const basePayload = {
       customer_id: payload.customerId || null,
       customer_email: payload.customerEmail || "",
       items: (payload.items || []).map((item) => ({
@@ -415,7 +435,63 @@ const buildInspectionPayload = async (payload) => {
       customer_name: payload.customerName,
       customer_phone: payload.phone,
       estimation_mode: "auto",
+      inspection_date: payload.inspection_date,
     };
+
+    // Add walk-in customer specific fields
+    if (payload.order_type === "walk_in_customer") {
+      const contractFileValue = payload.signed_contract_file;
+      basePayload.signed_contract_url =
+        typeof contractFileValue === "string"
+          ? contractFileValue
+          : contractFileValue?.url || "";
+      basePayload.contract_number = payload.contract_number || "";
+      basePayload.contract_signed_date = payload.contract_signed_date || null;
+    }
+
+    return basePayload;
+  };
+
+  const handleSignedContractUpload = async (files) => {
+    if (!files || files.length === 0) {
+      setContractUploadError("Please select a file");
+      return;
+    }
+
+    const file = files[0];
+    const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png"];
+    const fileExtension = "." + file.name.split(".").pop().toLowerCase();
+
+    if (!allowedExtensions.includes(fileExtension)) {
+      setContractUploadError("Only PDF, JPG, and PNG files are allowed");
+      return;
+    }
+
+    const maxFileSize = 10 * 1024 * 1024; // 10 MB
+    if (file.size > maxFileSize) {
+      setContractUploadError("File size must be less than 10 MB");
+      return;
+    }
+
+    setUploadingContractFile(true);
+    setContractUploadError("");
+
+    try {
+      const uploadResp = await uploadFiles([file]);
+      if (uploadResp.success && uploadResp.files && uploadResp.files.length > 0) {
+        const uploadedFile = uploadResp.files[0];
+        const uploadedFileUrl = typeof uploadedFile === "string" ? uploadedFile : uploadedFile?.url || "";
+        setNewInspection((prev) => ({ ...prev, signed_contract_file: uploadedFileUrl }));
+        toast.success("Contract file uploaded successfully");
+      } else {
+        setContractUploadError("Failed to upload contract file");
+      }
+    } catch (error) {
+      console.error("Contract upload error:", error);
+      setContractUploadError(error.message || "Failed to upload contract file");
+    } finally {
+      setUploadingContractFile(false);
+    }
   };
 
   const fetchProducts = async () => {
@@ -432,7 +508,25 @@ const buildInspectionPayload = async (payload) => {
   };
 
   const handleInspectionFieldChange = (field, value) => {
-    setNewInspection((prev) => ({ ...prev, [field]: value }));
+    setNewInspection((prev) => {
+      if (field === "order_type") {
+        if (value === "walk_in_customer") {
+          return {
+            ...prev,
+            order_type: value,
+            contract_number: prev.contract_number || generateTrackingId(),
+          };
+        }
+
+        return {
+          ...prev,
+          order_type: value,
+          contract_number: "",
+        };
+      }
+
+      return { ...prev, [field]: value };
+    });
   };
 
   const handleItemFieldChange = (id, field, value) => {
@@ -679,8 +773,26 @@ const buildInspectionPayload = async (payload) => {
     setSubmitting(true);
     try {
       const payload = await buildInspectionPayload(newInspection);
-      await createInspection(payload);
+      const createResp = await createInspection(payload);
       toast.success("Inspection created");
+      
+      // Send approval email for walk-in customers
+      if (newInspection.order_type === "walk_in_customer" && createResp.order?._id) {
+        try {
+          await sendWalkInApprovalEmail(createResp.order._id, {
+            customerName: newInspection.customerName,
+            customerEmail: newInspection.customerEmail,
+            contractUrl: newInspection.signed_contract_file,
+          });
+          toast.success("Approval email sent to customer");
+        } catch (emailError) {
+          console.error("Failed to send approval email:", emailError);
+          toast("Inspection created, but email sending failed. You can send it manually.", {
+            icon: "⚠️",
+          });
+        }
+      }
+      
       closeNewInspectionModal();
       await fetchSiteInspections();
     } catch (err) {
@@ -1277,6 +1389,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                     <th className="p-4 text-left">Date Submitted</th>
                     <th className="p-4 text-left">Status</th>
                     <th className="p-4 text-left">Estimation</th>
+                    <th className="p-4 text-left">Contract</th>
                     <th className="p-4 text-center">Actions</th>
 
                   </tr>
@@ -1286,13 +1399,13 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                 <tbody>
                   {inspectionsLoading ? (
                     <tr>
-                      <td colSpan={10} className="p-8 text-center text-slate-500">
+                      <td colSpan={11} className="p-8 text-center text-slate-500">
                         Loading inspections...
                       </td>
                     </tr>
                   ) : !filteredList.length ? (
                     <tr>
-                      <td colSpan={10} className="p-8 text-center text-slate-500">
+                      <td colSpan={11} className="p-8 text-center text-slate-500">
                         No records in this tab.
                       </td>
                     </tr>
@@ -1335,6 +1448,20 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                             </span>
                           </td>
                           <td className="p-4 font-semibold text-green-600">{estimatedCost}</td>
+                          <td className="p-4">
+                            {inspection.acceptance_method === "walk_in_signed_contract" && inspection.signed_contract_url ? (
+                              <a
+                                href={inspection.signed_contract_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:text-blue-800 underline text-sm"
+                              >
+                                View Contract
+                              </a>
+                            ) : (
+                              <span className="text-gray-400 text-sm">—</span>
+                            )}
+                          </td>
                           <td className="p-4">
                             <div className="flex justify-center gap-3">
                               <button
@@ -1589,6 +1716,55 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                     </select>
                   </div>
                 </div>
+
+                {/* Walk-in Customer Fields */}
+                {newInspection.order_type === "walk_in_customer" && (
+                  <div className="mt-6 bg-blue-50 rounded-2xl p-4">
+                    <h3 className="font-semibold text-blue-900 mb-4">Walk-in Customer - Contract Information</h3>
+                    <div className="grid md:grid-cols-2 gap-6">
+                      <div className="md:col-span-2">
+                        <label className="block font-medium text-gray-700 mb-2">
+                          Signed Contract / Acceptance Form <span className="text-red-600">*</span>
+                        </label>
+                        <label className="block border-2 border-dashed rounded-xl p-4 text-center cursor-pointer hover:bg-gray-50">
+                          <input
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                            onChange={(e) => handleSignedContractUpload(e.target.files)}
+                            className="hidden"
+                            disabled={uploadingContractFile}
+                          />
+                          {uploadingContractFile ? (
+                            <p className="text-gray-600">Uploading...</p>
+                          ) : typeof newInspection.signed_contract_file === "string" && newInspection.signed_contract_file.trim() ? (
+                            <div>
+                              <p className="text-green-600 font-semibold">✓ File uploaded</p>
+                              <p className="text-sm text-gray-600 mt-1">{newInspection.signed_contract_file.split("/").pop()}</p>
+                            </div>
+                          ) : (
+                            <div>
+                              <p className="text-gray-700">📄 Upload PDF, JPG, or PNG</p>
+                              <p className="text-sm text-gray-600">Max 10 MB</p>
+                            </div>
+                          )}
+                        </label>
+                        {contractUploadError && <p className="mt-2 text-sm text-red-600">{contractUploadError}</p>}
+                        {errors.signed_contract_file && <p className="mt-2 text-sm text-red-600">{errors.signed_contract_file}</p>}
+                      </div>
+
+                      <div>
+                        <label className="block font-medium text-gray-700 mb-2">Date Signed</label>
+                        <input
+                          type="date"
+                          className="border rounded-xl p-3 w-full"
+                          value={newInspection.contract_signed_date}
+                          onChange={(e) => handleInspectionFieldChange("contract_signed_date", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <textarea
                   rows="4"
                   placeholder="Inspection Notes"
@@ -1823,6 +1999,51 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                       <p>{viewInspection.inspection_status || viewInspection.status || '—'}</p>
                     </div>
                   </div>
+
+                  {/* Acceptance Method Badge */}
+                  <div className="bg-gray-50 rounded-2xl p-4">
+                    <h3 className="font-semibold mb-2">Acceptance Method</h3>
+                    {viewInspection.acceptance_method === 'walk_in_signed_contract' ? (
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 bg-orange-500 rounded-full"></span>
+                        <span className="font-medium text-orange-700">Walk-in Signed Contract</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block w-3 h-3 bg-green-500 rounded-full"></span>
+                        <span className="font-medium text-green-700">Online Acceptance</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Walk-in Specific Details */}
+                  {viewInspection.acceptance_method === 'walk_in_signed_contract' && (
+                    <div className="bg-blue-50 rounded-2xl p-4">
+                      <h3 className="font-semibold text-blue-900 mb-3">Contract Details</h3>
+                      <div className="space-y-2 text-sm">
+                        {viewInspection.contract_number && (
+                          <div>
+                            <span className="font-semibold">Contract Number: </span>
+                            {viewInspection.contract_number}
+                          </div>
+                        )}
+                        {viewInspection.contract_signed_date && (
+                          <div>
+                            <span className="font-semibold">Date Signed: </span>
+                            {formatDateToMMDDYYYY(viewInspection.contract_signed_date)}
+                          </div>
+                        )}
+                        {viewInspection.signed_contract_url && (
+                          <div>
+                            <span className="font-semibold">Signed Contract: </span>
+                            <a href={viewInspection.signed_contract_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                              View/Download
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

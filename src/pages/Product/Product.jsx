@@ -3,7 +3,6 @@ import {
   Package,
   Plus,
   Search,
-  Eye,
   Loader2,
   Pencil,
   Trash2,
@@ -75,6 +74,38 @@ function Products() {
     }
     return PRODUCT_IMAGE_PLACEHOLDER;
   };
+
+  const getProductPriceLabel = (product) => {
+    const pricingMethod = product.pricing_method || PRICING_METHOD[product.product_name] || "";
+    const sqftPrice = Number(product.price_per_sqft || 0);
+    const bladePrice = Number(product.price_per_blade || 0);
+    const unitPrice = Number(product.unit_price || 0);
+
+    if (pricingMethod === "blade") {
+      if (bladePrice > 0) return `₱${bladePrice.toLocaleString()} / blade`;
+      if (unitPrice > 0) return `₱${unitPrice.toLocaleString()} / blade`;
+      return "Contact us / blade";
+    }
+
+    if (pricingMethod === "sqft") {
+      if (sqftPrice > 0) return `₱${sqftPrice.toLocaleString()} / sq ft`;
+      if (unitPrice > 0) return `₱${unitPrice.toLocaleString()} / sq ft`;
+      return "Contact us / sq ft";
+    }
+
+    if (pricingMethod === "fixed") {
+      if (unitPrice > 0) return `₱${unitPrice.toLocaleString()}`;
+      if (bladePrice > 0) return `₱${bladePrice.toLocaleString()} / blade`;
+      return "Contact us";
+    }
+
+    if (unitPrice > 0) {
+      return `₱${unitPrice.toLocaleString()}`;
+    }
+
+    return "Contact us";
+  };
+
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
       if (typeof window === "undefined") return true;
@@ -169,6 +200,9 @@ function Products() {
   const [uploading, setUploading] = useState(false);
   const [uploadCanceled, setUploadCanceled] = useState(false);
   const uploadRequestRef = useRef(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     const width = parseFloat(newProduct.width) || 0;
@@ -225,7 +259,7 @@ function Products() {
     ["bottom", "Bottom Angle"],
   ];
 
-  const rowsPerPage = 3;
+  const rowsPerPage = 5;
 
   const filteredProducts = products.filter((product) => {
     const normalizedSearch = search.toLowerCase();
@@ -274,6 +308,8 @@ function Products() {
     );
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / rowsPerPage));
+  const firstShown = filteredProducts.length === 0 ? 0 : firstIndex + 1;
+  const lastShown = Math.min(lastIndex, filteredProducts.length);
 
   const toggleProductStatus = async (product) => {
     try {
@@ -613,6 +649,29 @@ function Products() {
     }
   };
 
+  const openDeleteConfirm = (product) => {
+    setProductToDelete(product);
+    setDeleteConfirmOpen(true);
+  };
+
+  const closeDeleteConfirm = () => {
+    setProductToDelete(null);
+    setDeleteConfirmOpen(false);
+    setDeleteLoading(false);
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!productToDelete) return;
+    setDeleteLoading(true);
+    try {
+      await deleteProduct(productToDelete._id || productToDelete.id);
+      closeDeleteConfirm();
+    } catch (error) {
+      console.error("Delete product failed", error);
+      setDeleteLoading(false);
+    }
+  };
+
   const getProductType = (product) =>
     product.type ||
     (product.category?.toLowerCase() === "glass"
@@ -745,72 +804,87 @@ function Products() {
 
           {/* PRODUCTS */}
 
-          <div className="mt-6 grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-6">
             {currentProducts.length === 0 ? (
-              <div className="bg-white rounded-3xl p-10 shadow text-center col-span-full">
+              <div className="bg-white rounded-3xl p-10 shadow text-center">
                 <p className="text-gray-500">No products match the selected filters.</p>
               </div>
             ) : (
-                currentProducts.map((product) => {
-                const productType = getProductType(product);
-                
-                  const imageSrc = resolveProductImage(product);
-                return (
-                  <div key={product.id} className="group bg-white/5 border border-white/10 backdrop-blur-2xl rounded-[35px] overflow-hidden shadow-2xl">
-                    <div className="h-60 bg-gradient-to-br from-blue-600/20 to-white/5">
-                      <img
-                        src={imageSrc}
-                        alt={product.name}
-                        className="h-full w-full object-cover"
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
-                        }}
-                      />
-                    </div>
-
-                    <div className="p-8">
-                      <div className="flex items-center justify-between gap-4 mb-6">
-                        <div>
-                          <p className="text-sm text-gray-500">{product.category || "Uncategorized"}</p>
-                          <h3 className="text-2xl font-bold text-gray-900 mt-2">{product.name}</h3>
-                        </div>
-                        <span className={`rounded-full px-3 py-1 text-sm font-semibold ${product.is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"}`}>
-                          {product.is_active ? "Active" : "Inactive"}
-                        </span>
-                      </div>
-
-                      <p className="text-gray-500 leading-7 line-clamp-3">{product.description || "No description available."}</p>
-
-                      <div className="mt-8 rounded-3xl bg-white/90 border border-gray-200 p-5">
-                        <p className="text-xs uppercase text-gray-500">Type</p>
-                        <p className="mt-2 font-semibold text-gray-900">{productType}</p>
-                      </div>
-
-                      <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        {isAdmin ? (
-                          <div className="flex flex-wrap gap-3">
-                            <button
-                              onClick={() => openModal(product)}
-                              className="rounded-2xl border border-red-200 bg-red-600 px-4 py-3 text-sm font-semibold text-white hover:bg-red-700"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => deleteProduct(product.id)}
-                              className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-100"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-gray-500">Admin-only actions are hidden for your account.</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
+              <div className="overflow-x-auto rounded-3xl border border-gray-200 bg-white shadow-sm">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">No.</th>
+                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Product</th>
+                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Category</th>
+                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Variant</th>
+                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Price</th>
+                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Status</th>
+                      <th className="px-4 py-4 text-right text-sm font-bold uppercase tracking-wider text-gray-900">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 bg-white">
+                    {currentProducts.map((product, index) => {
+                      const imageSrc = resolveProductImage(product);
+                      const productName = product.product_name || product.name;
+                      const productType = product.product_type || "Default Type";
+                      const rowNumber = firstIndex + index + 1;
+                      return (
+                        <tr key={product._id || product.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{rowNumber}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-3">
+                              <div className="h-14 w-14 overflow-hidden rounded-2xl bg-gray-100">
+                                <img
+                                  src={imageSrc}
+                                  alt={productName}
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null;
+                                    e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <div className="text-sm font-semibold text-gray-900">{productName}</div>
+                                <div className="text-xs text-gray-500">{productType}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.category || "—"}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.variant || "—"}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{getProductPriceLabel(product)}</td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${product.is_active ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-700"}`}>
+                              {product.is_active ? "Active" : "Inactive"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                className="p-2 rounded-lg text-orange-500 hover:bg-orange-50 transition"
+                                onClick={() => openModal(product)}
+                                title="Edit product"
+                                aria-label="Edit product"
+                              >
+                                <Pencil size={20} />
+                              </button>
+                              <button
+                                className="p-2 rounded-lg text-red-600 hover:bg-red-50 transition"
+                                onClick={() => openDeleteConfirm(product)}
+                                title="Delete product"
+                                aria-label="Delete product"
+                              >
+                                <Trash2 size={20} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
@@ -818,7 +892,7 @@ function Products() {
 
           <div className="mt-6 flex flex-col gap-4 items-center sm:flex-row sm:justify-center sm:items-center">
             <span className="text-gray-500 text-center">
-              Showing {currentProducts.length} of {filteredProducts.length} products
+              Showing {firstShown}-{lastShown} of {filteredProducts.length} products
             </span>
             <div className="flex flex-wrap gap-2 justify-center">
               <button
@@ -1031,6 +1105,7 @@ function Products() {
                       <option>Shower Enclosures</option>
                       <option>Aluminum</option>
                       <option>Glass</option>
+                      <option>Accessories</option>
                     </select>
                   </div>
 
@@ -1141,6 +1216,35 @@ function Products() {
 
         </div>
 
+      )}
+
+      {deleteConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
+            <h3 className="text-xl font-semibold mb-3">Confirm Delete</h3>
+            <p className="text-gray-600 mb-4">
+              Are you sure you want to delete <strong>{productToDelete?.product_name || productToDelete?.name}</strong>?
+              This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeDeleteConfirm}
+                className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteProduct}
+                disabled={deleteLoading}
+                className="rounded-2xl bg-red-600 px-4 py-3 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {deleteLoading ? "Deleting..." : "Delete product"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

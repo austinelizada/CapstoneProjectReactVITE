@@ -16,12 +16,8 @@ function Navbar({ toggleSidebar }) {
 
         <div>
           <h1 className="text-xl font-bold">
-            Dashboard
-          </h1>
-
-          <p className="text-sm text-gray-500">
             Welcome Administrator
-          </p>
+          </h1>
         </div>
 
       </div>

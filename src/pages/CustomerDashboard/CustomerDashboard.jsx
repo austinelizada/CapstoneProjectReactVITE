@@ -115,6 +115,7 @@ function CustomerDashboard() {
   const [activeTab, setActiveTab] = useState("products");
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("All");
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [productError, setProductError] = useState("");
 
@@ -155,6 +156,16 @@ function CustomerDashboard() {
   const [orderReviewAgreed, setOrderReviewAgreed] = useState(false);
   const [reviewOrderMode, setReviewOrderMode] = useState("estimate");
   const [estimateFlowType, setEstimateFlowType] = useState(null);
+  const [showDeliveryConfirmModal, setShowDeliveryConfirmModal] = useState(false);
+  const [deliveryConfirmMode, setDeliveryConfirmMode] = useState("estimate");
+  const [deliveryConfirmForm, setDeliveryConfirmForm] = useState({
+    phone: "",
+    street_address: "",
+    city: "",
+    province: "",
+    zip_code: "",
+  });
+  const [deliveryConfirmError, setDeliveryConfirmError] = useState("");
   const [showOrderNowModal, setShowOrderNowModal] = useState(false);
   const [orderNowProduct, setOrderNowProduct] = useState(null);
   const [orderNowQuantity, setOrderNowQuantity] = useState(1);
@@ -174,7 +185,10 @@ function CustomerDashboard() {
     last_name: "",
     phone: "",
     email: "",
-    address: "",
+    street_address: "",
+    city: "",
+    province: "",
+    zip_code: "",
     current_password: "",
     new_password: "",
     confirm_password: "",
@@ -204,10 +218,20 @@ function CustomerDashboard() {
         last_name: user.last_name || "",
         phone: user.phone || "",
         email: user.email || "",
-        address: buildFullAddress(user) || "",
+        street_address: user.street_address || "",
+        city: user.city || "",
+        province: user.province || "",
+        zip_code: user.zip_code || "",
         current_password: "",
         new_password: "",
         confirm_password: "",
+      });
+      setDeliveryConfirmForm({
+        phone: user.phone || "",
+        street_address: user.street_address || "",
+        city: user.city || "",
+        province: user.province || "",
+        zip_code: user.zip_code || "",
       });
     }
   }, [user]);
@@ -222,7 +246,12 @@ function CustomerDashboard() {
     const storedCart = localStorage.getItem("customerCart");
     if (storedCart) {
       try {
-        setCartItems(JSON.parse(storedCart));
+        const cart = JSON.parse(storedCart);
+        setCartItems(
+          Array.isArray(cart)
+            ? cart.map((item) => ({ ...item, selected: item.selected !== false }))
+            : []
+        );
       } catch (error) {
         console.warn("Unable to parse saved cart", error);
       }
@@ -245,6 +274,15 @@ function CustomerDashboard() {
   useEffect(() => {
     localStorage.setItem("customerCart", JSON.stringify(cartItems));
   }, [cartItems]);
+
+  const selectedCartItems = cartItems.filter((item) => item.selected);
+  const selectedItemCount = selectedCartItems.length;
+  const selectedQuantityTotal = selectedCartItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+  const selectedSubtotal = selectedCartItems.reduce((sum, item) => {
+    const itemPrice = item.is_estimate ? Number(item.estimated_price || 0) : Number(item.unit_price || 0) * (Number(item.quantity) || 0);
+    return sum + itemPrice;
+  }, 0);
+  const allSelected = cartItems.length > 0 && selectedItemCount === cartItems.length;
 
   useEffect(() => {
     if (selectedOrderForModal) {
@@ -276,7 +314,10 @@ function CustomerDashboard() {
       setProductError("");
 
       try {
-        const response = await getProducts({ search: searchQuery });
+        const response = await getProducts({
+          search: searchQuery,
+          category: categoryFilter && categoryFilter !== "All" ? categoryFilter : undefined,
+        });
         if (!active) return;
         setProducts(response.products || []);
       } catch (error) {
@@ -292,7 +333,7 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, [searchQuery]);
+  }, [searchQuery, categoryFilter]);
 
   useEffect(() => {
     if (!user) return;
@@ -326,10 +367,10 @@ function CustomerDashboard() {
       const existing = prev.find((p) => !p.is_estimate && (p._id === product._id || p.name === product.name));
       if (existing) {
         return prev.map((p) =>
-          p.cartId === existing.cartId ? { ...p, quantity: p.quantity + 1 } : p
+          p.cartId === existing.cartId ? { ...p, quantity: p.quantity + 1, selected: true } : p
         );
       }
-      return [...prev, { ...product, quantity: 1, cartId: generateCartId() }];
+      return [...prev, { ...product, quantity: 1, cartId: generateCartId(), selected: true }];
     });
   };
 
@@ -368,6 +409,7 @@ function CustomerDashboard() {
         notes: notes || "",
         estimated_price,
         is_estimate: true,
+        selected: true,
       },
     ]);
   };
@@ -447,9 +489,61 @@ function CustomerDashboard() {
       // Add to Cart → Estimate First → Add to Cart Only
       handleEstimateAddToCart();
     } else {
-      // Estimate Product → Continue to Order Review
-      setReviewOrderMode("estimate");
-      openOrderReviewModal();
+      // Estimate Product → Continue to Delivery Confirmation
+      setDeliveryConfirmMode("estimate");
+      setDeliveryConfirmForm({
+        phone: profileForm.phone || "",
+        street_address: profileForm.street_address || "",
+        city: profileForm.city || "",
+        province: profileForm.province || "",
+        zip_code: profileForm.zip_code || "",
+      });
+      setDeliveryConfirmError("");
+      setShowDeliveryConfirmModal(true);
+      setShowCartDecisionModal(false);
+    }
+  };
+
+  const saveProfileDeliveryInfo = async () => {
+    try {
+      const payload = {
+        phone: deliveryConfirmForm.phone || profileForm.phone || "",
+        street_address: deliveryConfirmForm.street_address || profileForm.street_address || "",
+        city: deliveryConfirmForm.city || profileForm.city || "",
+        province: deliveryConfirmForm.province || profileForm.province || "",
+        zip_code: deliveryConfirmForm.zip_code || profileForm.zip_code || "",
+      };
+
+      await updateProfile(payload);
+      setProfileForm((prev) => ({ ...prev, ...payload }));
+    } catch (error) {
+      console.error("Failed to update profile delivery info", error);
+    }
+  };
+
+  const validateDeliveryConfirmForm = () => {
+    if (!deliveryConfirmForm.street_address.trim() || !deliveryConfirmForm.phone.trim() || !deliveryConfirmForm.city.trim() || !deliveryConfirmForm.province.trim()) {
+      setDeliveryConfirmError("Please complete your delivery information before proceeding.");
+      return false;
+    }
+    setDeliveryConfirmError("");
+    return true;
+  };
+
+  const handleConfirmAndContinue = async () => {
+    if (!validateDeliveryConfirmForm()) return;
+    setOrderRequestLoading(true);
+
+    try {
+      await saveProfileDeliveryInfo();
+      setShowDeliveryConfirmModal(false);
+      setReviewOrderMode(deliveryConfirmMode);
+      setOrderReviewAgreed(false);
+      setShowOrderReviewModal(true);
+    } catch (error) {
+      setDeliveryConfirmError("Unable to save delivery information. Please try again.");
+    } finally {
+      setOrderRequestLoading(false);
     }
   };
 
@@ -502,7 +596,11 @@ function CustomerDashboard() {
 
         const response = await createOrder({
           items: [item],
-          shipping_address: normalizeAddress(profileForm.address || buildFullAddress(user)),
+          shipping_address: normalizeAddress(
+            [deliveryConfirmForm.street_address, deliveryConfirmForm.city, deliveryConfirmForm.province, deliveryConfirmForm.zip_code]
+              .filter(Boolean)
+              .join(", ") || buildFullAddress(user)
+          ),
           order_type: "online_order",
         });
 
@@ -630,6 +728,18 @@ function CustomerDashboard() {
     setCartItems((prev) => prev.filter((item) => item.cartId !== cartId));
   };
 
+  const handleToggleCartItem = (cartId) => {
+    setCartItems((prev) =>
+      prev.map((item) =>
+        item.cartId === cartId ? { ...item, selected: !item.selected } : item
+      )
+    );
+  };
+
+  const handleSelectAllCartItems = (selected) => {
+    setCartItems((prev) => prev.map((item) => ({ ...item, selected })));
+  };
+
   const handleUpdateCartQuantity = (cartId, delta) => {
     setCartItems((prev) =>
       prev
@@ -676,10 +786,16 @@ function CustomerDashboard() {
 
   const openOrderNowReviewModal = () => {
     if (!orderNowProduct) return;
-    setReviewOrderMode("orderNow");
-    setOrderReviewAgreed(false);
-    setCartActionError("");
-    setShowOrderReviewModal(true);
+    setDeliveryConfirmMode("orderNow");
+    setDeliveryConfirmForm({
+      phone: profileForm.phone || "",
+      street_address: profileForm.street_address || "",
+      city: profileForm.city || "",
+      province: profileForm.province || "",
+      zip_code: profileForm.zip_code || "",
+    });
+    setDeliveryConfirmError("");
+    setShowDeliveryConfirmModal(true);
     setShowOrderNowModal(false);
   };
 
@@ -705,7 +821,11 @@ function CustomerDashboard() {
 
     const response = await createOrder({
       items: [item],
-      shipping_address: normalizeAddress(profileForm.address || buildFullAddress(user)),
+      shipping_address: normalizeAddress(
+        [deliveryConfirmForm.street_address, deliveryConfirmForm.city, deliveryConfirmForm.province, deliveryConfirmForm.zip_code]
+          .filter(Boolean)
+          .join(", ") || buildFullAddress(user)
+      ),
       order_type: "online_order",
     });
 
@@ -717,6 +837,24 @@ function CustomerDashboard() {
 
   const handleOrderNow = (product) => {
     openOrderNowModal(product);
+  };
+
+  const handleDeliveryConfirmChange = (e) => {
+    const { name, value } = e.target;
+    setDeliveryConfirmForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const handleCancelDeliveryConfirm = () => {
+    setDeliveryConfirmError("");
+    setShowDeliveryConfirmModal(false);
+    if (deliveryConfirmMode === "orderNow") {
+      setShowOrderNowModal(true);
+    } else if (deliveryConfirmMode === "estimate") {
+      setShowCartDecisionModal(true);
+    }
   };
 
   const handleTrackingSubmit = async () => {
@@ -742,7 +880,11 @@ function CustomerDashboard() {
     if (!user) return false;
 
     const currentAddress = buildFullAddress(user);
-    const profileAddress = normalizeAddress(profileForm.address || "");
+    const profileAddress = normalizeAddress(
+      [profileForm.street_address, profileForm.city, profileForm.province, profileForm.zip_code]
+        .filter(Boolean)
+        .join(", ") || ""
+    );
 
     return (
       profileForm.first_name.trim() !== (user.first_name || "") ||
@@ -788,7 +930,10 @@ function CustomerDashboard() {
         first_name: profileForm.first_name,
         last_name: profileForm.last_name,
         phone: profileForm.phone,
-        street_address: profileForm.address,
+        street_address: profileForm.street_address,
+        city: profileForm.city,
+        province: profileForm.province,
+        zip_code: profileForm.zip_code,
         current_password: profileForm.current_password,
       };
 
@@ -796,7 +941,7 @@ function CustomerDashboard() {
         payload.new_password = profileForm.new_password;
       }
 
-      payload.street_address = normalizeAddress(profileForm.address || "");
+      payload.street_address = normalizeAddress(profileForm.street_address || "");
       const response = await updateProfile(payload);
 
       setProfileMessage("Profile updated successfully.");
@@ -840,12 +985,17 @@ function CustomerDashboard() {
       return;
     }
 
+    if (selectedItemCount === 0) {
+      setCheckoutError("Please select at least one product before proceeding to checkout.");
+      return;
+    }
+
     setCheckoutError("");
     setCheckoutMessage("");
     setCheckoutLoading(true);
     try {
       const response = await createOrder({
-        items: cartItems.map((item) => ({
+        items: selectedCartItems.map((item) => ({
           _id: item._id,
           name: item.name,
           quantity: item.quantity,
@@ -858,11 +1008,15 @@ function CustomerDashboard() {
           estimated_price: item.estimated_price || null,
           notes: item.notes || "",
         })),
-        shipping_address: normalizeAddress(profileForm.address || buildFullAddress(user)),
+        shipping_address: normalizeAddress(
+          [profileForm.street_address, profileForm.city, profileForm.province, profileForm.zip_code]
+            .filter(Boolean)
+            .join(", ") || buildFullAddress(user)
+        ),
       });
 
       setCheckoutMessage(`Order placed successfully. Tracking ID: ${response.order.tracking}`);
-      setCartItems([]);
+      setCartItems((prev) => prev.filter((item) => !item.selected));
       setOrders((prev) => [response.order, ...prev]);
     } catch (error) {
       setCheckoutError(error.data?.message || error.message || "Failed to place order.");
@@ -1159,8 +1313,30 @@ function CustomerDashboard() {
   const estimateTotalArea = estimateArea;
   const estimateUnitRate = estimateResult.rate || 0;
   const estimateTotalCost = estimateResult.estimated_price || 0;
-  const orderSuccessTotal = orderSuccessData?.total_amount || estimateTotalCost;
-  const estimateRows = estimateWidth > 0 && estimateHeight > 0 ? 1 : 0;
+  const estimateCustomizationFee = cartDecisionProduct?.customization ? Number(cartDecisionProduct.customization_fee || 0) : 0;
+  const estimateInstallationFee = Number(cartDecisionProduct?.installation_fee || 0);
+  const estimateSubtotal = Math.max(0, estimateTotalCost - estimateCustomizationFee);
+  const estimateGrandTotal = estimateTotalCost + estimateInstallationFee;
+  const orderNowSubtotal = orderNowProduct ? Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0) : 0;
+  const orderNowAdditionalCharges = Number(orderNowProduct?.customization_fee || 0);
+  const orderNowInstallationFee = Number(orderNowProduct?.installation_fee || 0);
+  const orderNowGrandTotal = orderNowSubtotal + orderNowAdditionalCharges + orderNowInstallationFee;
+  const orderNowTotal = orderNowGrandTotal;
+  const confirmProduct = deliveryConfirmMode === "orderNow" ? orderNowProduct : cartDecisionProduct;
+  const confirmQuantity = deliveryConfirmMode === "orderNow" ? Math.max(1, Number(orderNowQuantity) || 1) : estimateQuantity;
+  const confirmWidth = deliveryConfirmMode === "orderNow" ? orderNowProduct?.width || orderNowProduct?.dimensions?.split("×")?.[0]?.trim() || "—" : estimateWidth ? `${estimateWidth}"` : "—";
+  const confirmHeight = deliveryConfirmMode === "orderNow" ? orderNowProduct?.height || orderNowProduct?.dimensions?.split("×")?.[1]?.trim() || "—" : estimateHeight ? `${estimateHeight}"` : "—";
+  const confirmPrice = deliveryConfirmMode === "orderNow" ? orderNowSubtotal : estimateTotalCost;
+  const confirmSubtotal = deliveryConfirmMode === "orderNow" ? orderNowSubtotal : estimateSubtotal;
+  const confirmAdditionalCharges = deliveryConfirmMode === "orderNow" ? orderNowAdditionalCharges : estimateCustomizationFee;
+  const confirmInstallationFee = deliveryConfirmMode === "orderNow" ? orderNowInstallationFee : estimateInstallationFee;
+  const confirmGrandTotal = deliveryConfirmMode === "orderNow" ? orderNowGrandTotal : estimateGrandTotal;
+  const isDeliveryConfirmValid = Boolean(
+    deliveryConfirmForm.phone.trim() &&
+    deliveryConfirmForm.street_address.trim() &&
+    deliveryConfirmForm.city.trim() &&
+    deliveryConfirmForm.province.trim()
+  );
 
   const cartQuantity = cartItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
 
@@ -1387,9 +1563,33 @@ function CustomerDashboard() {
                   <h2 className="text-3xl font-bold">Products</h2>
                   <p className="text-gray-500">Browse available aluminum & glass products</p>
                 </div>
-                <div className="relative max-w-md w-full">
-                  <Search size={18} className="absolute left-3 top-3 text-gray-400" />
-                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search products..." className="w-full pl-10 pr-4 py-3 border rounded-2xl" />
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end w-full max-w-3xl">
+                  <div className="relative w-full sm:w-80">
+                    <Search size={18} className="absolute left-3 top-3 text-gray-400" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search products..."
+                      className="w-full pl-10 pr-4 py-3 border rounded-2xl"
+                    />
+                  </div>
+                  <div className="w-full sm:w-56">
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value)}
+                      className="w-full border rounded-2xl py-3 px-4"
+                    >
+                      <option value="All">All categories</option>
+                        <option value="Windows">Windows</option>
+                        <option value="Doors">Doors</option>
+                        <option value="Cabinets">Cabinets</option>
+                        <option value="Shower Enclosures">Shower Enclosures</option>
+                        <option value="Aluminum">Aluminum</option>
+                        <option value="Glass">Glass</option>
+                        <option value="Accessories">Accessories</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -1400,7 +1600,7 @@ function CustomerDashboard() {
               ) : products.length === 0 ? (
                 <div className="rounded-3xl bg-white p-10 text-center shadow"><p className="text-gray-600">No products matched your search.</p></div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                   {products.map((product) => (
                     <div key={product._id || product.name} className="bg-white rounded-3xl shadow-lg overflow-hidden hover:shadow-2xl transition">
                       <div className="h-52 overflow-hidden bg-red-50">
@@ -1829,6 +2029,192 @@ function CustomerDashboard() {
               </div>
             )}
 
+            {showDeliveryConfirmModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+                <div className="w-full max-w-5xl rounded-3xl bg-white shadow-2xl overflow-hidden max-h-[95vh] flex flex-col">
+                  <div className="flex-shrink-0 bg-gradient-to-r from-red-700 via-red-600 to-orange-500 px-6 py-5 text-white">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-xl font-bold">Confirm Delivery Information</h3>
+                        <p className="text-sm text-red-100 mt-1">Review your delivery details and order preview before moving to the final order summary.</p>
+                      </div>
+                      <span className="inline-flex items-center rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-white">
+                        {deliveryConfirmMode === "orderNow" ? "Order Now" : "Estimate Product"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-red-100 mt-2">Fields marked <span className="font-bold">*</span> are required.</p>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto">
+                    <div className="grid gap-6 lg:grid-cols-[1.2fr_0.9fr] bg-slate-50 p-6 min-h-0">
+                      <div className="space-y-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <h4 className="text-lg font-semibold text-gray-900">Customer Information</h4>
+                            <p className="text-sm text-gray-500 mt-1">Verify your contact and delivery address before continuing.</p>
+                          </div>
+                          {!isDeliveryConfirmValid && (
+                            <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">Incomplete required fields</span>
+                          )}
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Full Name</label>
+                            <p className="mt-2 text-gray-900">{`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "N/A"}</p>
+                          </div>
+                          <div>
+                            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Email Address</label>
+                            <p className="mt-2 text-gray-900">{profileForm.email || user?.email || "N/A"}</p>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Contact Number <span className="text-red-600">*</span></label>
+                            <input
+                              name="phone"
+                              type="text"
+                              value={deliveryConfirmForm.phone}
+                              onChange={handleDeliveryConfirmChange}
+                              className="mt-2 w-full rounded-2xl border border-gray-300 bg-gray-50 px-4 py-3 text-gray-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="rounded-3xl border border-gray-200 bg-gray-50 p-4">
+                          <h4 className="text-sm font-semibold uppercase tracking-[0.2em] text-gray-500">Delivery Address</h4>
+                          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                            <div className="sm:col-span-2">
+                              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Street Address <span className="text-red-600">*</span></label>
+                              <input
+                                name="street_address"
+                                type="text"
+                                value={deliveryConfirmForm.street_address}
+                                onChange={handleDeliveryConfirmChange}
+                                className="mt-2 w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">City <span className="text-red-600">*</span></label>
+                              <input
+                                name="city"
+                                type="text"
+                                value={deliveryConfirmForm.city}
+                                onChange={handleDeliveryConfirmChange}
+                                className="mt-2 w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Province <span className="text-red-600">*</span></label>
+                              <input
+                                name="province"
+                                type="text"
+                                value={deliveryConfirmForm.province}
+                                onChange={handleDeliveryConfirmChange}
+                                className="mt-2 w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">Zip Code</label>
+                              <input
+                                name="zip_code"
+                                type="text"
+                                value={deliveryConfirmForm.zip_code}
+                                onChange={handleDeliveryConfirmChange}
+                                className="mt-2 w-full rounded-2xl border border-gray-300 bg-white px-4 py-3 text-gray-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {deliveryConfirmError && (
+                          <div className="rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-700">
+                            Please complete your delivery information before proceeding.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+                        <div className="flex items-start gap-4">
+                          <div className="h-24 w-24 overflow-hidden rounded-3xl border border-gray-200 bg-gray-100">
+                            <img
+                              src={getProductImage(confirmProduct)}
+                              alt={confirmProduct?.name || "Product preview"}
+                              className="h-full w-full object-cover"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm uppercase tracking-[0.2em] text-gray-500">Order Preview</p>
+                            <h4 className="text-xl font-semibold text-gray-900 mt-2">{confirmProduct?.name || "Product details"}</h4>
+                            <p className="mt-1 text-sm text-gray-600">{confirmProduct?.product_type || confirmProduct?.category || "Product"}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-6 space-y-4">
+                          <div className="rounded-3xl bg-slate-50 p-4 border border-slate-200">
+                            <p className="text-sm font-semibold text-gray-700 mb-3">Product Details</p>
+                            <div className="grid gap-3 text-sm text-gray-700 sm:grid-cols-2">
+                              <div>
+                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Quantity</p>
+                                <p className="mt-2 font-semibold text-gray-900">{confirmQuantity}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Unit Price</p>
+                                <p className="mt-2 font-semibold text-gray-900">{formatCurrency(deliveryConfirmMode === "orderNow" ? Number(orderNowProduct?.unit_price || orderNowProduct?.price_per_sqft || 0) : estimateUnitRate)}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Width</p>
+                                <p className="mt-2 font-semibold text-gray-900">{confirmWidth}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Height</p>
+                                <p className="mt-2 font-semibold text-gray-900">{confirmHeight}</p>
+                              </div>
+                              <div className="sm:col-span-2">
+                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Color / Variant</p>
+                                <p className="mt-2 font-semibold text-gray-900">{confirmProduct?.variant || confirmProduct?.color || "Standard"}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-3xl bg-slate-50 p-4 border border-slate-200">
+                            <p className="text-sm font-semibold text-gray-700 mb-3">Pricing Breakdown</p>
+                            <div className="space-y-3 text-sm text-gray-700">
+                              <div className="flex items-center justify-between">
+                                <span>Subtotal</span>
+                                <span className="font-semibold text-gray-900">{formatCurrency(confirmSubtotal)}</span>
+                              </div>
+                              
+                              <div className="border-t border-gray-200 pt-3 flex items-center justify-between text-base font-semibold text-gray-900">
+                                <span>Total</span>
+                                <span>{formatCurrency(confirmGrandTotal)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="sticky bottom-0 z-10 flex justify-end gap-3 border-t border-gray-200 bg-gray-50 px-6 py-4">
+                    <button
+                      type="button"
+                      onClick={handleCancelDeliveryConfirm}
+                      className="rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-100 transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmAndContinue}
+                      disabled={!isDeliveryConfirmValid || orderRequestLoading}
+                      className="rounded-xl bg-gradient-to-r from-red-600 to-red-700 px-5 py-3 text-sm font-semibold text-white hover:from-red-700 hover:to-red-800 transition shadow-lg disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      Confirm & Continue
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {showOrderNowModal && orderNowProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
                 <div className="w-full max-w-3xl rounded-3xl bg-white shadow-2xl overflow-hidden">
@@ -1967,6 +2353,33 @@ function CustomerDashboard() {
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100">
+                    <div className="rounded-3xl border border-gray-200 bg-white p-4">
+                      <p className="text-sm font-semibold text-gray-700 mb-4">Customer Information</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl bg-gray-50 p-4 border border-gray-200">
+                          <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Full Name</p>
+                          <p className="mt-2 font-semibold text-gray-900">{`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "N/A"}</p>
+                        </div>
+                        <div className="rounded-2xl bg-gray-50 p-4 border border-gray-200">
+                          <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Email Address</p>
+                          <p className="mt-2 font-semibold text-gray-900">{profileForm.email || user?.email || "N/A"}</p>
+                        </div>
+                        <div className="rounded-2xl bg-gray-50 p-4 border border-gray-200">
+                          <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Contact Number</p>
+                          <p className="mt-2 font-semibold text-gray-900">{deliveryConfirmForm.phone || profileForm.phone || user?.phone || "N/A"}</p>
+                        </div>
+                        <div className="rounded-2xl bg-gray-50 p-4 border border-gray-200">
+                          <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Delivery Address</p>
+                          <p className="mt-2 font-semibold text-gray-900">{normalizeAddress([
+                            deliveryConfirmForm.street_address || profileForm.street_address,
+                            deliveryConfirmForm.city || profileForm.city,
+                            deliveryConfirmForm.province || profileForm.province,
+                            deliveryConfirmForm.zip_code || profileForm.zip_code,
+                          ].filter(Boolean).join(", ")) || "N/A"}</p>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="rounded-3xl border border-gray-200 bg-white p-4">
                       <p className="text-sm font-semibold text-gray-700 mb-4">Order Details</p>
                       <div className="grid gap-3 sm:grid-cols-2">
@@ -2558,44 +2971,91 @@ function CustomerDashboard() {
               <div className="rounded-full bg-red-100 px-4 py-2 text-red-700">{cartQuantity} item{cartQuantity === 1 ? "" : "s"}</div>
             </div>
             {cartItems.length === 0 ? (<div className="mt-10 text-center text-gray-600">Your cart is empty. Add a product to start shopping.</div>) : (<>
-              <div className="mt-8 space-y-4">
-                {cartItems.map((item) => (
-                  <div key={item.cartId || item._id || item.name} className="flex flex-col gap-4 rounded-3xl border border-gray-200 p-5 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="font-semibold">{item.name}</p>
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-500">
-                        <span>Qty: {item.quantity}</span>
-                        {item.is_estimate && item.width && item.height && (
-                          <span>Measurements: {item.width} x {item.height}</span>
-                        )}
-                      </div>
-                      <p className="mt-2 text-sm text-gray-500">
-                        {item.is_estimate ? `₱${Number(item.estimated_price || 0).toLocaleString()} (estimated)` : getProductPrice(item)}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <div className="inline-flex overflow-hidden rounded-full border border-gray-200">
-                        <button
-                          onClick={() => handleUpdateCartQuantity(item.cartId, -1)}
-                          className="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200"
-                        >
-                          −
-                        </button>
-                        <div className="px-4 py-2 bg-white text-sm font-semibold">{item.quantity}</div>
-                        <button
-                          onClick={() => handleUpdateCartQuantity(item.cartId, 1)}
-                          className="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200"
-                        >
-                          +
-                        </button>
-                      </div>
-                      <button onClick={() => handleRemoveFromCart(item.cartId)} className="rounded-2xl border border-red-200 px-4 py-2 text-red-600 hover:bg-red-50">Remove</button>
-                    </div>
+              <div className="mt-8 rounded-3xl border border-gray-200 bg-gray-50 p-4">
+                <div className="flex flex-col gap-4 rounded-3xl bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                  <label className="inline-flex items-center gap-3 text-sm font-semibold text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={(e) => handleSelectAllCartItems(e.target.checked)}
+                      className="h-5 w-5 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                    />
+                    Select All ({cartItems.length} Item{cartItems.length === 1 ? "" : "s"})
+                  </label>
+                  <div className="text-sm text-gray-600">
+                    Selected: {selectedItemCount} of {cartItems.length} Item{cartItems.length === 1 ? "" : "s"}
                   </div>
-                ))}
+                </div>
+                <div className="mt-4 space-y-4">
+                  {cartItems.map((item) => (
+                    <div key={item.cartId || item._id || item.name} className="flex flex-col gap-4 rounded-3xl border border-gray-200 bg-white p-5 md:flex-row md:items-center md:justify-between">
+                      <div className="flex items-start gap-4">
+                        <label className="inline-flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(item.selected)}
+                            onChange={() => handleToggleCartItem(item.cartId)}
+                            className="h-5 w-5 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                          />
+                        </label>
+                        <div className="flex items-center gap-4">
+                          <div className="h-20 w-20 overflow-hidden rounded-3xl border border-gray-200 bg-gray-100">
+                            <img src={getProductImage(item)} alt={item.name} className="h-full w-full object-cover" />
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-900">{item.name}</p>
+                            <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-500">
+                              <span>Qty: {item.quantity}</span>
+                              {item.is_estimate && item.width && item.height && (
+                                <span>Measurements: {item.width} x {item.height}</span>
+                              )}
+                            </div>
+                            <p className="mt-2 text-sm text-gray-500">
+                              {item.is_estimate ? `₱${Number(item.estimated_price || 0).toLocaleString()} (estimated)` : getProductPrice(item)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="inline-flex overflow-hidden rounded-full border border-gray-200">
+                          <button
+                            onClick={() => handleUpdateCartQuantity(item.cartId, -1)}
+                            className="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200"
+                          >
+                            −
+                          </button>
+                          <div className="px-4 py-2 bg-white text-sm font-semibold">{item.quantity}</div>
+                          <button
+                            onClick={() => handleUpdateCartQuantity(item.cartId, 1)}
+                            className="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200"
+                          >
+                            +
+                          </button>
+                        </div>
+                        <button onClick={() => handleRemoveFromCart(item.cartId)} className="rounded-2xl border border-red-200 px-4 py-2 text-red-600 hover:bg-red-50">Remove</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
               {checkoutError && <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">{checkoutError}</div>}
               {checkoutMessage && <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-700">{checkoutMessage}</div>}
+              <div className="mt-6 rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl bg-gray-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Selected Products</p>
+                    <p className="mt-2 text-lg font-semibold text-gray-900">{selectedItemCount}</p>
+                  </div>
+                  <div className="rounded-2xl bg-gray-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Total Quantity</p>
+                    <p className="mt-2 text-lg font-semibold text-gray-900">{selectedQuantityTotal}</p>
+                  </div>
+                  <div className="rounded-2xl bg-gray-50 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Estimated Total</p>
+                    <p className="mt-2 text-lg font-semibold text-gray-900">{formatCurrency(selectedSubtotal)}</p>
+                  </div>
+                </div>
+              </div>
               <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <button
                   onClick={handleClearCart}
@@ -2881,13 +3341,49 @@ function CustomerDashboard() {
                       </div>
 
                       <div className="md:col-span-2">
-                        <label className="text-sm font-medium text-gray-600">Full Address</label>
+                        <label className="text-sm font-medium text-gray-600">Street Address</label>
                         <input
                           type="text"
-                          name="address"
-                          value={profileForm.address}
+                          name="street_address"
+                          value={profileForm.street_address}
                           onChange={handleProfileChange}
-                          placeholder="Full address"
+                          placeholder="Street address"
+                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-sm font-medium text-gray-600">City</label>
+                        <input
+                          type="text"
+                          name="city"
+                          value={profileForm.city}
+                          onChange={handleProfileChange}
+                          placeholder="City"
+                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-sm font-medium text-gray-600">Province</label>
+                        <input
+                          type="text"
+                          name="province"
+                          value={profileForm.province}
+                          onChange={handleProfileChange}
+                          placeholder="Province"
+                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="text-sm font-medium text-gray-600">Zip Code</label>
+                        <input
+                          type="text"
+                          name="zip_code"
+                          value={profileForm.zip_code}
+                          onChange={handleProfileChange}
+                          placeholder="Zip Code"
                           className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
                         />
                       </div>
