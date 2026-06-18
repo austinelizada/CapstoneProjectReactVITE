@@ -221,12 +221,19 @@ function Dashboard() {
   };
 
   const handleRejectOrder = async (order) => {
-    if (!window.confirm("Are you sure you want to reject this order?")) return;
     setActionLoading(true);
     setActionMessage("");
+
     try {
-      console.log("Rejecting order:", order._id);
-      const successMessage = "Order rejected.";
+      await updateOrderStatus(order._id, { status: "cancelled" });
+
+      setOrders((prev) =>
+        prev.map((item) =>
+          item._id === order._id ? { ...item, status: "cancelled" } : item
+        )
+      );
+
+      const successMessage = "Order rejected and cancelled.";
       setActionMessage(successMessage);
       showToast(successMessage, "success");
       setTimeout(() => {

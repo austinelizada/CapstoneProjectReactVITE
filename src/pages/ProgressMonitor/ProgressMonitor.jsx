@@ -76,6 +76,13 @@ const mapProgressFromStatus = (status, progress) => {
   return 15;
 };
 
+const formatClientType = (order) => {
+  const rawType = (order.acceptance_method || order.order_type || "online_order").toString();
+  return rawType
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
 const hasFinalStageCompleted = (stages = []) =>
   Array.isArray(stages) &&
   stages.length > 0 &&
@@ -179,9 +186,6 @@ function ProgressMonitor() {
             [
               "approved",
               "admin_review",
-              "contract_sent",
-              "contract_accepted",
-              "site_inspection",
               "processing",
               "completed",
             ].includes(order.status)
@@ -196,6 +200,7 @@ function ProgressMonitor() {
               order.items && order.items.length > 0
                 ? order.items[0].name || order.items[0].category || "Project"
                 : "Project",
+            clientType: formatClientType(order),
             inspection:
               order.inspection_status && order.inspection_status !== "pending"
                 ? order.inspection_status.charAt(0).toUpperCase() + order.inspection_status.slice(1)
@@ -576,9 +581,7 @@ function ProgressMonitor() {
                   <tr>
                     <th className="w-16 p-4 text-center">No.</th>
                     <th className="p-4 text-left">Client</th>
-                    <th className="p-4 text-left">Product</th>
-                    <th className="p-4 text-left">Site Inspection</th>
-                    <th className="p-4 text-left">Est. Installation</th>
+            <th className="p-4 text-left">Client Type</th>
                     <th className="p-4 text-left">Progress</th>
                     <th className="p-4 text-left">Status</th>
                     <th className="p-4 text-center">Actions</th>
@@ -607,6 +610,10 @@ function ProgressMonitor() {
 
                         <td className="p-4">
                           {project.client}
+                        </td>
+
+                        <td className="p-4">
+                          {project.clientType}
                         </td>
 
                         <td className="p-4">

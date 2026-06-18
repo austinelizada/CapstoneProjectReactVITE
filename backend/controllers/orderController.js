@@ -228,7 +228,7 @@ export const createOrderAsAdmin = async (req, res) => {
       order_type: order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
       contract_status: order_type === "walk_in_customer" ? "accepted" : "pending",
       payment_status: "not_paid",
-      status: "site_inspection",
+      status: order_type === "walk_in_customer" ? "contract_accepted" : "site_inspection",
       inspection_status: order_type === "walk_in_customer" ? "completed" : "pending",
       inspection_date: inspection_date ? new Date(inspection_date) : null,
       inspection_notes: inspection_notes || "",
@@ -894,7 +894,7 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       <p><strong>Inspection Date:</strong> ${inspectionDate}</p>
       <p><strong>Total Amount:</strong> ${totalAmount}</p>
       <p><strong>Site Address:</strong> ${siteAddress}</p>
-      ${contractLink ? `<p><strong>Signed Contract:</strong> <a href="${contractLink}">View signed contract</a></p>` : "<p>No signed contract link was provided.</p>"}
+      ${contractLink ? `<p><strong>Signed Contract:</strong> <a href="${contractLink}">View signed contract</a></p>` : ""}
       <p>If you have any questions, reply to this email or contact our support team.</p>
       <p>Thank you,<br/>ACGC Site Inspection Team</p>
     `;
@@ -908,8 +908,8 @@ Order Number: ${orderNumber}
 Inspection Date: ${inspectionDate}
 Total Amount: ${totalAmount}
 Site Address: ${siteAddress}
-
-${contractLink ? `View signed contract: ${contractLink}` : "No signed contract link was provided."}
+${contractLink ? `
+View signed contract: ${contractLink}` : ""}
 
 If you have any questions, reply to this email or contact our support team.
 

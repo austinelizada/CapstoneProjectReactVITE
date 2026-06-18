@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Search,
   Plus,
@@ -81,6 +82,7 @@ const isSiteInspectionVisible = (order) => {
 };
 
 function SiteInspection() {
+  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("sidebarOpen");
@@ -795,6 +797,9 @@ function SiteInspection() {
       
       closeNewInspectionModal();
       await fetchSiteInspections();
+      if (newInspection.order_type === "walk_in_customer") {
+        navigate("/transactions", { state: { activeTable: "receipts" } });
+      }
     } catch (err) {
       console.error("Create inspection failed", err);
       toast.error(err?.data?.message || err?.message || "Failed to create inspection.");
@@ -1255,7 +1260,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
           {/* CANCEL CONFIRMATION MODAL */}
           {cancelConfirm.open && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
               <div className="bg-white w-full max-w-md rounded-3xl p-6">
                 <h3 className="text-xl font-bold mb-4">Confirm Cancel Inspection</h3>
                 <p className="text-gray-600 mb-6">Are you sure you want to mark this inspection as cancelled? This action can be restored only by admins via the backend.</p>
@@ -1276,7 +1281,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
           {/* RESTORE CONFIRMATION MODAL */}
           {restoreConfirm.open && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
               <div className="bg-white w-full max-w-md rounded-3xl p-6">
                 <h3 className="text-xl font-bold mb-4">Confirm Restore Inspection</h3>
                 <p className="text-gray-600 mb-6">Are you sure you want to restore this inspection to Site Inspections?</p>
@@ -1296,7 +1301,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
           )}
 
           {contractConfirm.open && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
               <div className="bg-white w-full max-w-md rounded-3xl p-6">
                 <h3 className="text-xl font-bold mb-4">Generate Contract</h3>
                 <p className="text-gray-600 mb-6">A contract will be generated for this order. Do you want to continue?</p>
@@ -1384,12 +1389,11 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                     <th className="p-4 text-left">Client</th>
                     <th className="p-4 text-left">Phone</th>
                     <th className="p-4 text-left">Product</th>
-                    <th className="p-4 text-left">Order Type</th>
+                    <th className="p-4 text-left">Client Type</th>
                     <th className="p-4 text-left">Site Address</th>
                     <th className="p-4 text-left">Date Submitted</th>
                     <th className="p-4 text-left">Status</th>
                     <th className="p-4 text-left">Estimation</th>
-                    <th className="p-4 text-left">Contract</th>
                     <th className="p-4 text-center">Actions</th>
 
                   </tr>
@@ -1399,13 +1403,13 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                 <tbody>
                   {inspectionsLoading ? (
                     <tr>
-                      <td colSpan={11} className="p-8 text-center text-slate-500">
+                      <td colSpan={10} className="p-8 text-center text-slate-500">
                         Loading inspections...
                       </td>
                     </tr>
                   ) : !filteredList.length ? (
                     <tr>
-                      <td colSpan={11} className="p-8 text-center text-slate-500">
+                      <td colSpan={10} className="p-8 text-center text-slate-500">
                         No records in this tab.
                       </td>
                     </tr>
@@ -1448,20 +1452,6 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                             </span>
                           </td>
                           <td className="p-4 font-semibold text-green-600">{estimatedCost}</td>
-                          <td className="p-4">
-                            {inspection.acceptance_method === "walk_in_signed_contract" && inspection.signed_contract_url ? (
-                              <a
-                                href={inspection.signed_contract_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-600 hover:text-blue-800 underline text-sm"
-                              >
-                                View Contract
-                              </a>
-                            ) : (
-                              <span className="text-gray-400 text-sm">—</span>
-                            )}
-                          </td>
                           <td className="p-4">
                             <div className="flex justify-center gap-3">
                               <button
@@ -1576,7 +1566,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
           {showModal && (
 
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
 
               <div className="bg-white w-full max-w-4xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto">
 
@@ -1784,19 +1774,50 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                       const rowSubtotal = calculateRowSubtotal(it);
                       return (
                         <div key={it.id} className="py-5 mt-4 grid grid-cols-10 gap-2 items-center">
-                          <div className="col-span-3">
-                            <select
-                              className="w-full border rounded p-2"
-                              value={it.product_id || ""}
-                              onChange={(e) => handleItemProductChange(it.id, e.target.value)}
+                          <div className="col-span-3 relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = document.getElementById(`product-menu-${it.id}`);
+                                if (current?.classList.contains('hidden')) {
+                                  current.classList.remove('hidden');
+                                } else if (current) {
+                                  current.classList.add('hidden');
+                                }
+                              }}
+                              className="w-full border rounded p-2 text-left bg-white hover:bg-gray-50 flex justify-between items-center"
                             >
-                              <option value="">Select product</option>
+                              <span>{products.find(p => String(p._id || p.id) === it.product_id)?.name || 'Select product'}</span>
+                              <span>▼</span>
+                            </button>
+                            <div
+                              id={`product-menu-${it.id}`}
+                              className="hidden absolute top-full left-0 right-0 mt-1 border rounded bg-white shadow-lg z-[100] max-h-48 overflow-y-auto"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleItemProductChange(it.id, '');
+                                  document.getElementById(`product-menu-${it.id}`)?.classList.add('hidden');
+                                }}
+                                className="w-full text-left px-3 py-2 hover:bg-gray-100"
+                              >
+                                Select product
+                              </button>
                               {products.map((product) => (
-                                <option key={String(product._id || product.id)} value={String(product._id || product.id)}>
+                                <button
+                                  key={String(product._id || product.id)}
+                                  type="button"
+                                  onClick={() => {
+                                    handleItemProductChange(it.id, String(product._id || product.id));
+                                    document.getElementById(`product-menu-${it.id}`)?.classList.add('hidden');
+                                  }}
+                                  className="w-full text-left px-3 py-2 hover:bg-gray-100"
+                                >
                                   {product.name}
-                                </option>
+                                </button>
                               ))}
-                            </select>
+                            </div>
                             {productsLoading && <p className="text-xs text-gray-500 mt-1">Loading products...</p>}
                           </div>
                           <input
@@ -1897,7 +1918,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
           {/* VIEW DETAILS MODAL */}
           {viewInspection && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
               <div className="bg-white w-full max-w-3xl rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-2xl font-bold">Inspection Details</h2>
@@ -2051,7 +2072,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
           {/* EDIT INSPECTION MODAL */}
           {editInspection && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
               <div className="bg-white w-full max-w-4xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
                   <div>
@@ -2164,19 +2185,50 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                       const rowSubtotal = calculateRowSubtotal(it);
                       return (
                         <div key={it.id} className="py-5 mt-4 grid grid-cols-10 gap-2 items-center">
-                          <div className="col-span-3">
-                            <select
-                              className="w-full border rounded p-2"
-                              value={it.product_id || ""}
-                              onChange={(e) => handleEditItemProductChange(it.id, e.target.value)}
+                          <div className="col-span-3 relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const current = document.getElementById(`edit-product-menu-${it.id}`);
+                                if (current?.classList.contains('hidden')) {
+                                  current.classList.remove('hidden');
+                                } else if (current) {
+                                  current.classList.add('hidden');
+                                }
+                              }}
+                              className="w-full border rounded p-2 text-left bg-white hover:bg-gray-50 flex justify-between items-center"
                             >
-                              <option value="">Select product</option>
+                              <span>{products.find(p => String(p._id || p.id) === it.product_id)?.name || 'Select product'}</span>
+                              <span>▼</span>
+                            </button>
+                            <div
+                              id={`edit-product-menu-${it.id}`}
+                              className="hidden absolute top-full left-0 right-0 mt-1 border rounded bg-white shadow-lg z-[100] max-h-48 overflow-y-auto"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleEditItemProductChange(it.id, '');
+                                  document.getElementById(`edit-product-menu-${it.id}`)?.classList.add('hidden');
+                                }}
+                                className="w-full text-left px-3 py-2 hover:bg-gray-100"
+                              >
+                                Select product
+                              </button>
                               {products.map((product) => (
-                                <option key={String(product._id || product.id)} value={String(product._id || product.id)}>
+                                <button
+                                  key={String(product._id || product.id)}
+                                  type="button"
+                                  onClick={() => {
+                                    handleEditItemProductChange(it.id, String(product._id || product.id));
+                                    document.getElementById(`edit-product-menu-${it.id}`)?.classList.add('hidden');
+                                  }}
+                                  className="w-full text-left px-3 py-2 hover:bg-gray-100"
+                                >
                                   {product.name}
-                                </option>
+                                </button>
                               ))}
-                            </select>
+                            </div>
                             {productsLoading && <p className="text-xs text-gray-500 mt-1">Loading products...</p>}
                           </div>
                           <input

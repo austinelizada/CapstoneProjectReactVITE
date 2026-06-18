@@ -21,6 +21,11 @@ try {
   console.debug("[api] API_BASE:", API_BASE);
 } catch (e) {}
 
+const isDev = import.meta.env.DEV === true;
+const normalizePath = (path) => (path.startsWith("/") ? path : `/${path}`);
+const buildRequestUrl = (path) => `${API_BASE.replace(/\/+$|\/$/, "")}${normalizePath(path)}`;
+const buildDirectDevUrl = (path) => `http://localhost:5000/api${normalizePath(path)}`;
+
 export async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("token");
   const headers = {
@@ -38,10 +43,13 @@ export async function apiFetch(path, options = {}) {
   const maxRetries = options._retries || 3;
   let attempt = 0;
   let response;
+  const normalizedPath = normalizePath(path);
+  const requestUrl = buildRequestUrl(normalizedPath);
+
   while (attempt < maxRetries) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      response = await fetch(`${API_BASE}${path}`, {
+      response = await fetch(requestUrl, {
         ...options,
         headers,
       });
@@ -50,6 +58,27 @@ export async function apiFetch(path, options = {}) {
       attempt += 1;
       const isLast = attempt >= maxRetries;
       if (isLast) {
+        if (isDev && API_BASE === "/api" && typeof window !== "undefined") {
+          const directDevUrl = buildDirectDevUrl(normalizedPath);
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            response = await fetch(directDevUrl, {
+              ...options,
+              headers,
+            });
+            break;
+          } catch (directFetchError) {
+            const message =
+              directFetchError?.message === "Failed to fetch"
+                ? "Unable to connect to the backend server at http://localhost:5000. Ensure the backend is running and try again."
+                : directFetchError?.message || "Network error while connecting to the backend.";
+            const error = new Error(message);
+            error.cause = directFetchError;
+            error.isNetworkError = true;
+            throw error;
+          }
+        }
+
         const message =
           fetchError?.message === "Failed to fetch"
             ? "Unable to connect to the server. Please ensure the backend is running and try again later."

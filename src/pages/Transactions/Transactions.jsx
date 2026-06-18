@@ -91,7 +91,14 @@ function Transactions() {
   const canReviewTransaction = (order) => {
     const contractStatus = (order.contract_status || "").toString().toLowerCase();
     const orderStatus = (order.status || "").toString().toLowerCase();
-    return contractStatus === "accepted" && orderStatus === "contract_accepted";
+    const acceptanceMethod = (order.acceptance_method || "").toString().toLowerCase();
+    
+    // Online: contract_status === "accepted" && status === "contract_accepted"
+    // Walk-in: contract_status === "accepted" && acceptance_method === "walk_in_signed_contract"
+    return contractStatus === "accepted" && (
+      orderStatus === "contract_accepted" || 
+      acceptanceMethod === "walk_in_signed_contract"
+    );
   };
 
   const isCompletedProject = (order) => {
@@ -857,6 +864,7 @@ function Transactions() {
                       <th className="w-16 p-4 text-center">No.</th>
                       <th className="p-4 text-left">Tracking ID</th>
                       <th className="p-4 text-left">Customer</th>
+                      <th className="p-4 text-left">Client Type</th>
                       <th className="p-4 text-left">Inspection</th>
                       <th className="p-4 text-left">Date</th>
                       <th className="p-4 text-left">Amount</th>
@@ -875,6 +883,7 @@ function Transactions() {
                     const amountVal = order.contract_amount || order.total_amount || 0;
                     const amount = `₱${Number(amountVal || 0).toLocaleString()}`;
                     const inspectionLabel = order.items && order.items.length > 0 ? (order.items[0].name || `${order.items.length} item(s)`) : "N/A";
+                    const orderType = (order.acceptance_method || order.order_type || "Online").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
                     const completionDate = getCompletionDate(order);
                     const completionLabel = completionDate ? formatDateToMMDDYYYY(completionDate) : "N/A";
                     const expiry = getWarrantyExpiry(order);
@@ -883,7 +892,7 @@ function Transactions() {
                     const remainingDays = expiry ? Math.ceil((expiry - now) / msPerDay) : null;
                     const expiredDays = expiry ? Math.ceil((now - expiry) / msPerDay) : null;
                     const statusLabel = activeTable === "receipts"
-                      ? order.status === "contract_accepted" && (order.contract_status || "").toString().toLowerCase() === "accepted"
+                      ? ((order.status === "contract_accepted" || (order.acceptance_method || "").toString().toLowerCase() === "walk_in_signed_contract") && (order.contract_status || "").toString().toLowerCase() === "accepted")
                         ? "Contract Accepted — Waiting for Transaction Approval"
                         : order.status === "approved"
                         ? "Approved"
@@ -927,6 +936,7 @@ function Transactions() {
                           <>
                             <td className="p-4">{order.tracking}</td>
                             <td className="p-4">{customerName}</td>
+                            <td className="p-4">{orderType}</td>
                             <td className="p-4">{inspectionLabel}</td>
                             <td className="p-4">{order.createdAt ? formatDateToMMDDYYYY(order.createdAt) : (order.inspection_date ? formatDateToMMDDYYYY(order.inspection_date) : 'N/A')}</td>
                             <td className="p-4 font-semibold text-green-600">{amount}</td>

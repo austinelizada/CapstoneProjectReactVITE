@@ -27,9 +27,19 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:5000",
+        target: "http://localhost:5000",
         changeOrigin: true,
         secure: false,
+        ws: true,
+        configure: (proxy) => {
+          proxy.on("error", (error, req, res) => {
+            console.error("[vite proxy] API proxy error", req.url, error.message);
+            if (!res.headersSent) {
+              res.writeHead(502, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ success: false, message: "API proxy error" }));
+            }
+          });
+        },
       },
     },
   },
