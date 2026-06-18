@@ -336,10 +336,10 @@ function Transactions() {
         rejected_at: updated.rejected_at || now,
         status: updated.status || "cancelled",
       });
-      toast.success("Transaction rejected successfully.");
+      toast.success("Transaction cancelled successfully.");
     } catch (error) {
-      console.error("Reject transaction failed", error);
-      toast.error(error?.data?.message || error?.message || "Unable to reject transaction.");
+      console.error("Cancel transaction failed", error);
+      toast.error(error?.data?.message || error?.message || "Unable to cancel transaction.");
     } finally {
       setActionLoading(false);
       setProcessingOrderId(null);
@@ -941,7 +941,7 @@ function Transactions() {
                             <td className="p-4">{order.createdAt ? formatDateToMMDDYYYY(order.createdAt) : (order.inspection_date ? formatDateToMMDDYYYY(order.inspection_date) : 'N/A')}</td>
                             <td className="p-4 font-semibold text-green-600">{amount}</td>
                             <td className="p-4"><span className="inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold bg-amber-100 text-amber-700">{statusLabel}</span></td>
-                            <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "receipts" && canReviewTransaction(order) && (<><button title="Approve Transaction" onClick={() => openTransactionConfirm("approve", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><Check size={18} /></button><button title="Reject Transaction" onClick={() => openTransactionConfirm("reject", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><XCircle size={20} /></button></>)}{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button> </div></td>
+                            <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "receipts" && canReviewTransaction(order) && (<><button title="Approve Transaction" onClick={() => openTransactionConfirm("approve", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><Check size={18} /></button><button title="Cancel Transaction" onClick={() => openTransactionConfirm("reject", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><XCircle size={20} /></button></>)}{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button> </div></td>
                           </>
                         )}
 
@@ -1196,12 +1196,12 @@ function Transactions() {
               <div className="absolute inset-0 bg-black/40" onClick={closeTransactionConfirm} />
               <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
                 <h2 className="text-2xl font-bold text-slate-900 mb-4">
-                  {confirmModal.action === "approve" ? "Approve Transaction" : "Reject Transaction"}
+                  {confirmModal.action === "approve" ? "Approve Transaction" : "Cancel Transaction"}
                 </h2>
                 <p className="text-sm text-slate-600 leading-6">
                   {confirmModal.action === "approve"
                     ? "Are you sure you want to approve this contract/receipt? This action will mark the transaction as approved and proceed to the next stage of the workflow."
-                    : "Are you sure you want to reject this contract/receipt? This action will stop the current transaction process."}
+                    : "Are you sure you want to cancel this contract/receipt? This action will stop the current transaction process."}
                 </p>
                 <div className="mt-6 flex justify-end gap-3">
                   <button
@@ -1227,7 +1227,7 @@ function Transactions() {
                         : "Rejecting..."
                       : confirmModal.action === "approve"
                         ? "Confirm Approve"
-                        : "Confirm Reject"}
+                        : "Confirm"}
                   </button>
                 </div>
               </div>

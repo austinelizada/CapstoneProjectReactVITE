@@ -176,6 +176,35 @@ function CustomerDashboard() {
   const [orderViewMode, setOrderViewMode] = useState("view2");
   const [selectedOrderForModal, setSelectedOrderForModal] = useState(null);
   const [contractSummaryExpanded, setContractSummaryExpanded] = useState(true);
+  const [contractHistoryTab, setContractHistoryTab] = useState("accepted");
+  const [warrantyHistoryTab, setWarrantyHistoryTab] = useState(null);
+
+  const acceptedContracts = orders.filter(
+    (order) =>
+      order.status === "contract_accepted" ||
+      order.contract_status?.toString().toLowerCase() === "accepted"
+  );
+  const rejectedContracts = orders.filter(
+    (order) =>
+      order.status === "contract_declined" ||
+      order.contract_status?.toString().toLowerCase() === "declined"
+  );
+  const contractsInTab = contractHistoryTab === "rejected" ? rejectedContracts : acceptedContracts;
+
+  // Warranty filtering logic
+  const activeWarranties = orders.filter((order) => {
+    if (!order.warranty_expiry_date) return false;
+    const expiryDate = new Date(order.warranty_expiry_date);
+    const today = new Date();
+    return expiryDate > today && (order.warranty_status?.toLowerCase() === "active" || !order.warranty_status);
+  });
+  const expiredWarranties = orders.filter((order) => {
+    if (!order.warranty_expiry_date) return false;
+    const expiryDate = new Date(order.warranty_expiry_date);
+    const today = new Date();
+    return expiryDate <= today || order.warranty_status?.toLowerCase() === "expired";
+  });
+  const warrantiesInTab = warrantyHistoryTab === "expired" ? expiredWarranties : activeWarranties;
 
   const [trackingNumber, setTrackingNumber] = useState("");
   const [trackingResult, setTrackingResult] = useState(null);
@@ -1274,13 +1303,10 @@ function CustomerDashboard() {
 
     // Otherwise, apply status filter
     if (orderFilter === "all") return true;
-    if (orderFilter === "adminreview") return order.status === "admin_review";
-    if (orderFilter === "siteinspection") return order.status === "site_inspection";
-    if (orderFilter === "pendingcontract") return ["contract_sent"].includes(order.status);
-    if (orderFilter === "contract") return ["contract_sent", "contract_accepted"].includes(order.status);
-    if (orderFilter === "open") return order.status !== "completed" && order.status !== "cancelled";
+    if (orderFilter === "order") return !["installation", "completed", "cancelled"].includes(order.status);
+    if (orderFilter === "installation") return order.status === "installation" || order.status === "site_inspection";
     if (orderFilter === "completed") return order.status === "completed";
-    if (orderFilter === "cancelled") return order.status === "cancelled";
+    if (orderFilter === "cancel") return order.status === "cancelled";
     return true;
   });
 
@@ -2644,48 +2670,28 @@ function CustomerDashboard() {
                 <h2 className="text-2xl font-bold text-slate-950">My Orders</h2>
                 <p className="text-slate-500">Review your completed and in-progress orders with item details and history.</p>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2">
-                  <span className="text-sm text-slate-500">Filter</span>
-                  <select
-                    id="orderFilter"
-                    value={orderFilter}
-                    onChange={(e) => setOrderFilter(e.target.value)}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none"
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { value: "all", label: "All" },
+                  { value: "order", label: "Order" },
+                  { value: "installation", label: "Installation" },
+                  { value: "completed", label: "Completed" },
+                  { value: "cancel", label: "Cancel" },
+                ].map((tab) => (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    onClick={() => setOrderFilter(tab.value)}
+                    className={`px-4 py-2 rounded-2xl text-sm font-semibold transition ${
+                      orderFilter === tab.value ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                    }`}
                   >
-                    <option value="all">All orders</option>
-                    <option value="open">Admin Review</option>
-                    <option value="inspection">Site Inspection</option>
-                    <option value="contract">Contract Created</option>
-                    <option value="acceptance">Contract Acceptance</option>
-                    <option value="cutting">Cutting</option>
-                    <option value="fabrication">Fabrication</option>
-                    <option value="installation">Installation</option>
-                    <option value="completed">Completed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                </div>
+                    {tab.label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Active Orders</p>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{activeOrdersCount}</p>
-              </div>
-              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Pending Contracts</p>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{pendingContractsCount}</p>
-              </div>
-              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Completed Projects</p>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{completedProjectsCount}</p>
-              </div>
-              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-                <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Cancelled Projects</p>
-                <p className="mt-3 text-3xl font-semibold text-slate-950">{cancelledProjectsCount}</p>
-              </div>
-            </div>
 
             {orderRequestMessage && (
               <div className="mb-6 rounded-3xl border border-emerald-100 bg-emerald-50 px-6 py-4 text-sm text-emerald-700">
@@ -2704,27 +2710,30 @@ function CustomerDashboard() {
                 <p className="text-gray-600">No orders found.</p>
               </div>
             ) : (
-              <div className={orderViewClass}>
-                {filteredOrders.map((order) => {
-                  const orderSteps = getOrderProgressSteps(order);
-                  const progressPercent = getOrderProgressPercent(order);
-                  const product = order.items?.[0] || {};
-                  return (
-                    <div
-                      key={order._id || order.tracking}
-                      className="group overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedOrderForModal(order)}
-                        className="w-full text-left"
-                      >
-                        <div className="p-5">
-                          <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-                            <div className="h-20 w-20 flex-shrink-0 overflow-hidden rounded-3xl bg-slate-100 shadow-sm">
+              <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full border-separate border-spacing-0 text-left">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Tracking</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Image</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Project</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Status</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Total</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Date</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredOrders.map((order) => {
+                      const product = order.items?.[0] || {};
+                      return (
+                        <tr key={order._id || order.tracking} className="border-t border-slate-200 hover:bg-slate-50">
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">{order.tracking || order._id || "—"}</td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">
+                            <div className="h-16 w-16 overflow-hidden rounded-2xl bg-slate-100">
                               <img
                                 src={getOrderItemImage(product)}
-                                alt={product.name || "Product image"}
+                                alt={product.name || product.product_name || "Product image"}
                                 className="h-full w-full object-cover"
                                 onError={(e) => {
                                   e.currentTarget.onerror = null;
@@ -2732,85 +2741,41 @@ function CustomerDashboard() {
                                 }}
                               />
                             </div>
-
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Product</p>
-                              <h3 className="mt-2 text-2xl font-semibold leading-tight text-slate-950 whitespace-normal break-words">
-                                {product.name || product.product_name || "Project item"}
-                              </h3>
-                              <p className="mt-2 text-sm text-slate-500">{order.tracking}</p>
-
-                              <div className={`mt-4 inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold ${getOrderStatusClasses(order.status)}`}>
-                                {getOrderStatusLabel(order.status)}
-                              </div>
+                          </td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">
+                            <p className="font-semibold text-slate-900">{product.name || product.product_name || "Project item"}</p>
+                            <p className="text-xs text-slate-500 mt-1">Qty: {product.quantity || 1}</p>
+                          </td>
+                          <td className="px-6 py-5 align-top">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getOrderStatusClasses(order.status)}`}>
+                              {getOrderStatusLabel(order.status)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">{formatCurrency(order.total_amount)}</td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedOrderForModal(order)}
+                                className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                              >
+                                Details
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openContractModal(order)}
+                                className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
+                              >
+                                Contract
+                              </button>
                             </div>
-                          </div>
-
-                          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Quantity</p>
-                              <p className="mt-1 text-sm font-semibold text-slate-900">{product.quantity || 1}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Total</p>
-                              <p className="mt-1 text-lg font-semibold text-slate-950">{formatCurrency(order.total_amount)}</p>
-                            </div>
-                          </div>
-
-                          <div className="mt-5">
-                            <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-slate-400">
-                              <span>Progress</span>
-                              <span>{progressPercent}%</span>
-                            </div>
-                            <div className="mt-2">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="text-base font-medium">{progressPercent}%</span>
-                                <span className="text-xs text-slate-500">auto-calculated</span>
-                              </div>
-                              <div className="relative h-2.5 rounded-full bg-gray-100 overflow-visible">
-                                {(() => {
-                                  const color = getProgressColor(progressPercent);
-                                  return (
-                                    <div
-                                      className={`glow-bar h-full rounded-full ${color.bar} relative transition-all duration-700 ease-in-out`}
-                                      style={{ width: `${progressPercent}%` }}
-                                    >
-                                      {progressPercent > 0 && (
-                                        <div className={`absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 rounded-full ${color.dot}`}>
-                                          <span className={`absolute inset-0 block rounded-full ${color.ping} opacity-70 animate-ping`} />
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                              <p className="mt-2 text-[10px] text-slate-500">Automatically calculated from stage and sub-stage completion.</p>
-                            </div>
-
-                            <div className="mt-4 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-slate-500">
-                              {orderSteps.slice(0, 4).map((step) => (
-                                <span key={step.key} className={`inline-flex h-7 items-center rounded-full px-2 ${step.done ? "bg-emerald-100 text-emerald-700" : step.active ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
-                                  {step.label}
-                                </span>
-                              ))}
-                              {orderSteps.length > 4 ? <span className="text-slate-400">+{orderSteps.length - 4} more</span> : null}
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-
-                      <div className="border-t border-red-200 bg-red-50 px-5 py-4">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedOrderForModal(order)}
-                          className="w-full rounded-2xl bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-500"
-                        >
-                          View Details
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </>
@@ -3501,8 +3466,46 @@ function CustomerDashboard() {
           <>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
-                <h2 className="text-2xl font-bold text-slate-950">My Contracts</h2>
-                <p className="text-slate-500">Review and manage your project contracts and agreements.</p>
+                <h2 className="text-2xl font-bold text-slate-950">My Contracts & Warranties</h2>
+                <p className="text-slate-500">Review your contracts and warranty coverage.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setContractHistoryTab("accepted"); setWarrantyHistoryTab(null); }}
+                  className={`px-4 py-2 rounded-2xl font-semibold transition ${
+                    contractHistoryTab === "accepted" && !warrantyHistoryTab ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  Accepted Contracts ({acceptedContracts.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setContractHistoryTab("rejected"); setWarrantyHistoryTab(null); }}
+                  className={`px-4 py-2 rounded-2xl font-semibold transition ${
+                    contractHistoryTab === "rejected" && !warrantyHistoryTab ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  Rejected Contracts ({rejectedContracts.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setContractHistoryTab(null); setWarrantyHistoryTab("active"); }}
+                  className={`px-4 py-2 rounded-2xl font-semibold transition ${
+                    warrantyHistoryTab === "active" ? "bg-emerald-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  Active Warranty ({activeWarranties.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setContractHistoryTab(null); setWarrantyHistoryTab("expired"); }}
+                  className={`px-4 py-2 rounded-2xl font-semibold transition ${
+                    warrantyHistoryTab === "expired" ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  Out-of-Warranty ({expiredWarranties.length})
+                </button>
               </div>
             </div>
 
@@ -3512,115 +3515,127 @@ function CustomerDashboard() {
                   <div key={index} className="animate-pulse rounded-3xl bg-white p-8 shadow" />
                 ))}
               </div>
-            ) : orders.filter(order => ["contract_sent", "contract_accepted", "contract_declined"].includes(order.status)).length === 0 ? (
+            ) : warrantyHistoryTab ? (
+              // WARRANTY VIEW
+              warrantiesInTab.length === 0 ? (
+                <div className="rounded-3xl bg-white p-10 text-center shadow">
+                  <p className="text-gray-600">No {warrantyHistoryTab === "active" ? "active" : "expired"} warranties found.</p>
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                  <table className="min-w-full border-collapse text-left">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Tracking No.</th>
+                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Product</th>
+                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Warranty Period</th>
+                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Start Date</th>
+                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Expiry Date</th>
+                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Status</th>
+                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {warrantiesInTab.map((order) => {
+                        const product = order.items?.[0] || {};
+                        const warrantyStartDate = order.warranty_start_date ? new Date(order.warranty_start_date).toLocaleDateString() : "—";
+                        const warrantyExpiryDate = order.warranty_expiry_date ? new Date(order.warranty_expiry_date).toLocaleDateString() : "—";
+                        const isActive = warrantyHistoryTab === "active";
+                        const statusClass = isActive
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-orange-100 text-orange-700";
+                        const statusLabel = isActive ? "Active" : "Expired";
+
+                        return (
+                          <tr key={order._id || order.tracking} className="border-t border-slate-200">
+                            <td className="px-6 py-5 align-top text-sm text-slate-700">{order.tracking || order._id || "—"}</td>
+                            <td className="px-6 py-5 align-top text-sm text-slate-700">{product.name || product.product_name || "Product"}</td>
+                            <td className="px-6 py-5 align-top text-sm text-slate-700">{order.warranty_period || "—"}</td>
+                            <td className="px-6 py-5 align-top text-sm text-slate-700">{warrantyStartDate}</td>
+                            <td className="px-6 py-5 align-top text-sm text-slate-700">{warrantyExpiryDate}</td>
+                            <td className="px-6 py-5 align-top">
+                              <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusClass}`}>{statusLabel}</span>
+                            </td>
+                            <td className="px-6 py-5 align-top text-sm text-slate-700">
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedOrderForModal(order)}
+                                  className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                                >
+                                  View Details
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            ) : contractsInTab.length === 0 ? (
               <div className="rounded-3xl bg-white p-10 text-center shadow">
-                <p className="text-gray-600">No contracts found. Contracts will appear here once they are generated.</p>
+                <p className="text-gray-600">No {contractHistoryTab === "accepted" ? "accepted" : "rejected"} contracts found yet.</p>
               </div>
             ) : (
-              <div className="space-y-6">
-                {orders
-                  .filter(order => ["contract_sent", "contract_accepted", "contract_declined"].includes(order.status))
-                  .map((order) => {
-                    const product = order.items?.[0] || {};
-                    return (
-                      <div
-                        key={order._id || order.tracking}
-                        className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-                      >
-                        <div className="p-6">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract for</p>
-                              <h3 className="mt-2 text-2xl font-semibold text-slate-950 break-words">
-                                {product.name || product.product_name || "Project"}
-                              </h3>
-                              <p className="mt-2 text-sm text-slate-500">{order.tracking}</p>
-                            </div>
-                            <span className={`inline-flex shrink-0 items-center rounded-full px-3 py-1.5 text-sm font-semibold ${
-                              order.contract_status === "accepted" ? "bg-emerald-100 text-emerald-700" :
-                              order.contract_status === "declined" ? "bg-red-100 text-red-700" :
-                              "bg-amber-100 text-amber-700"
-                            }`}>
-                              {order.contract_status?.replace(/_/g, " ") || "Pending"}
-                            </span>
-                          </div>
+              // CONTRACT VIEW
+              <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+                <table className="min-w-full border-collapse text-left">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Tracking No.</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Project</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Amount</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Status</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Date</th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contractsInTab.map((order) => {
+                      const product = order.items?.[0] || {};
+                      const statusLabel = order.contract_status?.replace(/_/g, " ") || order.status?.replace(/_/g, " ") || "Unknown";
+                      const statusClass = order.contract_status === "accepted" || order.status === "contract_accepted"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-red-100 text-red-700";
 
-                          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Amount</p>
-                              <p className="mt-2 text-lg font-semibold text-slate-950">{formatCurrency(order.contract_amount || order.total_amount)}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Order Total</p>
-                              <p className="mt-2 text-lg font-semibold text-slate-950">{formatCurrency(order.total_amount)}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Created</p>
-                              <p className="mt-2 text-lg font-semibold text-slate-950">
-                                {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}
-                              </p>
-                            </div>
-                          </div>
-
-                          {order.contract_terms && (
-                            <div className="mt-6 rounded-2xl bg-slate-50 p-4">
-                              <p className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Contract Terms</p>
-                              <p className="mt-2 text-sm text-slate-700">{order.contract_terms}</p>
-                            </div>
-                          )}
-
-                          {order.status === "contract_sent" && (
-                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      return (
+                        <tr key={order._id || order.tracking} className="border-t border-slate-200">
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">{order.tracking || order._id || "—"}</td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">{product.name || product.product_name || "Project"}</td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">{formatCurrency(order.contract_amount || order.total_amount)}</td>
+                          <td className="px-6 py-5 align-top">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusClass}`}>{statusLabel}</span>
+                          </td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
+                          <td className="px-6 py-5 align-top text-sm text-slate-700">
+                            <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                onClick={() => openContractConfirmModal("accept", order._id)}
-                                disabled={contractActionLoading}
-                                className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={() => openContractModal(order)}
+                                className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
                               >
-                                {contractActionLoading ? "Accepting..." : "Accept Contract"}
+                                View Contract
                               </button>
                               <button
                                 type="button"
-                                onClick={() => openContractConfirmModal("decline", order._id)}
-                                disabled={contractActionLoading}
-                                className="rounded-2xl border border-red-300 bg-white px-4 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={() => setSelectedOrderForModal(order)}
+                                className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
                               >
-                                {contractActionLoading ? "Declining..." : "Decline Contract"}
+                                Order Details
                               </button>
                             </div>
-                          )}
-
-                          {contractActionError && order.status === "contract_sent" && (
-                            <p className="mt-3 text-sm text-red-600">{contractActionError}</p>
-                          )}
-                          {contractActionMessage && contractActionOrderId === order._id && (
-                            <p className="mt-3 text-sm text-emerald-700">{contractActionMessage}</p>
-                          )}
-
-                          <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                            <button
-                              type="button"
-                              onClick={() => openContractModal(order)}
-                              className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
-                            >
-                              View Contract
-                            </button>
-                            <button
-                              onClick={() => setSelectedOrderForModal(order)}
-                              className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-                            >
-                              View Full Details
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </>
         )}
-
 
         <ContractModal
           isOpen={showContractModal}

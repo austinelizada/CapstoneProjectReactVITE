@@ -870,7 +870,8 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    if (!customerEmail) {
+    const customerEmailValue = (customerEmail || order.customer_email || "").trim();
+    if (!customerEmailValue) {
       return res.status(400).json({ success: false, message: "Customer email is required" });
     }
 
@@ -926,7 +927,7 @@ ACGC Site Inspection Team
     try {
       await sendMail({
         from: fromAddress,
-        to: customerEmail,
+        to: customerEmailValue,
         subject: "ACGC Site Inspection & Proposal",
         text: textBody,
         html: htmlBody,

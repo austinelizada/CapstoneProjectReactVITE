@@ -1260,7 +1260,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
           {/* CANCEL CONFIRMATION MODAL */}
           {cancelConfirm.open && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
               <div className="bg-white w-full max-w-md rounded-3xl p-6">
                 <h3 className="text-xl font-bold mb-4">Confirm Cancel Inspection</h3>
                 <p className="text-gray-600 mb-6">Are you sure you want to mark this inspection as cancelled? This action can be restored only by admins via the backend.</p>
@@ -1281,7 +1281,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
           {/* RESTORE CONFIRMATION MODAL */}
           {restoreConfirm.open && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
               <div className="bg-white w-full max-w-md rounded-3xl p-6">
                 <h3 className="text-xl font-bold mb-4">Confirm Restore Inspection</h3>
                 <p className="text-gray-600 mb-6">Are you sure you want to restore this inspection to Site Inspections?</p>
@@ -1301,7 +1301,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
           )}
 
           {contractConfirm.open && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
               <div className="bg-white w-full max-w-md rounded-3xl p-6">
                 <h3 className="text-xl font-bold mb-4">Generate Contract</h3>
                 <p className="text-gray-600 mb-6">A contract will be generated for this order. Do you want to continue?</p>
@@ -2337,7 +2337,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                       className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700"
                       disabled={savingEdit}
                     >
-                      {savingEdit ? 'Saving...' : 'Save Changes'}
+                      {savingEdit ? 'Sending to email...' : 'Save Changes'}
                     </button>
                   </div>
                 </div>
