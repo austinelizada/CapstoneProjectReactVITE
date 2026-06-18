@@ -2672,11 +2672,11 @@ function CustomerDashboard() {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {[
-                  { value: "all", label: "All" },
-                  { value: "order", label: "Order" },
+                  { value: "all", label: "All Orders" },
+                  { value: "order", label: "My Orders" },
                   { value: "installation", label: "Installation" },
                   { value: "completed", label: "Completed" },
-                  { value: "cancel", label: "Cancel" },
+                  { value: "cancel", label: "Cancelled" },
                 ].map((tab) => (
                   <button
                     key={tab.value}
@@ -2760,7 +2760,7 @@ function CustomerDashboard() {
                                 onClick={() => setSelectedOrderForModal(order)}
                                 className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
                               >
-                                Details
+                                View Order Timeline
                               </button>
                               <button
                                 type="button"
@@ -3486,7 +3486,7 @@ function CustomerDashboard() {
                     contractHistoryTab === "rejected" && !warrantyHistoryTab ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
-                  Rejected Contracts ({rejectedContracts.length})
+                  Declined Contracts ({rejectedContracts.length})
                 </button>
                 <button
                   type="button"
