@@ -107,8 +107,34 @@ const catalog = {
   },
 };
 
+const UNIT_TO_INCH_FACTOR = {
+  in: 1,
+  ft: 12,
+  cm: 1 / 2.54,
+  m: 100 / 2.54,
+};
+
+const MEASUREMENT_UNIT_LABELS = {
+  in: 'Inches',
+  ft: 'Feet',
+  cm: 'Centimeters',
+  m: 'Meters',
+};
+
 function fmtNum(n, dec = 2) {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function toInches(value, unit = 'in') {
+  const numeric = Number(value) || 0;
+  const factor = UNIT_TO_INCH_FACTOR[unit] || 1;
+  return numeric * factor;
+}
+
+function toSquareFeet(width, height, unit = 'in') {
+  const widthIn = toInches(width, unit);
+  const heightIn = toInches(height, unit);
+  return (widthIn * heightIn) / 144;
 }
 
 function calculateEstimate({
@@ -117,6 +143,7 @@ function calculateEstimate({
   variantName,
   width = 0,
   height = 0,
+  measurementUnit = 'in',
   quantity = 1,
   blade_count = 0,
   base_price,
@@ -124,6 +151,8 @@ function calculateEstimate({
   customization = false,
   customization_fee = 0,
 }) {
+  const widthIn = toInches(width, measurementUnit);
+  const heightIn = toInches(height, measurementUnit);
   const catKey = productName || categoryKey;
   const cat = catalog[catKey];
   let rate = overrideRate;
@@ -137,9 +166,8 @@ function calculateEstimate({
     rate = rate || glass.rate || (glass.base ? glass.base / STD_DOOR_SQFT : undefined);
 
     if (cat.method === 'area' || cat.method === 'area_door') {
-      // use door standard for area_door if width/height are zero-ish
-      const w = Number(width) || (cat.method === 'area_door' ? cat.defaultW : 0);
-      const h = Number(height) || (cat.method === 'area_door' ? cat.defaultH : 0);
+      const w = widthIn || (cat.method === 'area_door' ? cat.defaultW : 0);
+      const h = heightIn || (cat.method === 'area_door' ? cat.defaultH : 0);
       area = (w * h) / 144;
       total = area * (rate || 0) * (Number(quantity) || 1);
       areaDisplay = fmtNum(area, 4) + ' sq.ft';
@@ -152,9 +180,8 @@ function calculateEstimate({
       areaDisplay = `${b} blade(s)`;
     }
   } else {
-    // fallback to provided rates/fields
     if (overrideRate) {
-      const sqft = (Number(width) * Number(height)) / 144 || 0;
+      const sqft = toSquareFeet(width, height, measurementUnit) || 0;
       area = sqft;
       total = sqft * overrideRate * (Number(quantity) || 1);
       areaDisplay = fmtNum(area, 4) + ' sq.ft';
@@ -176,4 +203,4 @@ function calculateEstimate({
   };
 }
 
-export { catalog, calculateEstimate };
+export { catalog, calculateEstimate, toInches, toSquareFeet, MEASUREMENT_UNIT_LABELS };

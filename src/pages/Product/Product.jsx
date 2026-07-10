@@ -7,8 +7,13 @@ import {
   Pencil,
   Trash2,
   X,
+  Settings,
+  Star,
 } from "lucide-react";
+import * as catalogApi from '@/api/catalog';
+import ProductManagementModal from '@/components/ProductManagementModal';
 import { API_BASE } from "@/api/client";
+import { getProductReviews } from "@/api/orders";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -159,33 +164,278 @@ function Products() {
     "Aluminum Door": ["Standard", "Heavy Duty"],
   };
 
+  const CATEGORY_OPTIONS = [
+    "Windows",
+    "Doors",
+    "Cabinets",
+    "Shower Enclosures",
+    "Aluminum",
+    "Glass",
+    "Accessories",
+  ];
+
+  const DEFAULT_CATEGORY = "Windows";
+
+  const getCatalogPayload = (value) => value?.items || value?.data || value || [];
+
+  const getCatalogText = (value, fallback = "") => {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === "string" || typeof value === "number") return String(value);
+    if (typeof value === "object") {
+      return String(
+        value.name ||
+        value.type ||
+        value.variant ||
+        value.product_name ||
+        value.product_type ||
+        value.title ||
+        fallback
+      );
+    }
+    return fallback;
+  };
+
+  const normalizeOptionValues = (value) => {
+    const payload = getCatalogPayload(value);
+    if (!Array.isArray(payload)) return [];
+
+    const seen = new Set();
+    return payload
+      .map((item) => getCatalogText(item).trim())
+      .filter((label) => {
+        if (!label || seen.has(label)) return false;
+        seen.add(label);
+        return true;
+      });
+  };
+
+  const mergeOptionValues = (...groups) => {
+    const seen = new Set();
+    return groups
+      .flat()
+      .map((item) => getCatalogText(item).trim())
+      .filter((label) => {
+        if (!label || seen.has(label)) return false;
+        seen.add(label);
+        return true;
+      });
+  };
+
+  const mergeGroupedOptionValues = (...groups) => {
+    const merged = {};
+    groups.forEach((group) => {
+      if (!group || typeof group !== "object") return;
+      Object.entries(group).forEach(([key, values]) => {
+        const groupName = getCatalogText(key).trim();
+        if (!groupName) return;
+        merged[groupName] = mergeOptionValues(merged[groupName] || [], Array.isArray(values) ? values : []);
+      });
+    });
+    return merged;
+  };
+
+  const withSelectedOption = (options, selected) => mergeOptionValues(options, selected ? [selected] : []);
+
+  const normalizeGroupedOptionValues = (value, groupKey) => {
+    const payload = getCatalogPayload(value);
+    const grouped = {};
+
+    const addOption = (group, option) => {
+      const groupLabel = getCatalogText(group).trim();
+      const optionLabel = getCatalogText(option).trim();
+      if (!groupLabel || !optionLabel) return;
+      grouped[groupLabel] = grouped[groupLabel] || [];
+      if (!grouped[groupLabel].includes(optionLabel)) {
+        grouped[groupLabel].push(optionLabel);
+      }
+    };
+
+    if (Array.isArray(payload)) {
+      payload.forEach((item) => addOption(item?.[groupKey], item));
+      return grouped;
+    }
+
+    if (payload && typeof payload === "object") {
+      Object.entries(payload).forEach(([group, options]) => {
+        (Array.isArray(options) ? options : []).forEach((option) => addOption(group, option));
+      });
+    }
+
+    return grouped;
+  };
+
+  const normalizeProductForState = (product, fallback = {}) => {
+    const category = getCatalogText(product.category, fallback.category || DEFAULT_CATEGORY);
+    const productType = getCatalogText(product.product_type || product.type, fallback.product_type || fallback.type || "");
+    const productName = getCatalogText(product.product_name || product.name, fallback.product_name || fallback.name || "");
+    const variant = getCatalogText(product.variant, fallback.variant || "");
+    const type = productType ||
+      (category.toLowerCase() === "glass"
+        ? "Glass"
+        : category.toLowerCase() === "aluminum"
+        ? "Aluminum"
+        : "Mixed System");
+
+    return {
+      ...product,
+      id: product._id || product.id || fallback.id,
+      name: productName,
+      product_type: productType,
+      product_name: productName,
+      category,
+      variant,
+      type,
+      price:
+        product.price ||
+        `₱${(product.unit_price || fallback.unit_price || 0).toLocaleString()}`,
+      image: resolveProductImage(product),
+    };
+  };
+
+  const [productTypesList, setProductTypesList] = useState(PRODUCT_TYPES);
+  const [productNamesList, setProductNamesList] = useState(PRODUCT_NAMES);
+  const [categoryOptionsList, setCategoryOptionsList] = useState(CATEGORY_OPTIONS);
+  const [variantsList, setVariantsList] = useState(VARIANTS);
+  const [showProductManagementModal, setShowProductManagementModal] = useState(false);
+  const [activeProductPageTab, setActiveProductPageTab] = useState("products");
+  const [selectedReviewProductId, setSelectedReviewProductId] = useState("");
+  const [reviews, setReviews] = useState([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+
+  const selectedReviewProduct = products.find(
+    (product) => String(product._id || product.id) === selectedReviewProductId
+  ) || null;
+
+  const openReviewTab = () => {
+    setActiveProductPageTab("reviews");
+    if (!selectedReviewProductId && products.length > 0) {
+      setSelectedReviewProductId(products[0]._id || products[0].id);
+    }
+  };
+
+  useEffect(() => {
+    if (activeProductPageTab !== "reviews") return;
+    if (!selectedReviewProductId) {
+      setReviews([]);
+      setReviewError("");
+      return;
+    }
+
+    let active = true;
+
+    const loadReviews = async () => {
+      setReviewsLoading(true);
+      setReviewError("");
+      try {
+        const response = await getProductReviews(selectedReviewProductId);
+        if (!active) return;
+        setReviews(response.reviews || []);
+      } catch (err) {
+        if (!active) return;
+        setReviewError(err.data?.message || err.message || "Unable to load reviews.");
+        setReviews([]);
+      } finally {
+        if (active) setReviewsLoading(false);
+      }
+    };
+
+    loadReviews();
+
+    return () => {
+      active = false;
+    };
+  }, [activeProductPageTab, selectedReviewProductId]);
+
+  useEffect(() => {
+    if (activeProductPageTab !== "reviews" || selectedReviewProductId || products.length === 0) return;
+    setSelectedReviewProductId(products[0]._id || products[0].id);
+  }, [activeProductPageTab, selectedReviewProductId, products]);
+
+  const reloadCatalogLists = async () => {
+    try {
+      const types = await catalogApi.getTypes();
+      const normalizedTypes = normalizeOptionValues(types);
+      setProductTypesList(mergeOptionValues(PRODUCT_TYPES, normalizedTypes));
+      const names = await catalogApi.getNames();
+      const normalizedNames = normalizeGroupedOptionValues(names, "product_type");
+      setProductNamesList(mergeGroupedOptionValues(PRODUCT_NAMES, normalizedNames));
+      const categories = await catalogApi.getCategories();
+      const normalizedCategories = normalizeOptionValues(categories);
+      setCategoryOptionsList(mergeOptionValues(CATEGORY_OPTIONS, normalizedCategories));
+      const vars = await catalogApi.getVariants();
+      const normalizedVariants = normalizeGroupedOptionValues(vars, "product_name");
+      setVariantsList(mergeGroupedOptionValues(VARIANTS, normalizedVariants));
+    } catch (e) {
+      console.error("Failed to load catalog lists", e);
+    }
+  };
+
+  const handleCatalogRefresh = (detail = {}) => {
+    reloadCatalogLists();
+
+    if (!showModal) return;
+
+    setNewProduct((prev) => {
+      const next = { ...prev };
+      const kind = detail?.tab || detail?.kind;
+      const item = detail?.item || {};
+
+      if (kind === "categories" && item.name) {
+        next.category = prev.category || item.name;
+      }
+
+      if (kind === "types" && item.name && !prev.product_type) {
+        next.product_type = item.name;
+      }
+
+      if (kind === "names" && item.name) {
+        next.product_type = prev.product_type || item.product_type || "";
+        next.product_name = prev.product_name || item.name;
+      }
+
+      if (kind === "variants" && item.name) {
+        next.product_name = prev.product_name || item.product_name || "";
+        next.variant = prev.variant || item.name;
+      }
+
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    reloadCatalogLists();
+  }, []);
+
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
 
-  const [newProduct, setNewProduct] =
-    useState({
-      name: "",
-      product_type: "",
-      product_name: "",
-      pricing_method: "",
-      category: "Aluminum",
-      variant: "",
-      base_price: "",
-      price_per_sqft: "",
-      price_per_blade: "",
-      customization: false,
-      customization_fee: 700,
-      width: "",
-      height: "",
-      unit: "in",
-      blade_count: "",
-      estimated_area: 0,
-      estimated_price: 0,
-      images: {},
-      description: "",
-      is_active: true,
-    });
+  const INITIAL_NEW_PRODUCT = {
+    name: "",
+    product_type: "",
+    product_name: "",
+    pricing_method: "",
+    category: DEFAULT_CATEGORY,
+    variant: "",
+    base_price: "",
+    price_per_sqft: "",
+    price_per_blade: "",
+    customization: false,
+    customization_fee: 700,
+    standard_size: "",
+    width: "",
+    height: "",
+    unit: "in",
+    blade_count: "",
+    estimated_area: 0,
+    estimated_price: 0,
+    images: {},
+    description: "",
+    is_active: true,
+  };
+
+  const [newProduct, setNewProduct] = useState(INITIAL_NEW_PRODUCT);
 
   const [editingProduct, setEditingProduct] =
     useState(null);
@@ -264,21 +514,23 @@ function Products() {
   const filteredProducts = products.filter((product) => {
     const normalizedSearch = search.toLowerCase();
     const matchSearch =
-      product.name.toLowerCase().includes(normalizedSearch) ||
-      product.description?.toLowerCase().includes(normalizedSearch);
+      String(product.name || product.product_name || "").toLowerCase().includes(normalizedSearch) ||
+      String(product.description || "").toLowerCase().includes(normalizedSearch) ||
+      String(product.category || "").toLowerCase().includes(normalizedSearch) ||
+      String(product.variant || "").toLowerCase().includes(normalizedSearch);
 
     const matchCategory =
       categoryFilter === "All"
         ? true
-        : product.category?.toLowerCase() === categoryFilter.toLowerCase();
+        : String(product.category || "").toLowerCase() === categoryFilter.toLowerCase();
 
     const productType =
       product.type ||
-      (product.category?.toLowerCase() === "glass"
+      (String(product.category || "").toLowerCase() === "glass"
         ? "Glass"
-        : product.category?.toLowerCase() === "aluminum"
+        : String(product.category || "").toLowerCase() === "aluminum"
         ? "Aluminum"
-        : "Default Type");
+        : "Mixed System");
 
     const matchType =
       typeFilter === "All"
@@ -320,13 +572,7 @@ function Products() {
       setProducts((current) =>
         current.map((item) =>
           item.id === product.id || item._id === product.id
-            ? {
-                ...item,
-                ...payload,
-                price: `₱${(payload.unit_price || item.unit_price || 0).toLocaleString()}`,
-                image: payload.image_url || item.image || "",
-                category: payload.category || item.category || "",
-              }
+            ? normalizeProductForState({ ...item, ...payload }, item)
             : item
         )
       );
@@ -339,21 +585,7 @@ function Products() {
     const loadProducts = async () => {
       try {
         const data = await getProducts();
-        const loadedProducts = (data.products || []).map((product) => ({
-          ...product,
-          id: product._id || product.id,
-          price:
-            product.price ||
-            `₱${(product.unit_price || 0).toLocaleString()}`,
-          image: resolveProductImage(product),
-          category: product.category || "",
-          type: product.type ||
-            (product.category?.toLowerCase() === "glass"
-              ? "Glass"
-              : product.category?.toLowerCase() === "aluminum"
-              ? "Aluminum"
-              : "Default Type"),
-        }));
+        const loadedProducts = (data.products || []).map((product) => normalizeProductForState(product));
         setProducts(loadedProducts);
       } catch (error) {
         console.error("Failed to load products", error);
@@ -370,19 +602,21 @@ function Products() {
         return;
       }
       if (product) {
+        const safeProduct = normalizeProductForState(product);
         setEditingProduct(product);
         setNewProduct({
-          name: product.name || "",
-          product_type: product.product_type || product.type || "",
-          product_name: product.product_name || product.name || "",
-          pricing_method: product.pricing_method || PRICING_METHOD[product.name] || "",
-          category: product.category || "Aluminum",
-          variant: product.variant || "",
+          name: safeProduct.name || "",
+          product_type: safeProduct.product_type || safeProduct.type || "",
+          product_name: safeProduct.product_name || safeProduct.name || "",
+          pricing_method: product.pricing_method || PRICING_METHOD[safeProduct.product_name || safeProduct.name] || "",
+          category: safeProduct.category || DEFAULT_CATEGORY,
+          variant: safeProduct.variant || "",
           base_price: product.base_price || product.unit_price || "",
           price_per_sqft: product.price_per_sqft || "",
           price_per_blade: product.price_per_blade || "",
           customization: product.customization || false,
           customization_fee: product.customization_fee || 700,
+          standard_size: product.standard_size || "",
           width: product.width || "",
           height: product.height || "",
           unit: product.unit || "in",
@@ -396,29 +630,7 @@ function Products() {
         });
       } else {
         setEditingProduct(null);
-        setNewProduct({
-          name: "",
-          product_type: "",
-          product_name: "",
-          pricing_method: "",
-          category: "Aluminum",
-          variant: "",
-          base_price: "",
-          price_per_sqft: "",
-          price_per_blade: "",
-          customization: false,
-          customization_fee: 700,
-          width: "",
-          height: "",
-          unit: "in",
-          blade_count: "",
-          estimated_area: 0,
-          estimated_price: 0,
-          images: {},
-          imageFiles: {},
-          description: "",
-          is_active: true,
-        });
+        setNewProduct({ ...INITIAL_NEW_PRODUCT, imageFiles: {} });
       }
       setShowModal(true);
     };
@@ -427,6 +639,11 @@ function Products() {
     setShowModal(false);
     setEditingProduct(null);
     setModalError("");
+  };
+
+  const handleCreateNewProduct = () => {
+    // Reuse openModal logic for consistent admin check and modal behavior
+    openModal(null);
   };
 
   // Upload image files using multipart/form-data and real XHR progress tracking
@@ -523,6 +740,11 @@ function Products() {
       return;
     }
 
+    if (!newProduct.pricing_method) {
+      setModalError("Pricing method is required.");
+      return;
+    }
+
     if (newProduct.pricing_method === "sqft") {
       const w = parseFloat(newProduct.width);
       const h = parseFloat(newProduct.height);
@@ -587,6 +809,7 @@ function Products() {
         price_per_sqft: Number(newProduct.price_per_sqft) || undefined,
         price_per_blade: Number(newProduct.price_per_blade) || undefined,
         customization_fee: newProduct.customization ? Number(newProduct.customization_fee) : 0,
+        standard_size: newProduct.standard_size || "",
         width: newProduct.width ? Number(newProduct.width) : undefined,
         height: newProduct.height ? Number(newProduct.height) : undefined,
         blade_count: newProduct.blade_count ? Number(newProduct.blade_count) : undefined,
@@ -603,14 +826,7 @@ function Products() {
         setProducts((current) =>
           current.map((item) =>
             item.id === editingProduct.id || item._id === editingProduct.id
-              ? {
-                  ...item,
-                  ...product,
-                  id: product._id || product.id,
-                  price: `₱${(product.unit_price || 0).toLocaleString()}`,
-                  image: product.image_url || product.image || "",
-                  category: product.category || item.category || "",
-                }
+              ? normalizeProductForState({ ...item, ...product }, item)
               : item
           )
         );
@@ -619,13 +835,7 @@ function Products() {
         const product = created.product || created;
         setProducts((current) => [
           ...current,
-          {
-            ...product,
-            id: product._id || product.id,
-            price: `₱${(product.unit_price || 0).toLocaleString()}`,
-            image: product.image_url || product.image || "",
-            category: product.category || "",
-          },
+          normalizeProductForState(product),
         ]);
       }
 
@@ -672,13 +882,27 @@ function Products() {
     }
   };
 
-  const getProductType = (product) =>
-    product.type ||
-    (product.category?.toLowerCase() === "glass"
-      ? "Glass"
-      : product.category?.toLowerCase() === "aluminum"
-      ? "Aluminum"
-      : "Default Type");
+  const getProductType = (product) => {
+    const category = product.category || DEFAULT_CATEGORY;
+    return product.type ||
+      (String(category).toLowerCase() === "glass"
+        ? "Glass"
+        : String(category).toLowerCase() === "aluminum"
+        ? "Aluminum"
+        : "Mixed System");
+  };
+
+  const productTypeOptions = withSelectedOption(productTypesList, newProduct.product_type);
+  const productNameOptions = withSelectedOption(
+    productNamesList[newProduct.product_type] || PRODUCT_NAMES[newProduct.product_type] || [],
+    newProduct.product_name
+  );
+  const categoryOptions = withSelectedOption(categoryOptionsList, newProduct.category);
+  const variantOptions = withSelectedOption(
+    variantsList[newProduct.product_name] || VARIANTS[newProduct.product_name] || [],
+    newProduct.variant
+  );
+  const effectivePricingMethod = newProduct.pricing_method || PRICING_METHOD[newProduct.product_name] || "";
 
 
 
@@ -721,209 +945,357 @@ function Products() {
           </div>
 
           {/* FILTERS */}
+          {activeProductPageTab === "products" && (
+            <div className="bg-white rounded-3xl shadow mt-6 p-6">
 
-          <div className="bg-white rounded-3xl shadow mt-6 p-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="relative flex-1">
+                  <Search
+                    size={18}
+                    className="absolute left-4 top-4 text-gray-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Search products..."
+                    value={search}
+                    onChange={(e) =>
+                      setSearch(e.target.value)
+                    }
+                    className="w-full pl-12 pr-4 py-3 border rounded-xl"
+                  />
+                </div>
 
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="relative flex-1">
-                <Search
-                  size={18}
-                  className="absolute left-4 top-4 text-gray-400"
-                />
-                <input
-                  type="text"
-                  placeholder="Search products..."
-                  value={search}
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      onClick={() => openModal()}
+                      disabled={!isAdmin}
+                      className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition ${isAdmin ? "bg-red-600 hover:bg-red-700" : "bg-gray-300 cursor-not-allowed"}`}
+                    >
+                      <Plus size={18} className="mr-2" />
+                      Add Product
+                    </button>
+
+                    <button
+                      onClick={() => setShowProductManagementModal(true)}
+                      disabled={!isAdmin}
+                      className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold transition ${isAdmin ? "bg-white text-red-600 border border-red-600 hover:bg-red-50" : "bg-gray-300 cursor-not-allowed"}`}
+                    >
+                      <Settings size={18} className="mr-2" />
+                      Product Management
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={openReviewTab}
+                      disabled={!isAdmin}
+                      className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold transition ${isAdmin ? "bg-white text-red-600 border border-red-600 hover:bg-red-50" : "bg-gray-300 cursor-not-allowed"}`}
+                    >
+                      <Star size={18} className="mr-2" />
+                      Reviews
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {!isAdmin && (
+                <p className="mt-3 text-sm text-yellow-700">
+                  Product creation and editing are available only to admin users.
+                </p>
+              )}
+
+              <div className="grid gap-4 mt-4 lg:grid-cols-3">
+                <select
+                  value={typeFilter}
                   onChange={(e) =>
-                    setSearch(e.target.value)
+                    setTypeFilter(e.target.value)
                   }
-                  className="w-full pl-12 pr-4 py-3 border rounded-xl"
-                />
+                  className="px-4 py-3 border rounded-xl"
+                >
+                  <option value="All">All types</option>
+                  <option value="Default Type">Default Type</option>
+                  <option value="Glass">Glass</option>
+                  <option value="Aluminum">Aluminum</option>
+                </select>
+
+                <select
+                  value={categoryFilter}
+                  onChange={(e) =>
+                    setCategoryFilter(e.target.value)
+                  }
+                  className="px-4 py-3 border rounded-xl"
+                >
+                  <option value="All">All categories</option>
+                  {categoryOptionsList.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={statusFilter}
+                  onChange={(e) =>
+                    setStatusFilter(e.target.value)
+                  }
+                  className="px-4 py-3 border rounded-xl"
+                >
+                  <option value="All">All statuses</option>
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
               </div>
 
-              <button
-                onClick={() => openModal()}
-                disabled={!isAdmin}
-                className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition ${isAdmin ? "bg-red-600 hover:bg-red-700" : "bg-gray-300 cursor-not-allowed"}`}
-              >
-                <Plus size={18} className="mr-2" />
-                Add Product
-              </button>
             </div>
-            {!isAdmin && (
-              <p className="mt-3 text-sm text-yellow-700">
-                Product creation and editing are available only to admin users.
-              </p>
-            )}
-
-            <div className="grid gap-4 mt-4 lg:grid-cols-3">
-              <select
-                value={typeFilter}
-                onChange={(e) =>
-                  setTypeFilter(e.target.value)
-                }
-                className="px-4 py-3 border rounded-xl"
-              >
-                <option value="All">All types</option>
-                <option value="Default Type">Default Type</option>
-                <option value="Glass">Glass</option>
-                <option value="Aluminum">Aluminum</option>
-              </select>
-
-              <select
-                value={categoryFilter}
-                onChange={(e) =>
-                  setCategoryFilter(e.target.value)
-                }
-                className="px-4 py-3 border rounded-xl"
-              >
-                <option value="All">All categories</option>
-                <option value="Windows">Windows</option>
-                <option value="Doors">Doors</option>
-                <option value="Cabinets">Cabinets</option>
-                <option value="Shower Enclosures">Shower Enclosures</option>
-                <option value="Aluminum">Aluminum</option>
-                <option value="Glass">Glass</option>
-                <option value="Accessories">Accessories</option>
-              </select>
-
-              <select
-                value={statusFilter}
-                onChange={(e) =>
-                  setStatusFilter(e.target.value)
-                }
-                className="px-4 py-3 border rounded-xl"
-              >
-                <option value="All">All statuses</option>
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-              </select>
-            </div>
-
-          </div>
+          )}
 
           {/* PRODUCTS */}
 
-          <div className="mt-6">
-            {currentProducts.length === 0 ? (
-              <div className="bg-white rounded-3xl p-10 shadow text-center">
-                <p className="text-gray-500">No products match the selected filters.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-3xl border border-gray-200 bg-white shadow-sm">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">No.</th>
-                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Product</th>
-                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Category</th>
-                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Variant</th>
-                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Price</th>
-                      <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Status</th>
-                      <th className="px-4 py-4 text-right text-sm font-bold uppercase tracking-wider text-gray-900">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200 bg-white">
-                    {currentProducts.map((product, index) => {
-                      const imageSrc = resolveProductImage(product);
-                      const productName = product.product_name || product.name;
-                      const productType = product.product_type || "Default Type";
-                      const rowNumber = firstIndex + index + 1;
-                      return (
-                        <tr key={product._id || product.id} className="hover:bg-gray-50">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{rowNumber}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center gap-3">
-                              <div className="h-14 w-14 overflow-hidden rounded-2xl bg-gray-100">
-                                <img
-                                  src={imageSrc}
-                                  alt={productName}
-                                  className="h-full w-full object-cover"
-                                  onError={(e) => {
-                                    e.currentTarget.onerror = null;
-                                    e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
-                                  }}
-                                />
-                              </div>
-                              <div>
-                                <div className="text-sm font-semibold text-gray-900">{productName}</div>
-                                <div className="text-xs text-gray-500">{productType}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.category || "—"}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.variant || "—"}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{getProductPriceLabel(product)}</td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${product.is_active ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-700"}`}>
-                              {product.is_active ? "Active" : "Inactive"}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                className="p-2 rounded-lg text-orange-500 hover:bg-orange-50 transition"
-                                onClick={() => openModal(product)}
-                                title="Edit product"
-                                aria-label="Edit product"
-                              >
-                                <Pencil size={20} />
-                              </button>
-                              <button
-                                className="p-2 rounded-lg text-red-600 hover:bg-red-50 transition"
-                                onClick={() => openDeleteConfirm(product)}
-                                title="Delete product"
-                                aria-label="Delete product"
-                              >
-                                <Trash2 size={20} />
-                              </button>
-                            </div>
-                          </td>
+          {activeProductPageTab === "products" ? (
+            <>
+              <div className="mt-6">
+                {currentProducts.length === 0 ? (
+                  <div className="bg-white rounded-3xl p-10 shadow text-center">
+                    <p className="text-gray-500">No products match the selected filters.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-3xl border border-gray-200 bg-white shadow-sm">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">No.</th>
+                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Product</th>
+                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Category</th>
+                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Variant</th>
+                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Price</th>
+                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Status</th>
+                          <th className="px-4 py-4 text-right text-sm font-bold uppercase tracking-wider text-gray-900">Actions</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200 bg-white">
+                        {currentProducts.map((product, index) => {
+                          const imageSrc = resolveProductImage(product);
+                          const productName = product.product_name || product.name;
+                          const productType = product.product_type || "Default Type";
+                          const rowNumber = firstIndex + index + 1;
+                          return (
+                            <tr key={product._id || product.id} className="hover:bg-gray-50">
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{rowNumber}</td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <div className="flex items-center gap-3">
+                                  <div className="h-14 w-14 overflow-hidden rounded-2xl bg-gray-100">
+                                    <img
+                                      src={imageSrc}
+                                      alt={productName}
+                                      className="h-full w-full object-cover"
+                                      onError={(e) => {
+                                        e.currentTarget.onerror = null;
+                                        e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+                                      }}
+                                    />
+                                  </div>
+                                  <div>
+                                    <div className="text-sm font-semibold text-gray-900">{productName}</div>
+                                    <div className="text-xs text-gray-500">{productType}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.category || "—"}</td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.variant || "—"}</td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{getProductPriceLabel(product)}</td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${product.is_active ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-700"}`}>
+                                  {product.is_active ? "Active" : "Inactive"}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    className="p-2 rounded-lg text-orange-500 hover:bg-orange-50 transition"
+                                    onClick={() => openModal(product)}
+                                    title="Edit product"
+                                    aria-label="Edit product"
+                                  >
+                                    <Pencil size={20} />
+                                  </button>
+                                  <button
+                                    className="p-2 rounded-lg text-red-600 hover:bg-red-50 transition"
+                                    onClick={() => openDeleteConfirm(product)}
+                                    title="Delete product"
+                                    aria-label="Delete product"
+                                  >
+                                    <Trash2 size={20} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* PAGINATION */}
+              {/* PAGINATION */}
+              <div className="mt-6 flex flex-col gap-4 items-center sm:flex-row sm:justify-center sm:items-center">
+                <span className="text-gray-500 text-center">
+                  Showing {firstShown}-{lastShown} of {filteredProducts.length} products
+                </span>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  <button
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(currentPage - 1)}
+                    className="px-4 py-2 border rounded-lg"
+                  >
+                    Previous
+                  </button>
+                  {[...Array(totalPages)].map((_, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setCurrentPage(index + 1)}
+                      className={`w-10 h-10 rounded-lg ${
+                        currentPage === index + 1
+                          ? "bg-red-600 text-white"
+                          : "bg-white border"
+                      }`}
+                    >
+                      {index + 1}
+                    </button>
+                  ))}
+                  <button
+                    disabled={currentPage === totalPages}
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                    className="px-4 py-2 border rounded-lg"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="mt-6 bg-white rounded-3xl p-6 shadow-sm">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                  <h2 className="text-2xl font-semibold text-slate-900">Product Reviews</h2>
+                  <p className="mt-2 text-sm text-slate-500">View customer reviews for purchases tied to your product catalog.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setActiveProductPageTab("products")}
+                    className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Back to Products
+                  </button>
+                  {reviewsLoading && (
+                    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-4 py-2 text-sm text-slate-700">
+                      <Loader2 size={18} className="animate-spin" /> Loading reviews
+                    </div>
+                  )}
+                </div>
+              </div>
 
-          <div className="mt-6 flex flex-col gap-4 items-center sm:flex-row sm:justify-center sm:items-center">
-            <span className="text-gray-500 text-center">
-              Showing {firstShown}-{lastShown} of {filteredProducts.length} products
-            </span>
-            <div className="flex flex-wrap gap-2 justify-center">
-              <button
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage(currentPage - 1)}
-                className="px-4 py-2 border rounded-lg"
-              >
-                Previous
-              </button>
-              {[...Array(totalPages)].map((_, index) => (
-                <button
-                  key={index}
-                  onClick={() => setCurrentPage(index + 1)}
-                  className={`w-10 h-10 rounded-lg ${
-                    currentPage === index + 1
-                      ? "bg-red-600 text-white"
-                      : "bg-white border"
-                  }`}
-                >
-                  {index + 1}
-                </button>
-              ))}
-              <button
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage(currentPage + 1)}
-                className="px-4 py-2 border rounded-lg"
-              >
-                Next
-              </button>
+              <div className="mt-6 grid gap-6 xl:grid-cols-[320px_1fr]">
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
+                  <label className="block text-sm font-semibold text-slate-700">Choose product</label>
+                  <select
+                    value={selectedReviewProductId}
+                    onChange={(e) => setSelectedReviewProductId(e.target.value)}
+                    className="mt-3 w-full rounded-3xl border border-slate-200 bg-white py-3 px-4 text-sm text-slate-900 shadow-sm"
+                  >
+                    <option value="">Select a product</option>
+                    {products.map((product) => (
+                      <option key={product._id || product.id} value={product._id || product.id}>
+                        {product.product_name || product.name || "Unnamed product"}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="mt-6 grid gap-4">
+                    <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                      <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Total Reviews</p>
+                      <p className="mt-2 text-lg font-semibold text-slate-900">{selectedReviewProduct ? reviews.length : "—"}</p>
+                    </div>
+                    <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                      <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Average Rating</p>
+                      <p className="mt-2 flex items-center gap-2 text-lg font-semibold text-slate-900">
+                        {selectedReviewProduct ? (reviews.length ? (reviews.reduce((sum, review) => sum + (review.rating || 0), 0) / reviews.length).toFixed(1) : "0.0") : "—"}
+                        <span className="text-amber-500"><Star size={16} /></span>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {reviewError && (
+                    <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                      {reviewError}
+                    </div>
+                  )}
+
+                  {!selectedReviewProduct && (
+                    <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
+                      Select a product to view its reviews.
+                    </div>
+                  )}
+
+                  {selectedReviewProduct && !reviewsLoading && reviews.length === 0 && (
+                    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
+                      No reviews found for this product.
+                    </div>
+                  )}
+
+                  {selectedReviewProduct && reviews.length > 0 && (
+                    <div className="space-y-4">
+                      {reviews.map((review) => (
+                        <div key={`${review.orderId}-${review.submittedAt || review._id || Math.random()}`} className="rounded-3xl border border-slate-200 p-6">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-sm text-slate-500">Customer</p>
+                              <p className="mt-1 font-semibold text-slate-900">{review.customerName || review.customer || "Anonymous"}</p>
+                            </div>
+                            <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-700">
+                              <span>{Array.from({ length: review.rating || 0 }).map((_, index) => (<Star key={index} size={14} />))}</span>
+                              <span>{(review.rating || 0).toFixed(1)}</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Title</p>
+                              <p className="mt-2 font-semibold text-slate-900">{review.title || "No title provided"}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Submitted</p>
+                              <p className="mt-2 font-semibold text-slate-900">{review.submittedAt ? new Date(review.submittedAt).toLocaleDateString() : review.createdAt ? new Date(review.createdAt).toLocaleDateString() : "—"}</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-4">
+                            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Comment</p>
+                            <p className="mt-2 text-sm leading-6 text-slate-700">{review.comment || review.feedback || "No comment provided."}</p>
+                          </div>
+
+                          {review.photos?.length > 0 && (
+                            <div className="mt-4 grid grid-cols-2 gap-3">
+                              {review.photos.map((photo, index) => (
+                                <img
+                                  key={index}
+                                  src={photo}
+                                  alt={`Review photo ${index + 1}`}
+                                  className="h-28 w-full rounded-3xl object-cover"
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
         </main>
       </div>
@@ -1048,7 +1420,7 @@ function Products() {
 
               {/* Fields column */}
               <div className="md:col-span-2 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="text-xs text-gray-500">Product Type *</label>
                     <select
@@ -1066,9 +1438,9 @@ function Products() {
                       className="w-full px-4 py-3 border rounded-xl"
                     >
                       <option value="">Select Product Type</option>
-                      {PRODUCT_TYPES.map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                        {productTypeOptions.map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
                     </select>
                   </div>
 
@@ -1082,15 +1454,40 @@ function Products() {
                         setNewProduct((p) => ({
                           ...p,
                           product_name: value,
-                          pricing_method: PRICING_METHOD[value] || p.pricing_method || "",
+                          pricing_method: PRICING_METHOD[value] || "",
+                          variant: "",
                         }));
                       }}
                       className="w-full px-4 py-3 border rounded-xl"
                     >
                       <option value="">Select Product Name</option>
-                      {(PRODUCT_NAMES[newProduct.product_type] || []).map((name) => (
+                      {productNameOptions.map((name) => (
                         <option key={name} value={name}>{name}</option>
                       ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-gray-500">Pricing Method *</label>
+                    <select
+                      value={effectivePricingMethod}
+                      disabled={!newProduct.product_name}
+                      onChange={(e) => setNewProduct((p) => ({
+                        ...p,
+                        pricing_method: e.target.value,
+                        width: "",
+                        height: "",
+                        blade_count: "",
+                        base_price: "",
+                        price_per_sqft: "",
+                        price_per_blade: "",
+                      }))}
+                      className="w-full px-4 py-3 border rounded-xl"
+                    >
+                      <option value="">Select Pricing Method</option>
+                      <option value="sqft">Per square foot</option>
+                      <option value="fixed">Fixed price</option>
+                      <option value="blade">Per blade</option>
                     </select>
                   </div>
                 </div>
@@ -1098,22 +1495,29 @@ function Products() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="text-xs text-gray-500">Category</label>
-                    <select value={newProduct.category} onChange={(e)=>setNewProduct(p=>({...p,category:e.target.value}))} className="w-full px-4 py-3 border rounded-xl">
-                      <option>Windows</option>
-                      <option>Doors</option>
-                      <option>Cabinets</option>
-                      <option>Shower Enclosures</option>
-                      <option>Aluminum</option>
-                      <option>Glass</option>
-                      <option>Accessories</option>
+                    <select
+                      value={newProduct.category}
+                      onChange={(e) => setNewProduct((p) => ({ ...p, category: e.target.value }))}
+                      className="w-full px-4 py-3 border rounded-xl"
+                    >
+                      {categoryOptions.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
                     </select>
                   </div>
 
                   <div>
                     <label className="text-xs text-gray-500">Variant</label>
-                    <select value={newProduct.variant} disabled={!newProduct.product_name} onChange={(e)=>setNewProduct(p=>({...p,variant:e.target.value}))} className="w-full px-4 py-3 border rounded-xl">
+                    <select
+                      value={newProduct.variant}
+                      disabled={!newProduct.product_name}
+                      onChange={(e) => setNewProduct((p) => ({ ...p, variant: e.target.value }))}
+                      className="w-full px-4 py-3 border rounded-xl"
+                    >
                       <option value="">Select Variant</option>
-                      {(VARIANTS[newProduct.product_name] || []).map(v=> <option key={v}>{v}</option>)}
+                      {variantOptions.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
                     </select>
                   </div>
 
@@ -1245,6 +1649,14 @@ function Products() {
             </div>
           </div>
         </div>
+      )}
+
+      {showProductManagementModal && (
+        <ProductManagementModal
+          open={showProductManagementModal}
+          onClose={() => setShowProductManagementModal(false)}
+          onChange={handleCatalogRefresh}
+        />
       )}
 
     </div>

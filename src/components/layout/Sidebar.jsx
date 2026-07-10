@@ -170,6 +170,7 @@ function MenuItem({
   label,
   isOpen,
   active,
+  nested = false,
 }) {
   return (
     <Link
@@ -179,7 +180,7 @@ function MenuItem({
         active
           ? "bg-red-600 text-white"
           : "text-gray-700 hover:bg-red-50 hover:text-red-700"
-      } ${isOpen ? "justify-start" : "justify-center"}`}
+      } ${isOpen ? "justify-start" : "justify-center"} ${nested ? "rounded-l-none rounded-r-xl" : ""}`}
     >
       {icon}
       <span className={`overflow-hidden whitespace-nowrap transition-all duration-1000 ease-in-out ${

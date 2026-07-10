@@ -291,7 +291,7 @@ function Dashboard() {
 
           <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
             <h1 className="text-3xl font-bold">
-              Welcome to ACGC Admin Dashboard
+              Dashboard
             </h1>
 
             <p className="mt-2 text-red-100">
@@ -330,102 +330,6 @@ function Dashboard() {
               <p className="text-blue-600 text-sm mt-2">
                 1 currently active
               </p>
-            </div>
-
-          </div>
-
-          {/* Quick Actions */}
-
-          <div className="bg-white rounded-3xl shadow mt-6 p-4">
-
-            <h2 className="text-lg font-bold mb-4">
-              Quick Actions
-            </h2>
-
-            <p className="text-gray-500 mb-4">
-              Shortcuts
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-
-              <button
-                onClick={() =>
-                  navigate("/site-inspection")
-                }
-                className="bg-red-50/50 border border-red-500 rounded-2xl p-4 text-left hover:bg-red-100 transition"
-              >
-                <ClipboardCheck
-                  className="text-red-600 mb-2"
-                  size={28}
-                />
-
-                <h3 className="font-bold text-sm leading-tight">
-                  New Inspection
-                </h3>
-
-                <p className="text-gray-500 text-xs mt-1">
-                  Site inspection
-                </p>
-              </button>
-
-              <button
-                onClick={() =>
-                  navigate("/progress-monitor")
-                }
-                className="bg-blue-50/50 border border-blue-500 rounded-2xl p-4 text-left hover:bg-blue-100 transition"
-              >
-                <FolderOpen
-                  className="text-blue-600 mb-2"
-                  size={28}
-                />
-
-                <h3 className="font-bold text-sm leading-tight">
-                  View Projects
-                </h3>
-
-                <p className="text-gray-500 text-xs mt-1">
-                  Progress monitor
-                </p>
-              </button>
-
-              <button
-                onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
-                className="bg-green-50/50 border border-green-500 rounded-2xl p-4 text-left hover:bg-green-100 transition"
-              >
-                <ShieldCheck
-                  className="text-green-600 mb-2"
-                  size={28}
-                />
-
-                <h3 className="font-bold text-sm leading-tight">
-                  View Warranty
-                </h3>
-
-                <p className="text-gray-500 text-xs mt-1">
-                  Warranties
-                </p>
-              </button>
-
-              <button
-                onClick={() =>
-                  navigate("/product")
-                }
-                className="bg-purple-50 border border-purple-500 rounded-2xl p-4 text-left hover:bg-purple-100 transition"
-              >
-                <Package
-                  className="text-purple-600 mb-2"
-                  size={28}
-                />
-
-                <h3 className="font-bold text-sm leading-tight">
-                  Add Product
-                </h3>
-
-                <p className="text-gray-500 text-xs mt-1">
-                  Inventory
-                </p>
-              </button>
-
             </div>
 
           </div>
@@ -641,6 +545,102 @@ function Dashboard() {
                 </button>
 
               </div>
+
+            </div>
+
+          </div>
+
+          {/* Quick Actions */}
+
+          <div className="bg-white rounded-3xl shadow mt-6 p-4">
+
+            <h2 className="text-lg font-bold mb-4">
+              Quick Actions
+            </h2>
+
+            <p className="text-gray-500 mb-4">
+              Shortcuts
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+
+              <button
+                onClick={() =>
+                  navigate("/site-inspection")
+                }
+                className="bg-red-50/50 border border-red-500 rounded-2xl p-4 text-left hover:bg-red-100 transition"
+              >
+                <ClipboardCheck
+                  className="text-red-600 mb-2"
+                  size={28}
+                />
+
+                <h3 className="font-bold text-sm leading-tight">
+                  New Inspection
+                </h3>
+
+                <p className="text-gray-500 text-xs mt-1">
+                  Site inspection
+                </p>
+              </button>
+
+              <button
+                onClick={() =>
+                  navigate("/progress-monitor")
+                }
+                className="bg-blue-50/50 border border-blue-500 rounded-2xl p-4 text-left hover:bg-blue-100 transition"
+              >
+                <FolderOpen
+                  className="text-blue-600 mb-2"
+                  size={28}
+                />
+
+                <h3 className="font-bold text-sm leading-tight">
+                  View Projects
+                </h3>
+
+                <p className="text-gray-500 text-xs mt-1">
+                  Progress monitor
+                </p>
+              </button>
+
+              <button
+                onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+                className="bg-green-50/50 border border-green-500 rounded-2xl p-4 text-left hover:bg-green-100 transition"
+              >
+                <ShieldCheck
+                  className="text-green-600 mb-2"
+                  size={28}
+                />
+
+                <h3 className="font-bold text-sm leading-tight">
+                  View Warranty
+                </h3>
+
+                <p className="text-gray-500 text-xs mt-1">
+                  Warranties
+                </p>
+              </button>
+
+              <button
+                onClick={() =>
+                  navigate("/product")
+                }
+                className="bg-purple-50 border border-purple-500 rounded-2xl p-4 text-left hover:bg-purple-100 transition"
+              >
+                <Package
+                  className="text-purple-600 mb-2"
+                  size={28}
+                />
+
+                <h3 className="font-bold text-sm leading-tight">
+                  Add Product
+                </h3>
+
+                <p className="text-gray-500 text-xs mt-1">
+                  Inventory
+                </p>
+              </button>
 
             </div>
 

@@ -9,6 +9,8 @@ export const getAdminOrders = (params = {}) => {
 
 export const getAdminOrder = (orderId) => apiFetch(`/orders/admin/${orderId}`);
 
+export const getProductReviews = (productId) => apiFetch(`/orders/reviews/product/${encodeURIComponent(productId)}`);
+
 export const updateOrderStatus = (orderId, payload) =>
   apiFetch(`/orders/admin/${orderId}/status`, {
     method: "PUT",
@@ -58,6 +60,12 @@ export const trackOrder = (tracking) => apiFetch(`/orders/track/${encodeURICompo
 export const generateContract = (orderId, payload = {}) =>
   apiFetch(`/orders/admin/${orderId}/contract`, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const submitOrderReview = (orderId, payload = {}) =>
+  apiFetch(`/orders/${orderId}/review`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 

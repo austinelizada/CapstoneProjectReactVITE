@@ -8,8 +8,6 @@ import {
   User,
   LogOut,
   Search,
-  Star,
-  Eye,
   Mail,
   Phone,
   Camera,
@@ -23,12 +21,14 @@ import {
   Minus,
   FileText,
   Bell,
+  Star,
 } from "lucide-react";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { getProducts } from "@/api/products";
 import { API_BASE } from "@/api/client";
-import { createOrder, getOrders, trackOrder, acceptContract, declineContract } from "@/api/orders";
+import { createOrder, getOrders, trackOrder, acceptContract, declineContract, submitOrderReview, getProductReviews } from "@/api/orders";
+import { uploadFiles } from "@/api/uploads";
 import ContractModal from "../../components/ContractModal";
 import OrderTimeline from "@/components/OrderTimeline";
 import { calculateEstimate } from "@/lib/estimator";
@@ -126,15 +126,19 @@ function CustomerDashboard() {
   const [cartDecisionStep, setCartDecisionStep] = useState("choice");
   const [cartDecisionProduct, setCartDecisionProduct] = useState(null);
   const [estimateForm, setEstimateForm] = useState({
+    unit: "in",
     width: "",
     height: "",
     quantity: 1,
     notes: "",
   });
+  const [estimateFormErrors, setEstimateFormErrors] = useState({});
   const [cartActionError, setCartActionError] = useState("");
 
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [productReviews, setProductReviews] = useState([]);
+  const [productReviewsLoading, setProductReviewsLoading] = useState(false);
 
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutMessage, setCheckoutMessage] = useState("");
@@ -153,8 +157,19 @@ function CustomerDashboard() {
     orderId: null,
   });
   const [showOrderReviewModal, setShowOrderReviewModal] = useState(false);
-  const [orderReviewAgreed, setOrderReviewAgreed] = useState(false);
+  const [showCustomerReviewModal, setShowCustomerReviewModal] = useState(false);
+  const [showProductReviewModal, setShowProductReviewModal] = useState(false);
   const [reviewOrderMode, setReviewOrderMode] = useState("estimate");
+  const [orderReviewForm, setOrderReviewForm] = useState({
+    rating: 0,
+    title: "",
+    comment: "",
+    photos: [],
+    photoPreviews: [],
+  });
+  const [reviewFormError, setReviewFormError] = useState("");
+  const [reviewFormLoading, setReviewFormLoading] = useState(false);
+  const [selectedReviewOrder, setSelectedReviewOrder] = useState(null);
   const [estimateFlowType, setEstimateFlowType] = useState(null);
   const [showDeliveryConfirmModal, setShowDeliveryConfirmModal] = useState(false);
   const [deliveryConfirmMode, setDeliveryConfirmMode] = useState("estimate");
@@ -313,6 +328,10 @@ function CustomerDashboard() {
   }, 0);
   const allSelected = cartItems.length > 0 && selectedItemCount === cartItems.length;
 
+  const productReviewAverageRating = productReviews.length
+    ? (productReviews.reduce((sum, review) => sum + (review.rating || 0), 0) / productReviews.length).toFixed(1)
+    : null;
+
   useEffect(() => {
     if (selectedOrderForModal) {
       const contractStatus = selectedOrderForModal.contract_status?.toLowerCase();
@@ -334,6 +353,127 @@ function CustomerDashboard() {
     (selectedOrderStatus === "contract_sent" || selectedOrderContractStatus === "sent") &&
     !["accepted", "declined"].includes(selectedOrderContractStatus) &&
     !["contract_accepted", "contract_declined", "cancelled"].includes(selectedOrderStatus);
+
+  const isOrderCompletedAndReviewable = (order) => {
+    if (!order) return false;
+    const completed = order.status === "completed" && Number(order.progress) >= 100;
+    if (!completed) return false;
+    const lastStage = Array.isArray(order.progress_stages) ? order.progress_stages[order.progress_stages.length - 1] : null;
+    if (!lastStage) return true;
+    return Boolean(lastStage.completed || lastStage.status === "done" || lastStage.status === "completed");
+  };
+
+  const isOrderReviewEditable = (order) => {
+    if (!order?.review?.submittedAt) return false;
+    const submittedAt = new Date(order.review.submittedAt);
+    const editDeadline = new Date(submittedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return new Date() <= editDeadline;
+  };
+
+  const hasOrderReview = (order) => Boolean(order?.review?.submittedAt);
+
+  const openCustomerReviewModal = (order) => {
+    const existingReview = order?.review || {};
+    setSelectedReviewOrder(order);
+    setOrderReviewForm({
+      rating: existingReview.rating || 0,
+      title: existingReview.title || "",
+      comment: existingReview.comment || "",
+      photos: existingReview.photos || [],
+      photoPreviews: existingReview.photos || [],
+    });
+    setReviewFormError("");
+    setShowCustomerReviewModal(true);
+  };
+
+  const closeCustomerReviewModal = () => {
+    setSelectedReviewOrder(null);
+    setShowCustomerReviewModal(false);
+    setReviewFormError("");
+    setOrderReviewForm({ rating: 0, title: "", comment: "", photos: [], photoPreviews: [] });
+  };
+
+  const openProductReviewModal = () => {
+    setShowProductReviewModal(true);
+  };
+
+  const closeProductReviewModal = () => {
+    setShowProductReviewModal(false);
+  };
+
+  const handleOrderReviewChange = (field, value) => {
+    setOrderReviewForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleOrderReviewPhotoChange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const existingCount = orderReviewForm.photos.length;
+    if (existingCount + files.length > 5) {
+      setReviewFormError("You may upload up to 5 photos.");
+      return;
+    }
+    const uploads = await uploadFiles(files);
+    if (!uploads.success) {
+      setReviewFormError(uploads.message || "Unable to upload photos.");
+      return;
+    }
+    setOrderReviewForm((prev) => ({
+      ...prev,
+      photos: [...prev.photos, ...(uploads.files || []).map((f) => f.url)],
+      photoPreviews: [...prev.photoPreviews, ...(uploads.files || []).map((f) => f.url)],
+    }));
+  };
+
+  const handleRemoveReviewPhoto = (index) => {
+    setOrderReviewForm((prev) => ({
+      ...prev,
+      photos: prev.photos.filter((_, i) => i !== index),
+      photoPreviews: prev.photoPreviews.filter((_, i) => i !== index),
+    }));
+  };
+
+  const submitCustomerReview = async () => {
+    if (!selectedReviewOrder) return;
+    if (!orderReviewForm.rating || orderReviewForm.rating < 1 || orderReviewForm.rating > 5) {
+      setReviewFormError("Please select a rating from 1 to 5.");
+      return;
+    }
+    if (!orderReviewForm.comment || orderReviewForm.comment.trim().length < 10) {
+      setReviewFormError("Comment must be at least 10 characters.");
+      return;
+    }
+    if (orderReviewForm.comment.trim().length > 500) {
+      setReviewFormError("Comment cannot exceed 500 characters.");
+      return;
+    }
+
+    setReviewFormLoading(true);
+    setReviewFormError("");
+
+    try {
+      const payload = {
+        rating: orderReviewForm.rating,
+        title: orderReviewForm.title.trim(),
+        comment: orderReviewForm.comment.trim(),
+        photos: orderReviewForm.photos.slice(0, 5),
+      };
+      const response = await submitOrderReview(selectedReviewOrder._id || selectedReviewOrder.id, payload);
+      if (response.order) {
+        setOrders((prev) => prev.map((order) => (order._id === response.order._id ? response.order : order)));
+        if (selectedOrderForModal && (selectedOrderForModal._id || selectedOrderForModal.id) === response.order._id) {
+          setSelectedOrderForModal(response.order);
+        }
+        setSelectedReviewOrder(response.order);
+        toast.success("Thank you for your feedback. Your review has been submitted.");
+        closeCustomerReviewModal();
+      }
+    } catch (error) {
+      setReviewFormError(error.data?.message || error.message || "Unable to submit review.");
+    } finally {
+      setReviewFormLoading(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -389,6 +529,34 @@ function CustomerDashboard() {
     };
   }, [user]);
 
+  useEffect(() => {
+    if (!selectedProduct?._id) {
+      setProductReviews([]);
+      return;
+    }
+
+    let active = true;
+    const fetchProductReviews = async () => {
+      setProductReviewsLoading(true);
+      try {
+        const response = await getProductReviews(selectedProduct._id);
+        if (!active) return;
+        setProductReviews(response.reviews || []);
+      } catch {
+        if (!active) return;
+        setProductReviews([]);
+      } finally {
+        if (active) setProductReviewsLoading(false);
+      }
+    };
+
+    fetchProductReviews();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedProduct]);
+
   const generateCartId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
   const handleAddToCart = (product) => {
@@ -403,7 +571,7 @@ function CustomerDashboard() {
     });
   };
 
-  const handleAddEstimateToCart = ({ product, width, height, quantity, notes }) => {
+  const handleAddEstimateToCart = ({ product, width, height, quantity, notes, measurementUnit }) => {
     const parsedWidth = Number(width) || 0;
     const parsedHeight = Number(height) || 0;
     const parsedQuantity = Number(quantity) || 1;
@@ -415,6 +583,7 @@ function CustomerDashboard() {
       variantName: product.variant,
       width: parsedWidth,
       height: parsedHeight,
+      measurementUnit,
       quantity: parsedQuantity,
       blade_count: product.blade_count || 0,
       base_price: product.base_price || undefined,
@@ -434,6 +603,8 @@ function CustomerDashboard() {
         quantity: parsedQuantity,
         width: parsedWidth,
         height: parsedHeight,
+        measurementUnit,
+        unit: measurementUnit,
         area,
         notes: notes || "",
         estimated_price,
@@ -447,7 +618,8 @@ function CustomerDashboard() {
     setCartDecisionProduct(product);
     setCartDecisionStep(step);
     setShowCartDecisionModal(true);
-    setEstimateForm({ width: "", height: "", quantity: 1, notes: "" });
+    setEstimateForm({ unit: "in", width: "", height: "", quantity: 1, notes: "" });
+    setEstimateFormErrors({});
     setCartActionError("");
     setEstimateFlowType(step === "estimate" ? "estimate_product" : null);
   };
@@ -474,12 +646,24 @@ function CustomerDashboard() {
   const handleEstimateFormChange = (e) => {
     const { name, value } = e.target;
     setEstimateForm((prev) => ({ ...prev, [name]: value }));
+
+    if (name === 'width' || name === 'height') {
+      const numeric = Number(value);
+      setEstimateFormErrors((prev) => ({
+        ...prev,
+        [name]: numeric <= 0 || Number.isNaN(numeric) ? `${name === 'width' ? 'Width' : 'Height'} must be greater than 0.` : undefined,
+      }));
+    }
   };
 
   const handleEstimateAddToCart = () => {
     if (!cartDecisionProduct) return;
     if (!estimateForm.width || !estimateForm.height) {
       setCartActionError("Please enter width and height to estimate.");
+      return;
+    }
+    if (Number(estimateForm.width) <= 0 || Number(estimateForm.height) <= 0) {
+      setCartActionError("Width and height must be greater than 0.");
       return;
     }
     if (estimateForm.quantity < 1) {
@@ -493,6 +677,7 @@ function CustomerDashboard() {
       height: estimateForm.height,
       quantity: estimateForm.quantity,
       notes: estimateForm.notes,
+      measurementUnit: estimateForm.unit,
     });
     closeCartDecisionModal();
   };
@@ -515,10 +700,8 @@ function CustomerDashboard() {
 
   const handleEstimateAfterEstimation = () => {
     if (estimateFlowType === "add_to_cart_estimate") {
-      // Add to Cart → Estimate First → Add to Cart Only
       handleEstimateAddToCart();
     } else {
-      // Estimate Product → Continue to Delivery Confirmation
       setDeliveryConfirmMode("estimate");
       setDeliveryConfirmForm({
         phone: profileForm.phone || "",
@@ -601,6 +784,7 @@ function CustomerDashboard() {
           variantName: cartDecisionProduct.variant,
           width: parsedWidth,
           height: parsedHeight,
+          measurementUnit: estimateForm.unit,
           quantity: parsedQuantity,
           blade_count: cartDecisionProduct.blade_count || 0,
           base_price: cartDecisionProduct.base_price || undefined,
@@ -617,6 +801,7 @@ function CustomerDashboard() {
           unit: cartDecisionProduct.unit || "piece",
           width: parsedWidth,
           height: parsedHeight,
+          measurementUnit: estimateForm.unit,
           area: estimationResult.estimated_area || 0,
           estimated_price: estimationResult.estimated_price || 0,
           notes: estimateForm.notes || "",
@@ -1030,6 +1215,7 @@ function CustomerDashboard() {
           quantity: item.quantity,
           unit_price: Number(item.unit_price) || 0,
           unit: item.unit || "piece",
+          measurement_unit: item.measurementUnit || item.unit || "in",
           is_estimate: item.is_estimate || false,
           width: item.width || null,
           height: item.height || null,
@@ -1304,6 +1490,7 @@ function CustomerDashboard() {
     // Otherwise, apply status filter
     if (orderFilter === "all") return true;
     if (orderFilter === "order") return !["installation", "completed", "cancelled"].includes(order.status);
+    if (orderFilter === "review") return isOrderCompletedAndReviewable(order) && !hasOrderReview(order);
     if (orderFilter === "installation") return order.status === "installation" || order.status === "site_inspection";
     if (orderFilter === "completed") return order.status === "completed";
     if (orderFilter === "cancel") return order.status === "cancelled";
@@ -1319,6 +1506,10 @@ function CustomerDashboard() {
   const estimateWidth = Number(estimateForm.width) || 0;
   const estimateHeight = Number(estimateForm.height) || 0;
   const estimateQuantity = Math.max(1, Number(estimateForm.quantity) || 1);
+  const selectedUnitLabel = estimateForm.unit === 'in' ? 'in' : estimateForm.unit === 'ft' ? 'ft' : estimateForm.unit === 'cm' ? 'cm' : 'm';
+  const selectedAreaUnitLabel = estimateForm.unit === 'in' ? 'in²' : estimateForm.unit === 'ft' ? 'ft²' : estimateForm.unit === 'cm' ? 'cm²' : 'm²';
+  const estimateAreaSelectedUnit = estimateWidth && estimateHeight ? estimateWidth * estimateHeight : 0;
+  const estimateTotalAreaSelectedUnit = estimateAreaSelectedUnit * estimateQuantity;
   
   // Use comprehensive calculateEstimate like admin does
   const estimateResult = cartDecisionProduct ? calculateEstimate({
@@ -1327,6 +1518,7 @@ function CustomerDashboard() {
     variantName: cartDecisionProduct.variant,
     width: estimateWidth,
     height: estimateHeight,
+    measurementUnit: estimateForm.unit,
     quantity: estimateQuantity,
     blade_count: cartDecisionProduct.blade_count || 0,
     base_price: cartDecisionProduct.base_price || undefined,
@@ -1350,8 +1542,12 @@ function CustomerDashboard() {
   const orderNowTotal = orderNowGrandTotal;
   const confirmProduct = deliveryConfirmMode === "orderNow" ? orderNowProduct : cartDecisionProduct;
   const confirmQuantity = deliveryConfirmMode === "orderNow" ? Math.max(1, Number(orderNowQuantity) || 1) : estimateQuantity;
-  const confirmWidth = deliveryConfirmMode === "orderNow" ? orderNowProduct?.width || orderNowProduct?.dimensions?.split("×")?.[0]?.trim() || "—" : estimateWidth ? `${estimateWidth}"` : "—";
-  const confirmHeight = deliveryConfirmMode === "orderNow" ? orderNowProduct?.height || orderNowProduct?.dimensions?.split("×")?.[1]?.trim() || "—" : estimateHeight ? `${estimateHeight}"` : "—";
+  const confirmWidth = deliveryConfirmMode === "orderNow"
+    ? orderNowProduct?.width || orderNowProduct?.dimensions?.split("×")?.[0]?.trim() || "—"
+    : estimateWidth ? `${estimateWidth} ${selectedUnitLabel}` : "—";
+  const confirmHeight = deliveryConfirmMode === "orderNow"
+    ? orderNowProduct?.height || orderNowProduct?.dimensions?.split("×")?.[1]?.trim() || "—"
+    : estimateHeight ? `${estimateHeight} ${selectedUnitLabel}` : "—";
   const confirmPrice = deliveryConfirmMode === "orderNow" ? orderNowSubtotal : estimateTotalCost;
   const confirmSubtotal = deliveryConfirmMode === "orderNow" ? orderNowSubtotal : estimateSubtotal;
   const confirmAdditionalCharges = deliveryConfirmMode === "orderNow" ? orderNowAdditionalCharges : estimateCustomizationFee;
@@ -1626,25 +1822,38 @@ function CustomerDashboard() {
               ) : products.length === 0 ? (
                 <div className="rounded-3xl bg-white p-10 text-center shadow"><p className="text-gray-600">No products matched your search.</p></div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                   {products.map((product) => (
-                    <div key={product._id || product.name} className="bg-white rounded-3xl shadow-lg overflow-hidden hover:shadow-2xl transition">
-                      <div className="h-52 overflow-hidden bg-red-50">
-                        <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover" />
+                    <div
+                      key={product._id || product.name}
+                      className="group bg-white rounded-3xl shadow-lg overflow-hidden border border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.01] transition duration-200 ease-out cursor-pointer flex flex-col h-full"
+                      onClick={() => handleViewProduct(product)}
+                    >
+                      <div className="h-60 overflow-hidden bg-red-50">
+                        <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover transition duration-300 group-hover:scale-105" />
                       </div>
-                      <div className="p-6">
-                        <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-xs">{product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}</span>
-                        <h3 className="text-xl font-bold mt-4">{product.name}</h3>
-                        <div className="flex items-center gap-1 mt-2">{[...Array(product.rating || 4)].map((_, i) => <Star key={i} size={16} className="fill-yellow-400 text-yellow-400" />)}</div>
-                        <p className="text-3xl font-bold text-red-600 mt-5">{getProductPrice(product)}</p>
-                        <div className="mt-6">
-                          <button
-                            onClick={() => handleViewProduct(product)}
-                            className="w-full bg-gradient-to-r from-red-600 to-red-700 text-white py-3 rounded-2xl hover:from-red-700 hover:to-red-800 transition font-semibold flex items-center justify-center gap-2 shadow-md"
-                          >
-                            <Eye size={18} />
-                            View Details
-                          </button>
+                      <div className="p-6 flex flex-col justify-between flex-1 gap-6">
+                        <div className="space-y-4">
+                          <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-3 py-1 text-xs font-semibold tracking-wide">
+                            {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
+                          </span>
+                          <div>
+                            <h3 className="text-2xl font-semibold text-slate-900">{product.name}</h3>
+                            <p className="mt-2 text-sm text-slate-500">{product.product_type || product.category || "General"}</p>
+                          </div>
+                          <div className="space-y-2 text-sm text-slate-600">
+                            {product.dimensions ? (
+                              <p><span className="font-medium text-slate-900">Dimensions:</span> {product.dimensions}</p>
+                            ) : product.standard_size ? (
+                              <p><span className="font-medium text-slate-900">Dimensions:</span> {product.standard_size}</p>
+                            ) : product.width && product.height ? (
+                              <p><span className="font-medium text-slate-900">Dimensions:</span> {product.width} × {product.height}</p>
+                            ) : null}
+                            <p><span className="font-medium text-slate-900">Unit Rate:</span> {getProductUnitRate(product)}</p>
+                          </div>
+                        </div>
+                        <div className="mt-auto">
+                          <p className="text-3xl font-bold text-red-600">{getProductPrice(product)}</p>
                         </div>
                       </div>
                     </div>
@@ -1704,7 +1913,13 @@ function CustomerDashboard() {
                           <div className="rounded-2xl bg-gradient-to-br from-green-50 to-green-100 border border-green-200 p-4">
                             <p className="text-xs text-gray-600 font-medium">Dimensions</p>
                             <p className="text-lg font-bold text-gray-900 mt-2">
-                              {selectedProduct.width > 0 || selectedProduct.height > 0 ? `${selectedProduct.width || 0}" x ${selectedProduct.height || 0}"` : "N/A"}
+                              {selectedProduct.dimensions
+                                ? selectedProduct.dimensions
+                                : selectedProduct.standard_size
+                                ? selectedProduct.standard_size
+                                : selectedProduct.width > 0 || selectedProduct.height > 0
+                                ? `${selectedProduct.width || 0}" x ${selectedProduct.height || 0}"`
+                                : "N/A"}
                             </p>
                           </div>
                           <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 p-4">
@@ -1755,6 +1970,33 @@ function CustomerDashboard() {
                         >
                           <ShoppingCart size={20} />
                           Add to Cart
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={openProductReviewModal}
+                          className="w-full rounded-[28px] border border-slate-200 bg-white p-5 mt-4 text-left shadow-sm transition hover:shadow-lg hover:border-slate-300"
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Customer Reviews</p>
+                              <p className="mt-2 text-2xl font-semibold text-slate-900 truncate">
+                                {productReviewAverageRating || "—"} / 5
+                              </p>
+                              <p className="mt-2 text-sm text-slate-500">View all reviews for this product.</p>
+                            </div>
+                            <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-800">
+                              <Star size={16} />
+                              {productReviews.length} review{productReviews.length === 1 ? "" : "s"}
+                            </div>
+                          </div>
+                          <div className="mt-4 flex items-center justify-between gap-3 text-sm text-slate-600">
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 font-medium">Open reviews</span>
+                            <span className="inline-flex items-center gap-2 font-semibold text-slate-900">
+                              View reviews
+                              <ArrowRight size={18} />
+                            </span>
+                          </div>
                         </button>
 
                         {/* Info Box */}
@@ -1879,16 +2121,38 @@ function CustomerDashboard() {
                               <label className="block">
                                 <div className="flex items-center gap-2 mb-2">
                                   <Ruler size={39} className="text-red-600" />
-                                  <span className="text-sm font-semibold text-gray-700">Width (inches)</span>
+                                  <span className="text-sm font-semibold text-gray-700">Measurement Unit</span>
+                                </div>
+                                <select
+                                  name="unit"
+                                  value={estimateForm.unit}
+                                  onChange={handleEstimateFormChange}
+                                  className="w-full rounded-xl border-2 border-gray-200 bg-white px-4 py-3 focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition text-lg"
+                                >
+                                  <option value="in">Inches (in)</option>
+                                  <option value="ft">Feet (ft)</option>
+                                  <option value="cm">Centimeters (cm)</option>
+                                  <option value="m">Meters (m)</option>
+                                </select>
+                              </label>
+                            </div>
+
+                            <div>
+                              <label className="block">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Ruler size={39} className="text-red-600" />
+                                  <span className="text-sm font-semibold text-gray-700">Width ({estimateForm.unit})</span>
                                 </div>
                                 <input
                                   type="number"
                                   name="width"
+                                  min="0"
                                   value={estimateForm.width}
                                   onChange={handleEstimateFormChange}
                                   placeholder="0"
                                   className="w-full rounded-xl border-2 border-gray-200 px-4 py-3 focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition text-lg"
                                 />
+                                {estimateFormErrors.width && <p className="mt-2 text-sm text-red-600">{estimateFormErrors.width}</p>}
                               </label>
                             </div>
 
@@ -1896,16 +2160,18 @@ function CustomerDashboard() {
                               <label className="block">
                                 <div className="flex items-center gap-2 mb-2">
                                   <Ruler size={39} className="text-red-600 rotate-90" />
-                                  <span className="text-sm font-semibold text-gray-700">Height (inches)</span>
+                                  <span className="text-sm font-semibold text-gray-700">Height ({estimateForm.unit})</span>
                                 </div>
                                 <input
                                   type="number"
                                   name="height"
+                                  min="0"
                                   value={estimateForm.height}
                                   onChange={handleEstimateFormChange}
                                   placeholder="0"
                                   className="w-full rounded-xl border-2 border-gray-200 px-4 py-3 focus:outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200 transition text-lg"
                                 />
+                                {estimateFormErrors.height && <p className="mt-2 text-sm text-red-600">{estimateFormErrors.height}</p>}
                               </label>
                             </div>
 
@@ -1953,16 +2219,20 @@ function CustomerDashboard() {
                               </div>
                               <div className="space-y-3 text-sm">
                                 <div className="flex justify-between items-center p-3 bg-white rounded-lg">
+                                  <span className="text-black-600">Selected Unit</span>
+                                  <span className="font-bold text-black-900">{estimateForm.unit === 'in' ? 'Inches' : estimateForm.unit === 'ft' ? 'Feet' : estimateForm.unit === 'cm' ? 'Centimeters' : 'Meters'}</span>
+                                </div>
+                                <div className="flex justify-between items-center p-3 bg-white rounded-lg">
                                   <span className="text-black-600">Width</span>
-                                  <span className="font-bold text-black-900">{estimateWidth ? `${estimateWidth}"` : "—"}</span>
+                                  <span className="font-bold text-black-900">{estimateForm.width ? `${estimateForm.width} ${estimateForm.unit}` : '—'}</span>
                                 </div>
                                 <div className="flex justify-between items-center p-3 bg-white rounded-lg">
                                   <span className="text-black-600">Height</span>
-                                  <span className="font-bold text-black-900">{estimateHeight ? `${estimateHeight}"` : "—"}</span>
+                                  <span className="font-bold text-black-900">{estimateForm.height ? `${estimateForm.height} ${estimateForm.unit}` : '—'}</span>
                                 </div>
                                 <div className="flex justify-between items-center p-3 bg-white rounded-lg">
                                   <span className="text-black-600">Area per unit</span>
-                                  <span className="font-bold text-black-900">{estimateArea ? `${estimateArea.toFixed(2)} sq ft` : "—"}</span>
+                                  <span className="font-bold text-black-900">{estimateAreaSelectedUnit ? `${estimateAreaSelectedUnit.toFixed(2)} ${selectedAreaUnitLabel}` : '—'}</span>
                                 </div>
                                 <div className="flex justify-between items-center p-3 bg-white rounded-lg">
                                   <span className="text-black-600">Total Quantity</span>
@@ -1970,7 +2240,7 @@ function CustomerDashboard() {
                                 </div>
                                 <div className="flex justify-between items-center p-3 bg-gradient-to-r from-yellow-400 to-yellow-500 text-yellow-900 font-bold rounded-lg">
                                   <span className="text-black font-semibold">Total Area</span>
-                                  <span className="font-bold text-black-900 text-lg">{estimateTotalArea ? `${estimateTotalArea.toFixed(2)} sq ft` : "—"}</span>
+                                  <span className="font-bold text-black-900 text-lg">{estimateTotalAreaSelectedUnit ? `${estimateTotalAreaSelectedUnit.toFixed(2)} ${selectedAreaUnitLabel}` : '—'}</span>
                                 </div>
                               </div>
                             </div>
@@ -2289,7 +2559,7 @@ function CustomerDashboard() {
                             <p className="mt-2 text-lg font-semibold text-gray-900">
                               {orderNowProduct.width && orderNowProduct.height
                                 ? `${orderNowProduct.width}" × ${orderNowProduct.height}"`
-                                : orderNowProduct.dimensions || orderNowProduct.size || "—"}
+                                : orderNowProduct.dimensions || orderNowProduct.standard_size || orderNowProduct.size || "—"}
                             </p>
                           </div>
                         </div>
@@ -2674,6 +2944,7 @@ function CustomerDashboard() {
                 {[
                   { value: "all", label: "All Orders" },
                   { value: "order", label: "My Orders" },
+                  { value: "review", label: "To Review" },
                   { value: "installation", label: "Installation" },
                   { value: "completed", label: "Completed" },
                   { value: "cancel", label: "Cancelled" },
@@ -2769,6 +3040,31 @@ function CustomerDashboard() {
                               >
                                 Contract
                               </button>
+                              {isOrderCompletedAndReviewable(order) ? (
+                                hasOrderReview(order) ? (
+                                  isOrderReviewEditable(order) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => openCustomerReviewModal(order)}
+                                      className="rounded-2xl bg-orange-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-orange-600"
+                                    >
+                                      Edit Review
+                                    </button>
+                                  ) : (
+                                    <span className="inline-flex items-center rounded-2xl bg-emerald-100 px-3 py-2 text-xs font-semibold text-emerald-700">
+                                      ✓ Review Submitted
+                                    </span>
+                                  )
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openCustomerReviewModal(order)}
+                                    className="rounded-2xl bg-red-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-700"
+                                  >
+                                    ⭐ Write Review
+                                  </button>
+                                )
+                              ) : null}
                             </div>
                           </td>
                         </tr>
@@ -2906,6 +3202,42 @@ function CustomerDashboard() {
                   </div>
                 )}
 
+                {hasOrderReview(selectedOrderForModal) && (
+                  <div className="rounded-[28px] bg-white p-6 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Customer Review</h5>
+                        <p className="mt-1 text-sm text-slate-500">Review submitted for this completed order.</p>
+                      </div>
+                      <div className="inline-flex items-center gap-1 text-sm font-semibold text-amber-700">
+                        {Array.from({ length: selectedOrderForModal.review?.rating || 0 }).map((_, index) => (
+                          <span key={index}>⭐</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Title</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.review?.title || "No title provided"}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Submitted</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.review?.submittedAt ? new Date(selectedOrderForModal.review.submittedAt).toLocaleDateString() : "—"}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Comment</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">{selectedOrderForModal.review?.comment || "No review comment."}</p>
+                    </div>
+                    {Array.isArray(selectedOrderForModal.review?.photos) && selectedOrderForModal.review.photos.length > 0 && (
+                      <div className="grid grid-cols-2 gap-3">
+                        {selectedOrderForModal.review.photos.map((photo, index) => (
+                          <img key={index} src={ensureAbsoluteUrl(photo)} alt={`Review photo ${index + 1}`} className="h-28 w-full rounded-3xl object-cover" />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <OrderTimeline
                   order={selectedOrderForModal}
                   onOrderChange={handleOrderUpdate}
@@ -2921,6 +3253,219 @@ function CustomerDashboard() {
                 >
                   Close
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showCustomerReviewModal && selectedReviewOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-950">{hasOrderReview(selectedReviewOrder) ? "Edit Review" : "Write a Review"}</h2>
+                  <p className="text-sm text-slate-500">Share your experience after your completed order.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeCustomerReviewModal}
+                  className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-white text-xl text-slate-600 hover:bg-slate-100 transition"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="max-h-[80vh] overflow-y-auto p-6 space-y-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Order</p>
+                    <p className="mt-2 font-semibold text-slate-900">{selectedReviewOrder.tracking}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Product</p>
+                    <p className="mt-2 font-semibold text-slate-900">{selectedReviewOrder.items?.[0]?.name || "Project item"}</p>
+                  </div>
+                </div>
+                <div className="rounded-3xl bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">Overall Rating</p>
+                  <div className="mt-3 flex gap-2">
+                    {Array.from({ length: 5 }).map((_, index) => {
+                      const value = index + 1;
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => handleOrderReviewChange("rating", value)}
+                          className={`rounded-2xl px-3 py-2 text-lg transition ${orderReviewForm.rating >= value ? "bg-amber-400 text-white" : "bg-white text-slate-400 border border-slate-200 hover:bg-slate-100"}`}
+                        >
+                          ⭐
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-3 text-sm text-slate-500">Required. Choose a rating from 1 to 5 stars.</p>
+                </div>
+                <div className="grid gap-4">
+                  <div>
+                    <label className="text-sm font-semibold text-slate-900">Review Title</label>
+                    <input
+                      type="text"
+                      value={orderReviewForm.title}
+                      onChange={(e) => handleOrderReviewChange("title", e.target.value)}
+                      placeholder="Excellent Service"
+                      className="mt-2 w-full rounded-3xl border border-slate-200 px-4 py-3 focus:border-red-500 focus:outline-none"
+                    />
+                    <p className="mt-2 text-sm text-slate-500">Optional. Example: Excellent Service, Professional Installation.</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-900">Review Comment</label>
+                    <textarea
+                      value={orderReviewForm.comment}
+                      onChange={(e) => handleOrderReviewChange("comment", e.target.value)}
+                      placeholder="Tell us about the product quality, installation, and service experience."
+                      rows={6}
+                      className="mt-2 w-full rounded-3xl border border-slate-200 px-4 py-3 focus:border-red-500 focus:outline-none"
+                    />
+                    <p className="mt-2 text-sm text-slate-500">Required. 10-500 characters.</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-900">Upload Photos</label>
+                    <p className="mt-2 text-sm text-slate-500">Optional. Up to 5 photos of the finished project.</p>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={handleOrderReviewPhotoChange}
+                      className="mt-3 w-full"
+                    />
+                    {orderReviewForm.photoPreviews.length > 0 && (
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        {orderReviewForm.photoPreviews.map((src, index) => (
+                          <div key={index} className="relative rounded-3xl overflow-hidden border border-slate-200">
+                            <img src={ensureAbsoluteUrl(src)} alt={`Preview ${index + 1}`} className="h-28 w-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveReviewPhoto(index)}
+                              className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white text-slate-700 shadow"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {reviewFormError && (
+                  <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewFormError}</div>
+                )}
+              </div>
+              <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeCustomerReviewModal}
+                  className="rounded-2xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitCustomerReview}
+                  disabled={reviewFormLoading}
+                  className="rounded-2xl bg-red-600 px-6 py-3 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {reviewFormLoading ? "Submitting..." : hasOrderReview(selectedReviewOrder) ? "Update Review" : "Submit Review"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showProductReviewModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+            <div className="w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl ring-1 ring-slate-200">
+              <div className="flex flex-col gap-4 border-b border-slate-200 bg-slate-50 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-950">Customer Reviews</h2>
+                  <p className="mt-1 text-sm text-slate-600">Reviews for {selectedProduct?.product_name || selectedProduct?.name || "this product"}.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeProductReviewModal}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 transition"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="max-h-[82vh] overflow-y-auto p-6 space-y-6">
+                <div className="rounded-[28px] bg-gradient-to-r from-slate-100 via-white to-slate-100 p-5 shadow-sm">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Average Rating</p>
+                      <p className="mt-2 text-3xl font-semibold text-slate-950">{productReviewAverageRating || "—"} / 5</p>
+                    </div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-800">
+                      <span className="inline-flex items-center gap-1">
+                        <Star size={16} />
+                        {productReviews.length}
+                      </span>
+                      review{productReviews.length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                </div>
+
+                {productReviews.length === 0 ? (
+                  <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+                    <p className="text-lg font-semibold">No reviews yet</p>
+                    <p className="mt-2 text-sm">Be the first customer to leave a review for this product.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {productReviews.map((review, index) => (
+                      <div key={`${review.orderId || index}-${review.submittedAt || index}`} className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Customer</p>
+                            <p className="mt-1 text-lg font-semibold text-slate-950 truncate">{review.customerName || "Anonymous"}</p>
+                          </div>
+                          <div className="inline-flex items-center gap-3 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-800">
+                            <span className="inline-flex items-center gap-1">
+                              {Array.from({ length: review.rating || 0 }).map((_, starIndex) => (
+                                <Star key={starIndex} size={14} />
+                              ))}
+                            </span>
+                            <span>{review.rating?.toFixed?.(1) ?? review.rating ?? "0"}</span>
+                          </div>
+                        </div>
+                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Title</p>
+                            <p className="mt-2 font-semibold text-slate-900">{review.title || "No title provided"}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Submitted</p>
+                            <p className="mt-2 font-semibold text-slate-900">{review.submittedAt ? new Date(review.submittedAt).toLocaleDateString() : "—"}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4 rounded-3xl bg-slate-50 p-4">
+                          <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Comment</p>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">{review.comment || "No review comment."}</p>
+                        </div>
+                        {review.photos?.length > 0 && (
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            {review.photos.map((photo, photoIndex) => (
+                              <img
+                                key={photoIndex}
+                                src={photo}
+                                alt={`Review photo ${photoIndex + 1}`}
+                                className="h-36 w-full rounded-3xl object-cover"
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2972,7 +3517,7 @@ function CustomerDashboard() {
                             <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-500">
                               <span>Qty: {item.quantity}</span>
                               {item.is_estimate && item.width && item.height && (
-                                <span>Measurements: {item.width} x {item.height}</span>
+                                <span>Measurements: {item.width} {item.measurementUnit || item.unit || ""} × {item.height} {item.measurementUnit || item.unit || ""}</span>
                               )}
                             </div>
                             <p className="mt-2 text-sm text-gray-500">

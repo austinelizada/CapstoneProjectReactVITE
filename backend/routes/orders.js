@@ -5,12 +5,14 @@ import {
   createOrderAsAdmin,
   listOrders,
   trackOrder,
+  getProductReviews,
   getAdminOrders,
   getAdminOrderById,
   updateOrderStatus,
   updateOrderInspection,
   updateOrderProgress,
   generateContract,
+  submitOrderReview,
   respondToContract,
   respondToInstallationSchedule,
   sendWalkInApprovalEmail,
@@ -23,6 +25,8 @@ router.post("/", authMiddleware, roleMiddleware("customer"), createOrder);
 router.get("/track/:tracking", authMiddleware, trackOrder);
 router.put("/:orderId/contract", authMiddleware, roleMiddleware("customer"), respondToContract);
 router.put("/:orderId/installation-schedule", authMiddleware, respondToInstallationSchedule);
+router.put("/:orderId/review", authMiddleware, roleMiddleware("customer"), submitOrderReview);
+router.get("/reviews/product/:productId", authMiddleware, getProductReviews);
 
 // Admin routes
 router.get("/admin/list", authMiddleware, roleMiddleware("admin"), getAdminOrders);

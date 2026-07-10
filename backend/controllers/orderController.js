@@ -3,6 +3,18 @@ import path from "path";
 import Order from "../models/Order.js";
 import { sendMail } from "../config/mailer.js";
 
+const isWithinReviewEditWindow = (submittedAt) => {
+  if (!submittedAt) return false;
+  const reviewDate = new Date(submittedAt);
+  const editDeadline = new Date(reviewDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+  return new Date() <= editDeadline;
+};
+
+const buildReviewNotificationMessage = (order, review) => {
+  const productName = order.items?.[0]?.name || "project";
+  return `New customer review received for ${productName} (${order.tracking}).\nRating: ${"⭐".repeat(review.rating || 0)}\nTitle: ${review.title || "-"}\nComment: ${review.comment || "-"}`;
+};
+
 const normalizeAddress = (value) => {
   if (!value) return "";
   const cleaned = value
@@ -101,6 +113,7 @@ const sanitizeOrderItems = (items = []) => {
       quantity,
       unit_price,
       unit: item.unit || "piece",
+      measurement_unit: item.measurement_unit || item.measurementUnit || item.unit || "in",
       width,
       height,
       area,
@@ -380,6 +393,128 @@ export const updateOrderStatus = async (req, res) => {
   } catch (error) {
     console.error("Update order status error:", error);
     res.status(500).json({ success: false, message: "Unable to update order", error: error.message });
+  }
+};
+
+export const submitOrderReview = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { rating, title, comment, photos = [] } = req.body;
+
+    if (!rating || typeof rating !== "number" || rating < 1 || rating > 5) {
+      return res.status(400).json({ success: false, message: "Rating must be a number between 1 and 5." });
+    }
+    if (!comment || typeof comment !== "string" || comment.trim().length < 10 || comment.trim().length > 500) {
+      return res.status(400).json({ success: false, message: "Comment must be between 10 and 500 characters." });
+    }
+    if (!Array.isArray(photos)) {
+      return res.status(400).json({ success: false, message: "Photos must be an array." });
+    }
+    if (photos.length > 5) {
+      return res.status(400).json({ success: false, message: "You may upload up to 5 photos." });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found." });
+    }
+    if (!order.customer || order.customer.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Not authorized to review this order." });
+    }
+
+    const isCompleted = order.status === "completed" && Number(order.progress) >= 100;
+    if (!isCompleted) {
+      return res.status(400).json({ success: false, message: "Only completed orders may be reviewed." });
+    }
+
+    const existingReview = order.review && order.review.submittedAt;
+    if (existingReview && !isWithinReviewEditWindow(order.review.submittedAt)) {
+      return res.status(400).json({ success: false, message: "This review is locked and can no longer be edited." });
+    }
+
+    const now = new Date();
+    order.review = {
+      rating,
+      title: title?.trim() || "",
+      comment: comment.trim(),
+      photos: photos.slice(0, 5).map((photo) => (typeof photo === "string" ? photo : "")).filter(Boolean),
+      submittedAt: existingReview ? order.review.submittedAt : now,
+      updatedAt: now,
+    };
+
+    await order.save();
+
+    const reviewMessage = buildReviewNotificationMessage(order, order.review);
+    const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
+    const customerEmail = req.user.email || order.customer_email || "";
+
+    try {
+      await sendMail({
+        to: adminEmail,
+        subject: `New customer review received for ${order.tracking}`,
+        text: reviewMessage,
+      });
+    } catch (mailError) {
+      console.error("Review notification email failed:", mailError);
+    }
+
+    if (customerEmail) {
+      try {
+        await sendMail({
+          to: customerEmail,
+          subject: "Thank you for your review",
+          text: `Thank you for your feedback on order ${order.tracking}. Your review has been submitted successfully.`,
+        });
+      } catch (mailError) {
+        console.error("Customer review confirmation email failed:", mailError);
+      }
+    }
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error("Submit order review error:", error);
+    res.status(500).json({ success: false, message: "Unable to submit review.", error: error.message });
+  }
+};
+
+export const getProductReviews = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    if (!productId) {
+      return res.status(400).json({ success: false, message: "Product ID is required." });
+    }
+
+    const reviews = await Order.find({
+      "items.product_id": productId,
+      "review.submittedAt": { $ne: null },
+    })
+      .populate("customer", "first_name last_name")
+      .populate("items.product_id", "name")
+      .sort({ "review.submittedAt": -1 })
+      .lean();
+
+    const mappedReviews = reviews
+      .flatMap((order) =>
+        (order.items || [])
+          .filter((item) => item.product_id && String(item.product_id._id || item.product_id) === String(productId))
+          .map((item) => ({
+            orderId: order._id,
+            tracking: order.tracking,
+            productName: item.name,
+            customerName: order.customer ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() : order.customer_name || "Customer",
+            rating: order.review?.rating || 0,
+            title: order.review?.title || "",
+            comment: order.review?.comment || "",
+            photos: order.review?.photos || [],
+            submittedAt: order.review?.submittedAt || null,
+          }))
+      )
+      .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+
+    res.json({ success: true, reviews: mappedReviews });
+  } catch (error) {
+    console.error("Get product reviews error:", error);
+    res.status(500).json({ success: false, message: "Unable to fetch product reviews.", error: error.message });
   }
 };
 

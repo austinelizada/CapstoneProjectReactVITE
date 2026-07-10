@@ -35,6 +35,10 @@ const OrderItemSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    measurement_unit: {
+      type: String,
+      default: "in",
+    },
     area: {
       type: Number,
       default: 0,
@@ -280,6 +284,36 @@ const OrderSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: "",
+    },
+    review: {
+      rating: {
+        type: Number,
+        min: 1,
+        max: 5,
+        default: null,
+      },
+      title: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      comment: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      photos: {
+        type: [String],
+        default: [],
+      },
+      submittedAt: {
+        type: Date,
+        default: null,
+      },
+      updatedAt: {
+        type: Date,
+        default: null,
+      },
     },
     // Walk-in customer specific fields
     acceptance_method: {

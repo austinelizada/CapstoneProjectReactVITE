@@ -82,6 +82,11 @@ const ProductSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    standard_size: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     width: {
       type: Number,
       default: 0,

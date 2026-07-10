@@ -94,6 +94,25 @@ export async function apiFetch(path, options = {}) {
     }
   }
 
+  if (response && response.status === 502 && isDev && API_BASE === "/api" && typeof window !== "undefined") {
+    const directDevUrl = buildDirectDevUrl(normalizedPath);
+    try {
+      response = await fetch(directDevUrl, {
+        ...options,
+        headers,
+      });
+    } catch (directDevError) {
+      const message =
+        directDevError?.message === "Failed to fetch"
+          ? "Unable to connect to the backend server at http://localhost:5000. Ensure the backend is running and try again."
+          : directDevError?.message || "Network error while connecting to the backend.";
+      const error = new Error(message);
+      error.cause = directDevError;
+      error.isNetworkError = true;
+      throw error;
+    }
+  }
+
   let data = {};
   let rawText = "";
   try {

@@ -5,6 +5,7 @@ import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import productRoutes from "./routes/products.js";
 import uploadRoutes from "./routes/uploads.js";
+import catalogRoutes from "./routes/catalog.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import orderRoutes from "./routes/orders.js";
@@ -98,6 +99,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/uploads", uploadRoutes);
+app.use("/api/catalog", catalogRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
