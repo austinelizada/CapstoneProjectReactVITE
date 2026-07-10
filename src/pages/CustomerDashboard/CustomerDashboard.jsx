@@ -1893,11 +1893,11 @@ function CustomerDashboard() {
                       className="group bg-white rounded-3xl shadow-lg overflow-hidden border border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.01] transition duration-200 ease-out cursor-pointer flex flex-col h-full"
                       onClick={() => handleViewProduct(product)}
                     >
-                      <div className="h-80 overflow-hidden bg-red-50">
+                      <div className="h-70 overflow-hidden bg-red-50">
                         <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover transition duration-300 group-hover:scale-200" />
                       </div>
                       <div className="p-6 flex flex-col justify-between flex-1 gap-6">
-                        <div className="space-y-4">
+                        <div className="space-y-1">
                           <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-3 py-1 text-xs font-semibold tracking-wide">
                             {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
                           </span>
