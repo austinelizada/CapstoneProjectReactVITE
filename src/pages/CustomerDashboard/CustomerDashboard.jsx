@@ -1896,16 +1896,16 @@ function CustomerDashboard() {
                       <div className="h-80 overflow-hidden bg-red-50">
                         <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover transition duration-300 group-hover:scale-200" />
                       </div>
-                      <div className="p-4 flex flex-col justify-between flex-1 gap-3">
+                      <div className="p-6 flex flex-col justify-between flex-1 gap-6">
                         <div className="space-y-4">
                           <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-3 py-1 text-xs font-semibold tracking-wide">
                             {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
                           </span>
                           <div>
-                            <h3 className="text-lg font-semibold text-slate-900">{product.name}</h3>
-                            <p className="mt-1 text-xs text-slate-500">{product.product_type || product.category || "General"}</p>
+                            <h3 className="text-2xl font-semibold text-slate-900">{product.name}</h3>
+                            <p className="mt-2 text-sm text-slate-500">{product.product_type || product.category || "General"}</p>
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-slate-600">
+                          <div className="flex items-center gap-2 text-sm text-slate-600">
                             {renderRatingStars(productReviewStats[product._id || product.id]?.averageRating || 0, 16)}
                             <span className="font-medium text-slate-700">
                               {productReviewStats[product._id || product.id]?.averageRating > 0
@@ -1913,7 +1913,7 @@ function CustomerDashboard() {
                                 : "No ratings yet"}
                             </span>
                           </div>
-                          <div className="space-y-2 text-xs text-slate-600">
+                          <div className="space-y-2 text-sm text-slate-600">
                             {product.dimensions ? (
                               <p><span className="font-medium text-slate-900">Dimensions:</span> {product.dimensions}</p>
                             ) : product.standard_size ? (
