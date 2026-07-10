@@ -22,6 +22,7 @@ import {
   FileText,
   Bell,
   Star,
+  StarHalf,
 } from "lucide-react";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
@@ -89,6 +90,24 @@ const buildFullAddress = (user) => {
   return normalizeAddress(addressParts.join(", "));
 };
 
+const renderRatingStars = (rating = 0, size = 18) => {
+  const normalizedRating = Number(rating) || 0;
+  const fullStars = Math.floor(normalizedRating);
+  const hasHalfStar = normalizedRating - fullStars >= 0.5;
+
+  return Array.from({ length: 5 }, (_, index) => {
+    if (index < fullStars) {
+      return <Star key={index} size={size} fill="currentColor" className="text-amber-500" />;
+    }
+
+    if (index === fullStars && hasHalfStar) {
+      return <StarHalf key={index} size={size} fill="currentColor" className="text-amber-500" />;
+    }
+
+    return <Star key={index} size={size} className="text-slate-300" />;
+  });
+};
+
 function CustomerDashboard() {
   const API_HOST = (function getApiHost() {
     try {
@@ -139,6 +158,7 @@ function CustomerDashboard() {
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [productReviews, setProductReviews] = useState([]);
   const [productReviewsLoading, setProductReviewsLoading] = useState(false);
+  const [productReviewStats, setProductReviewStats] = useState({});
 
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutMessage, setCheckoutMessage] = useState("");
@@ -159,6 +179,7 @@ function CustomerDashboard() {
   const [showOrderReviewModal, setShowOrderReviewModal] = useState(false);
   const [showCustomerReviewModal, setShowCustomerReviewModal] = useState(false);
   const [showProductReviewModal, setShowProductReviewModal] = useState(false);
+  const [selectedReviewRatingTab, setSelectedReviewRatingTab] = useState(0);
   const [reviewOrderMode, setReviewOrderMode] = useState("estimate");
   const [orderReviewForm, setOrderReviewForm] = useState({
     rating: 0,
@@ -328,9 +349,23 @@ function CustomerDashboard() {
   }, 0);
   const allSelected = cartItems.length > 0 && selectedItemCount === cartItems.length;
 
-  const productReviewAverageRating = productReviews.length
-    ? (productReviews.reduce((sum, review) => sum + (review.rating || 0), 0) / productReviews.length).toFixed(1)
+  const ratedProductReviews = productReviews.filter((review) => Number(review.rating) > 0);
+  const totalRatedReviews = ratedProductReviews.length;
+
+  const productReviewAverageRating = totalRatedReviews
+    ? (ratedProductReviews.reduce((sum, review) => sum + Number(review.rating), 0) / totalRatedReviews).toFixed(1)
     : null;
+
+  const averageProductReviewRating = Number(productReviewAverageRating) || 0;
+
+  const reviewRatingCounts = [5, 4, 3, 2, 1].map((star) => ({
+    star,
+    count: ratedProductReviews.filter((review) => Math.round(Number(review.rating)) === star).length,
+  }));
+
+  const filteredProductReviews = selectedReviewRatingTab
+    ? productReviews.filter((review) => Math.round(Number(review.rating || 0)) === selectedReviewRatingTab)
+    : productReviews;
 
   useEffect(() => {
     if (selectedOrderForModal) {
@@ -488,7 +523,36 @@ function CustomerDashboard() {
           category: categoryFilter && categoryFilter !== "All" ? categoryFilter : undefined,
         });
         if (!active) return;
-        setProducts(response.products || []);
+
+        const productsList = response.products || [];
+        setProducts(productsList);
+
+        const stats = {};
+        await Promise.all(
+          productsList.slice(0, 12).map(async (product) => {
+            try {
+              const reviewResponse = await getProductReviews(product._id || product.id);
+              const reviews = Array.isArray(reviewResponse.reviews) ? reviewResponse.reviews : [];
+              const rated = reviews.filter((review) => Number(review.rating) > 0);
+              const average = rated.length
+                ? (rated.reduce((sum, review) => sum + Number(review.rating), 0) / rated.length).toFixed(1)
+                : null;
+              stats[product._id || product.id] = {
+                averageRating: Number(average) || 0,
+                ratingsCount: rated.length,
+              };
+            } catch (error) {
+              stats[product._id || product.id] = {
+                averageRating: 0,
+                ratingsCount: 0,
+              };
+            }
+          })
+        );
+
+        if (active) {
+          setProductReviewStats(stats);
+        }
       } catch (error) {
         if (!active) return;
         setProductError(error.data?.message || error.message || "Unable to load products.");
@@ -1822,26 +1886,34 @@ function CustomerDashboard() {
               ) : products.length === 0 ? (
                 <div className="rounded-3xl bg-white p-10 text-center shadow"><p className="text-gray-600">No products matched your search.</p></div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                   {products.map((product) => (
                     <div
                       key={product._id || product.name}
                       className="group bg-white rounded-3xl shadow-lg overflow-hidden border border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.01] transition duration-200 ease-out cursor-pointer flex flex-col h-full"
                       onClick={() => handleViewProduct(product)}
                     >
-                      <div className="h-60 overflow-hidden bg-red-50">
-                        <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover transition duration-300 group-hover:scale-105" />
+                      <div className="h-80 overflow-hidden bg-red-50">
+                        <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover transition duration-300 group-hover:scale-200" />
                       </div>
-                      <div className="p-6 flex flex-col justify-between flex-1 gap-6">
+                      <div className="p-4 flex flex-col justify-between flex-1 gap-3">
                         <div className="space-y-4">
                           <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-3 py-1 text-xs font-semibold tracking-wide">
                             {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
                           </span>
                           <div>
-                            <h3 className="text-2xl font-semibold text-slate-900">{product.name}</h3>
-                            <p className="mt-2 text-sm text-slate-500">{product.product_type || product.category || "General"}</p>
+                            <h3 className="text-lg font-semibold text-slate-900">{product.name}</h3>
+                            <p className="mt-1 text-xs text-slate-500">{product.product_type || product.category || "General"}</p>
                           </div>
-                          <div className="space-y-2 text-sm text-slate-600">
+                          <div className="flex items-center gap-2 text-xs text-slate-600">
+                            {renderRatingStars(productReviewStats[product._id || product.id]?.averageRating || 0, 16)}
+                            <span className="font-medium text-slate-700">
+                              {productReviewStats[product._id || product.id]?.averageRating > 0
+                                ? `${productReviewStats[product._id || product.id].averageRating.toFixed(1)} (${productReviewStats[product._id || product.id].ratingsCount} rating${productReviewStats[product._id || product.id].ratingsCount === 1 ? "" : "s"})`
+                                : "No ratings yet"}
+                            </span>
+                          </div>
+                          <div className="space-y-2 text-xs text-slate-600">
                             {product.dimensions ? (
                               <p><span className="font-medium text-slate-900">Dimensions:</span> {product.dimensions}</p>
                             ) : product.standard_size ? (
@@ -1853,7 +1925,7 @@ function CustomerDashboard() {
                           </div>
                         </div>
                         <div className="mt-auto">
-                          <p className="text-3xl font-bold text-red-600">{getProductPrice(product)}</p>
+                          <p className="text-2xl font-bold text-red-600">{getProductPrice(product)}</p>
                         </div>
                       </div>
                     </div>
@@ -1977,21 +2049,25 @@ function CustomerDashboard() {
                           onClick={openProductReviewModal}
                           className="w-full rounded-[28px] border border-slate-200 bg-white p-5 mt-4 text-left shadow-sm transition hover:shadow-lg hover:border-slate-300"
                         >
-                          <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-center gap-4">
+                            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-slate-50">
+                              <img src={getProductImage(selectedProduct)} alt={selectedProduct?.name || "Product"} className="h-full w-full object-cover" />
+                            </div>
                             <div className="min-w-0">
                               <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Customer Reviews</p>
+                              <div className="mt-2 flex items-center gap-2">
+                                {renderRatingStars(averageProductReviewRating, 18)}
+                              </div>
                               <p className="mt-2 text-2xl font-semibold text-slate-900 truncate">
                                 {productReviewAverageRating || "—"} / 5
                               </p>
-                              <p className="mt-2 text-sm text-slate-500">View all reviews for this product.</p>
-                            </div>
-                            <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-800">
-                              <Star size={16} />
-                              {productReviews.length} review{productReviews.length === 1 ? "" : "s"}
+                              <p className="mt-2 text-sm text-slate-500">
+                                {productReviews[0]?.title ? `Latest review: ${productReviews[0].title}` : "View all reviews for this product."}
+                              </p>
                             </div>
                           </div>
                           <div className="mt-4 flex items-center justify-between gap-3 text-sm text-slate-600">
-                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 font-medium">Open reviews</span>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 font-medium">{totalRatedReviews} rating{totalRatedReviews === 1 ? "" : "s"}</span>
                             <span className="inline-flex items-center gap-2 font-semibold text-slate-900">
                               View reviews
                               <ArrowRight size={18} />
@@ -2000,12 +2076,12 @@ function CustomerDashboard() {
                         </button>
 
                         {/* Info Box */}
-                        <div className="rounded-2xl bg-blue-100 border border-blue-400 p-16.5 mt-6">
-                          <div className="flex gap-3">
-                            <Info size={18} className="text-blue-600 flex-shrink-0 mt-0.5" />
-                            <div className="text-sm">
-                              <p className="font-bold text-blue-900">Need help?</p>
-                              <p className="text-black-600 font-medium mt-1">Use the estimate tool to calculate custom pricing based on your measurements.</p>
+                        <div className="rounded-2xl bg-blue-50 border border-blue-200 p-4 mt-6">
+                          <div className="flex items-start gap-3">
+                            <Info size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                            <div className="text-sm text-slate-700">
+                              <p className="font-semibold text-blue-800">Need help?</p>
+                              <p className="mt-1">Use the estimate tool for quick pricing guidance.</p>
                             </div>
                           </div>
                         </div>
@@ -3405,22 +3481,51 @@ function CustomerDashboard() {
                     </div>
                     <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-800">
                       <span className="inline-flex items-center gap-1">
-                        <Star size={16} />
-                        {productReviews.length}
+                        {renderRatingStars(averageProductReviewRating, 16)}
                       </span>
-                      review{productReviews.length === 1 ? "" : "s"}
+                      {totalRatedReviews} rating{totalRatedReviews === 1 ? "" : "s"}
                     </div>
                   </div>
                 </div>
 
-                {productReviews.length === 0 ? (
+                <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-wrap gap-2">
+                    {reviewRatingCounts.map(({ star, count }) => (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => setSelectedReviewRatingTab(star)}
+                        className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                          selectedReviewRatingTab === star
+                            ? "border-red-500 bg-red-50 text-red-700"
+                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+                        }`}
+                      >
+                        {star} star{star === 1 ? "" : "s"} ({count})
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedReviewRatingTab(0)}
+                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                        selectedReviewRatingTab === 0
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+                      }`}
+                    >
+                      All ({productReviews.length})
+                    </button>
+                  </div>
+                </div>
+
+                {filteredProductReviews.length === 0 ? (
                   <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
                     <p className="text-lg font-semibold">No reviews yet</p>
                     <p className="mt-2 text-sm">Be the first customer to leave a review for this product.</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {productReviews.map((review, index) => (
+                    {filteredProductReviews.map((review, index) => (
                       <div key={`${review.orderId || index}-${review.submittedAt || index}`} className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                           <div className="min-w-0">
