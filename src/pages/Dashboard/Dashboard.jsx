@@ -8,7 +8,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
-import { getOrders, getAdminOrders, updateOrderStatus } from "@/api/orders";
+import { getOrders, getAdminOrders, getAdminOrder, updateOrderStatus } from "@/api/orders";
 import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
 
 const normalizeAddress = (value) => {
@@ -65,6 +65,65 @@ const getCustomerAddress = (customer) => {
   );
 };
 
+const formatCurrency = (value) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  return `₱${amount.toLocaleString(undefined, {
+    minimumFractionDigits: amount % 1 ? 2 : 0,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
+const titleCase = (value) => {
+  if (!value) return "—";
+  return String(value)
+    .replace(/_/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+};
+
+const getOrderItemProduct = (item) => {
+  if (!item?.product_id || typeof item.product_id !== "object") return {};
+  return item.product_id;
+};
+
+const getOrderItemName = (item) => {
+  const product = getOrderItemProduct(item);
+  return item?.name || product.name || product.product_name || "Project Item";
+};
+
+const getOrderItemType = (item) => {
+  const product = getOrderItemProduct(item);
+  return titleCase(item?.product_type || item?.category || product.product_type || product.category);
+};
+
+const getOrderItemDimensions = (item) => {
+  const dims = item?.dimensions || {};
+  const width = Number(item?.width ?? dims.width) || 0;
+  const height = Number(item?.height ?? dims.height) || 0;
+  if (!width && !height) return "—";
+  const unit = item?.measurement_unit || item?.measurementUnit || dims.unit || "in";
+  const customized = Boolean(item?.customized ?? dims.customized);
+  const separator = " × ";
+  const value = `${width || "—"}${separator}${height || "—"} ${unit}`;
+  return customized ? `${value} (Customized)` : value;
+};
+
+const getOrderItemUnitRate = (item) => {
+  const product = getOrderItemProduct(item);
+  const unitPrice = Number(item?.unit_price ?? product.unit_price);
+  const unit = item?.unit || product.unit || item?.measurement_unit || item?.measurementUnit || item?.dimensions?.unit || "piece";
+  return `${formatCurrency(unitPrice)} / ${unit.replace(/^per_/, "")}`;
+};
+
+const getOrderItemTotal = (item) => {
+  const estimated = Number(item?.estimated_price) || 0;
+  if (item?.is_estimate && estimated > 0) return estimated;
+  return (Number(item?.quantity) || 1) * (Number(item?.unit_price) || 0);
+};
+
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 
@@ -78,6 +137,7 @@ function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [selectedOrderLoading, setSelectedOrderLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
   const [toast, setToast] = useState({
@@ -115,6 +175,22 @@ function Dashboard() {
       action,
       order,
     });
+  };
+
+  
+
+  const handleViewOrder = async (orderId) => {
+    if (!orderId) return;
+    try {
+      setSelectedOrderLoading(true);
+      const resp = await getAdminOrder(orderId);
+      setSelectedOrder(resp.order || resp);
+    } catch (error) {
+      console.error("Failed to fetch admin order:", error);
+      showToast(error.data?.message || error.message || "Unable to load order details", "error");
+    } finally {
+      setSelectedOrderLoading(false);
+    }
   };
 
   const closeConfirmModal = () => {
@@ -452,10 +528,11 @@ function Dashboard() {
                           <td className="p-4">
                             <div className="flex justify-center gap-2">
                               <button
-                                onClick={() => setSelectedOrder(order)}
-                                className="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                                onClick={() => handleViewOrder(order._id || order.id)}
+                                disabled={selectedOrderLoading}
+                                className="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                               >
-                                View
+                                {selectedOrderLoading ? "..." : "View"}
                               </button>
 
                               <button
@@ -710,6 +787,57 @@ function Dashboard() {
                   {selectedOrder.status?.replace(/_/g, " ").toUpperCase() || "—"}
                 </p>
               </div>
+            </div>
+
+            
+
+            <div className="mb-6">
+              <p className="text-xs uppercase tracking-widest text-slate-400 mb-3">Ordered Items</p>
+              {Array.isArray(selectedOrder.items) && selectedOrder.items.length > 0 ? (
+                <div className="space-y-3">
+                  {selectedOrder.items.map((item, index) => (
+                    <div
+                      key={`${item.product_id?._id || item.product_id || item.name || "item"}-${index}`}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                    >
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-base font-bold text-slate-950">
+                            {index + 1}. {getOrderItemName(item)}
+                          </p>
+                          {item.notes && (
+                            <p className="mt-1 text-sm text-slate-500">{item.notes}</p>
+                          )}
+                        </div>
+                        <p className="text-lg font-bold text-green-600">{formatCurrency(getOrderItemTotal(item))}</p>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div>
+                          <p className="text-xs uppercase tracking-widest text-slate-400">Type</p>
+                          <p className="mt-1 font-semibold text-slate-900">{getOrderItemType(item)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-widest text-slate-400">Dimensions</p>
+                          <p className="mt-1 font-semibold text-slate-900">{getOrderItemDimensions(item)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-widest text-slate-400">Quantity</p>
+                          <p className="mt-1 font-semibold text-slate-900">{item.quantity || 1}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-widest text-slate-400">Unit Rate</p>
+                          <p className="mt-1 font-semibold text-slate-900">{getOrderItemUnitRate(item)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-500">
+                  No item details available.
+                </div>
+              )}
             </div>
 
             {actionMessage && (

@@ -181,6 +181,7 @@ function CustomerDashboard() {
   const [showProductReviewModal, setShowProductReviewModal] = useState(false);
   const [selectedReviewRatingTab, setSelectedReviewRatingTab] = useState(0);
   const [reviewOrderMode, setReviewOrderMode] = useState("estimate");
+  const [orderReviewAgreed, setOrderReviewAgreed] = useState(false);
   const [orderReviewForm, setOrderReviewForm] = useState({
     rating: 0,
     title: "",
@@ -623,15 +624,128 @@ function CustomerDashboard() {
 
   const generateCartId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
+  const parseProductDimensionText = (value) => {
+    if (!value) return {};
+    const text = String(value);
+    const match = text.match(/(\d+(?:\.\d+)?)\s*(?:x|×|by)\s*(\d+(?:\.\d+)?)/i);
+    const unitMatch = text.match(/\b(cm|mm|m|ft|in|inch|inches|feet|meter|meters)\b|"/i);
+    const unitMap = {
+      inch: "in",
+      inches: "in",
+      feet: "ft",
+      meter: "m",
+      meters: "m",
+    };
+
+    return {
+      width: match ? Number(match[1]) : 0,
+      height: match ? Number(match[2]) : 0,
+      unit: unitMatch ? unitMap[unitMatch[1]?.toLowerCase()] || unitMatch[1]?.toLowerCase() || "in" : "in",
+    };
+  };
+
+  const getProductDefaultDimensions = (product, quantity = 1) => {
+    const parsed = parseProductDimensionText(product?.dimensions || product?.standard_size || product?.size);
+    const width = Number(product?.width) > 0 ? Number(product.width) : Number(parsed.width) || 0;
+    const height = Number(product?.height) > 0 ? Number(product.height) : Number(parsed.height) || 0;
+    const unit = product?.measurement_unit || product?.measurementUnit || parsed.unit || "in";
+
+    return {
+      width,
+      height,
+      unit,
+      quantity: Math.max(1, Number(quantity) || 1),
+      customized: false,
+    };
+  };
+
+  const buildOrderItemDimensions = ({ product, width, height, unit, quantity, customized = false }) => {
+    const defaultDimensions = getProductDefaultDimensions(product, quantity);
+    const useCustomized = customized || Number(width) > 0 || Number(height) > 0;
+    const dimensions = useCustomized
+      ? {
+          width: Number(width) || 0,
+          height: Number(height) || 0,
+          unit: unit || defaultDimensions.unit || "in",
+          quantity: Math.max(1, Number(quantity) || 1),
+          customized: true,
+        }
+      : defaultDimensions;
+
+    return dimensions;
+  };
+
+  const areOrderItemDimensionsValid = (dimensions) =>
+    Number(dimensions?.width) > 0 &&
+    Number(dimensions?.height) > 0 &&
+    Number(dimensions?.quantity) > 0 &&
+    Boolean(dimensions?.unit);
+
+  const getOrderItemDimensionText = (itemOrDimensions) => {
+    const dimensions = itemOrDimensions?.dimensions || itemOrDimensions || {};
+    if (!areOrderItemDimensionsValid(dimensions)) return "—";
+    return `${dimensions.width} ${dimensions.unit} × ${dimensions.height} ${dimensions.unit}`;
+  };
+
+  const buildCustomerOrderItem = (product, options = {}) => {
+    const quantity = Math.max(1, Number(options.quantity) || 1);
+    const dimensions = buildOrderItemDimensions({
+      product,
+      width: options.width,
+      height: options.height,
+      unit: options.measurementUnit || options.unit,
+      quantity,
+      customized: Boolean(options.customized),
+    });
+
+    return {
+      ...product,
+      _id: product?._id,
+      product_id: product?._id,
+      name: product?.name || product?.product_name || "Product",
+      quantity,
+      unit_price: Number(product?.unit_price || product?.price_per_sqft || options.unit_price || 0),
+      unit: product?.unit || "piece",
+      category: product?.category || "",
+      product_type: product?.product_type || "",
+      width: dimensions.width,
+      height: dimensions.height,
+      measurementUnit: dimensions.unit,
+      measurement_unit: dimensions.unit,
+      dimensions,
+      customized: dimensions.customized,
+      area: Number(options.area) || 0,
+      notes: options.notes || "",
+      estimated_price: Number(options.estimated_price) || 0,
+      is_estimate: Boolean(options.is_estimate || dimensions.customized),
+    };
+  };
+
   const handleAddToCart = (product) => {
+    const cartItem = buildCustomerOrderItem(product, { quantity: 1 });
+    if (!areOrderItemDimensionsValid(cartItem.dimensions)) {
+      setCartActionError("Please provide valid product dimensions before submitting your order.");
+      return;
+    }
+
     setCartItems((prev) => {
       const existing = prev.find((p) => !p.is_estimate && (p._id === product._id || p.name === product.name));
       if (existing) {
         return prev.map((p) =>
-          p.cartId === existing.cartId ? { ...p, quantity: p.quantity + 1, selected: true } : p
+          p.cartId === existing.cartId
+            ? {
+                ...p,
+                quantity: p.quantity + 1,
+                dimensions: {
+                  ...(p.dimensions || {}),
+                  quantity: p.quantity + 1,
+                },
+                selected: true,
+              }
+            : p
         );
       }
-      return [...prev, { ...product, quantity: 1, cartId: generateCartId(), selected: true }];
+      return [...prev, { ...cartItem, cartId: generateCartId(), selected: true }];
     });
   };
 
@@ -662,17 +776,18 @@ function CustomerDashboard() {
     setCartItems((prev) => [
       ...prev,
       {
-        ...product,
+        ...buildCustomerOrderItem(product, {
+          quantity: parsedQuantity,
+          width: parsedWidth,
+          height: parsedHeight,
+          measurementUnit,
+          customized: true,
+          area,
+          notes,
+          estimated_price,
+          is_estimate: true,
+        }),
         cartId: generateCartId(),
-        quantity: parsedQuantity,
-        width: parsedWidth,
-        height: parsedHeight,
-        measurementUnit,
-        unit: measurementUnit,
-        area,
-        notes: notes || "",
-        estimated_price,
-        is_estimate: true,
         selected: true,
       },
     ]);
@@ -823,6 +938,28 @@ function CustomerDashboard() {
     }
   };
 
+  const addCreatedOrderToMyOrders = (createdOrder) => {
+    if (!createdOrder) return;
+
+    const createdOrderId = createdOrder._id || createdOrder.id || createdOrder.tracking;
+    setOrders((prev = []) => {
+      const existingIndex = prev.findIndex(
+        (order) => (order._id || order.id || order.tracking) === createdOrderId
+      );
+
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = createdOrder;
+        return next;
+      }
+
+      return [createdOrder, ...prev];
+    });
+    setOrderFilter("all");
+    setTrackingNumber("");
+    setTrackingResult(null);
+  };
+
   const handleSubmitOrderRequest = async () => {
     if (!orderReviewAgreed) {
       setCartActionError("Please confirm the payment policy before submitting.");
@@ -857,20 +994,22 @@ function CustomerDashboard() {
           customization_fee: cartDecisionProduct.customization_fee || 0,
         });
 
-        const item = {
-          _id: cartDecisionProduct._id,
-          name: cartDecisionProduct.name,
+        const item = buildCustomerOrderItem(cartDecisionProduct, {
           quantity: parsedQuantity,
-          unit_price: Number(cartDecisionProduct.unit_price) || 0,
-          unit: cartDecisionProduct.unit || "piece",
           width: parsedWidth,
           height: parsedHeight,
           measurementUnit: estimateForm.unit,
+          customized: true,
           area: estimationResult.estimated_area || 0,
           estimated_price: estimationResult.estimated_price || 0,
           notes: estimateForm.notes || "",
           is_estimate: true,
-        };
+        });
+
+        if (!areOrderItemDimensionsValid(item.dimensions)) {
+          setCartActionError("Please provide valid product dimensions before submitting your order.");
+          return;
+        }
 
         const response = await createOrder({
           items: [item],
@@ -883,10 +1022,11 @@ function CustomerDashboard() {
         });
 
         setOrderRequestMessage(`Order requested successfully. Tracking ID: ${response.order.tracking}`);
-        setOrders((prev) => [response.order, ...(prev || [])]);
+        addCreatedOrderToMyOrders(response.order);
         setOrderSuccessData(response.order);
       }
 
+      setOrderReviewAgreed(false);
       setShowOrderReviewModal(false);
       setShowOrderNowModal(false);
       setShowOrderSuccessModal(true);
@@ -1023,7 +1163,14 @@ function CustomerDashboard() {
       prev
         .map((item) =>
           item.cartId === cartId
-            ? { ...item, quantity: Math.max(1, item.quantity + delta) }
+            ? {
+                ...item,
+                quantity: Math.max(1, item.quantity + delta),
+                dimensions: {
+                  ...(item.dimensions || {}),
+                  quantity: Math.max(1, item.quantity + delta),
+                },
+              }
             : item
         )
         .filter((item) => item.quantity > 0)
@@ -1083,19 +1230,19 @@ function CustomerDashboard() {
     const quantity = Math.max(1, Number(orderNowQuantity) || 1);
     const unit_price = Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0);
 
-    const item = {
-      _id: orderNowProduct._id,
-      name: orderNowProduct.name,
+    const item = buildCustomerOrderItem(orderNowProduct, {
       quantity,
-      unit_price,
-      unit: orderNowProduct.unit || "piece",
-      width: 0,
-      height: 0,
       area: 0,
       estimated_price: 0,
       notes: "",
       is_estimate: false,
-    };
+      unit_price,
+    });
+
+    if (!areOrderItemDimensionsValid(item.dimensions)) {
+      setCartActionError("Please provide valid product dimensions before submitting your order.");
+      return;
+    }
 
     const response = await createOrder({
       items: [item],
@@ -1108,8 +1255,9 @@ function CustomerDashboard() {
     });
 
     setOrderRequestMessage(`Order requested successfully. Tracking ID: ${response.order.tracking}`);
-    setOrders((prev) => [response.order, ...(prev || [])]);
+    addCreatedOrderToMyOrders(response.order);
     setOrderSuccessData(response.order);
+    setOrderReviewAgreed(false);
     setShowOrderSuccessModal(true);
   };
 
@@ -1272,21 +1420,27 @@ function CustomerDashboard() {
     setCheckoutMessage("");
     setCheckoutLoading(true);
     try {
-      const response = await createOrder({
-        items: selectedCartItems.map((item) => ({
-          _id: item._id,
-          name: item.name,
+      const orderItems = selectedCartItems.map((item) =>
+        buildCustomerOrderItem(item, {
           quantity: item.quantity,
-          unit_price: Number(item.unit_price) || 0,
-          unit: item.unit || "piece",
-          measurement_unit: item.measurementUnit || item.unit || "in",
-          is_estimate: item.is_estimate || false,
-          width: item.width || null,
-          height: item.height || null,
-          area: item.area || null,
-          estimated_price: item.estimated_price || null,
-          notes: item.notes || "",
-        })),
+          width: item.dimensions?.width ?? item.width,
+          height: item.dimensions?.height ?? item.height,
+          measurementUnit: item.dimensions?.unit || item.measurementUnit || item.measurement_unit,
+          customized: item.dimensions?.customized ?? item.customized ?? item.is_estimate,
+          area: item.area,
+          estimated_price: item.estimated_price,
+          notes: item.notes,
+          is_estimate: item.is_estimate,
+        })
+      );
+
+      if (orderItems.some((item) => !areOrderItemDimensionsValid(item.dimensions))) {
+        setCheckoutError("Please provide valid product dimensions before submitting your order.");
+        return;
+      }
+
+      const response = await createOrder({
+        items: orderItems,
         shipping_address: normalizeAddress(
           [profileForm.street_address, profileForm.city, profileForm.province, profileForm.zip_code]
             .filter(Boolean)
@@ -1296,7 +1450,8 @@ function CustomerDashboard() {
 
       setCheckoutMessage(`Order placed successfully. Tracking ID: ${response.order.tracking}`);
       setCartItems((prev) => prev.filter((item) => !item.selected));
-      setOrders((prev) => [response.order, ...prev]);
+      addCreatedOrderToMyOrders(response.order);
+      setActiveTab("orders");
     } catch (error) {
       setCheckoutError(error.data?.message || error.message || "Failed to place order.");
     } finally {
@@ -1890,7 +2045,7 @@ function CustomerDashboard() {
                   {products.map((product) => (
                     <div
                       key={product._id || product.name}
-                      className="group bg-white rounded-3xl shadow-lg overflow-hidden border border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.01] transition duration-200 ease-out cursor-pointer flex flex-col h-full"
+                      className="group bg-white rounded-1xl shadow-lg overflow-hidden border border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.01] transition duration-200 ease-out cursor-pointer flex flex-col h-full"
                       onClick={() => handleViewProduct(product)}
                     >
                       <div className="h-70 overflow-hidden bg-red-50">

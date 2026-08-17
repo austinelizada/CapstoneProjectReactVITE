@@ -96,16 +96,19 @@ const normalizeProductId = (productId) => {
 
 const sanitizeOrderItems = (items = []) => {
   return (items || []).map((item) => {
-    const quantity = Number(item.quantity) || 1;
+    const incomingDimensions = item.dimensions || {};
+    const quantity = Number(item.quantity ?? incomingDimensions.quantity) || 1;
     const unit_price = Number(item.unit_price) || 0;
-    const width = Number(item.width) || 0;
-    const height = Number(item.height) || 0;
+    const width = Number(incomingDimensions.width ?? item.width) || 0;
+    const height = Number(incomingDimensions.height ?? item.height) || 0;
+    const measurement_unit = incomingDimensions.unit || item.measurement_unit || item.measurementUnit || "in";
     const area = Number(item.area) || 0;
     const estimated_price = item.is_estimate
       ? Number(item.estimated_price) || area * unit_price
       : 0;
     const estimation_mode = item.estimation_mode === "manual" ? "manual" : "auto";
     const manual_estimated_total = Number(item.manual_estimated_total) || 0;
+    const customized = Boolean(incomingDimensions.customized ?? item.customized ?? item.is_estimate);
 
     return {
       product_id: normalizeProductId(item.product_id) || normalizeProductId(item._id) || null,
@@ -113,14 +116,24 @@ const sanitizeOrderItems = (items = []) => {
       quantity,
       unit_price,
       unit: item.unit || "piece",
-      measurement_unit: item.measurement_unit || item.measurementUnit || item.unit || "in",
+      category: item.category || "",
+      product_type: item.product_type || "",
+      measurement_unit,
       width,
       height,
+      dimensions: {
+        width,
+        height,
+        unit: measurement_unit,
+        quantity,
+        customized,
+      },
       area,
       estimated_price,
       estimation_mode,
       manual_estimated_total,
       notes: item.notes || "",
+      customized,
       is_estimate: Boolean(item.is_estimate),
     };
   });
@@ -141,7 +154,7 @@ export const listOrders = async (req, res) => {
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
-      .populate("items.product_id", "image_url image images name");
+      .populate("items.product_id", "image_url image images name product_name category product_type unit unit_price price_per_sqft price_per_blade");
 
     res.json({ success: true, orders });
   } catch (error) {
@@ -159,6 +172,20 @@ export const createOrder = async (req, res) => {
     }
 
     const sanitizedItems = sanitizeOrderItems(items);
+    const hasInvalidDimensions = sanitizedItems.some(
+      (item) =>
+        Number(item.dimensions?.width) <= 0 ||
+        Number(item.dimensions?.height) <= 0 ||
+        Number(item.dimensions?.quantity) <= 0 ||
+        !item.dimensions?.unit
+    );
+
+    if (hasInvalidDimensions) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide valid product dimensions before submitting your order.",
+      });
+    }
 
     const total_amount = sanitizedItems.reduce((sum, item) => {
       const itemAmount = item.is_estimate && item.estimated_price ? item.estimated_price : item.quantity * item.unit_price;
@@ -270,7 +297,7 @@ export const trackOrder = async (req, res) => {
 
     const order = await Order.findOne({ tracking })
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
-      .populate("items.product_id", "image_url image images name");
+      .populate("items.product_id", "image_url image images name product_name category product_type unit unit_price price_per_sqft price_per_blade");
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }

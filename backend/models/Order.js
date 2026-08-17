@@ -25,6 +25,16 @@ const OrderItemSchema = new mongoose.Schema(
       type: String,
       default: "piece",
     },
+    category: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    product_type: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     width: {
       type: Number,
       default: 0,
@@ -63,6 +73,36 @@ const OrderItemSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: "",
+    },
+    customized: {
+      type: Boolean,
+      default: false,
+    },
+    dimensions: {
+      width: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      height: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      unit: {
+        type: String,
+        trim: true,
+        default: "in",
+      },
+      quantity: {
+        type: Number,
+        default: 1,
+        min: 0,
+      },
+      customized: {
+        type: Boolean,
+        default: false,
+      },
     },
     is_estimate: {
       type: Boolean,
