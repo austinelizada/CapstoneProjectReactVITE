@@ -128,6 +128,10 @@ const ProductSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    is_featured: {
+      type: Boolean,
+      default: false,
+    },
     image_url: {
       type: String,
       trim: true,

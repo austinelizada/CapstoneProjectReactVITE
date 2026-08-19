@@ -8,15 +8,22 @@ import {
   ShoppingBag,
   Search,
   BriefcaseBusiness,
+  Star,
+  StarHalf,
 } from "lucide-react";
 import { getProducts } from "../../api/products";
+import { getProductReviews } from "../../api/orders";
 import logo from "../../assets/images/ACGCLOGO1.png";
+import heroVisual from "../../../backend/uploads/1780678859091-c2tdfj-main.jpg";
 
 function LandingPage() {
 
   const [active, setActive] = useState("home");
   const [mobileMenu, setMobileMenu] = useState(false);
   const [featuredProducts, setFeaturedProducts] = useState([]);
+  const [featuredProductStats, setFeaturedProductStats] = useState({});
+  const [heroImages, setHeroImages] = useState([heroVisual]);
+  const [heroImageIndex, setHeroImageIndex] = useState(0);
   const [isLoadingFeatured, setIsLoadingFeatured] = useState(false);
   const [featuredError, setFeaturedError] = useState("");
   const location = useLocation();
@@ -35,21 +42,69 @@ function LandingPage() {
   useEffect(() => {
     const loadFeaturedProducts = async () => {
       setIsLoadingFeatured(true);
+      setFeaturedError("");
+
       try {
-        const response = await getProducts();
-        const allProducts = response.products || [];
-        const activeProducts = allProducts
-          .filter((product) => product.is_active !== false)
+        let response = await getProducts({ featured: true });
+        let allProducts = response.products || [];
+
+        if (!allProducts.length) {
+          const fallbackResponse = await getProducts();
+          allProducts = fallbackResponse.products || [];
+        }
+
+        const activeProducts = allProducts.filter((product) => product.is_active !== false);
+
+        const productReviewData = await Promise.all(
+          activeProducts.map(async (product) => {
+            try {
+              const reviewResponse = await getProductReviews(product._id || product.id);
+              const reviews = Array.isArray(reviewResponse.reviews) ? reviewResponse.reviews : [];
+              const ratedReviews = reviews.filter((review) => Number(review.rating) > 0);
+              const averageRating = ratedReviews.length
+                ? ratedReviews.reduce((sum, review) => sum + Number(review.rating), 0) / ratedReviews.length
+                : 0;
+
+              return {
+                product,
+                averageRating,
+                ratingsCount: ratedReviews.length,
+              };
+            } catch (error) {
+              return {
+                product,
+                averageRating: 0,
+                ratingsCount: 0,
+              };
+            }
+          })
+        );
+
+        const stats = {};
+        const sortedProducts = productReviewData
           .sort((a, b) => {
-            const aDate = new Date(a.created_at || a.createdAt || 0).getTime();
-            const bDate = new Date(b.created_at || b.createdAt || 0).getTime();
-            return bDate - aDate;
+            if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
+            return b.ratingsCount - a.ratingsCount;
+          })
+          .map(({ product, averageRating, ratingsCount }) => {
+            stats[product._id || product.id] = { averageRating, ratingsCount };
+            return product;
           })
           .slice(0, 3);
-        setFeaturedProducts(activeProducts);
+
+        const productImages = allProducts
+          .filter((product) => product.is_active !== false)
+          .map((product) => getProductImage(product))
+          .filter(Boolean);
+
+        setFeaturedProducts(sortedProducts);
+        setFeaturedProductStats(stats);
+        setHeroImages(productImages.length ? productImages : [heroVisual]);
+        setHeroImageIndex(0);
       } catch (error) {
         console.error("Failed to load featured products", error);
         setFeaturedProducts([]);
+        setFeaturedProductStats({});
         setFeaturedError(
           error?.data?.message || error?.message || "Failed to load featured products."
         );
@@ -95,6 +150,34 @@ function LandingPage() {
     return "Contact us";
   };
 
+  const renderRatingStars = (rating = 0, size = 16) => {
+    const normalizedRating = Number(rating) || 0;
+    const fullStars = Math.floor(normalizedRating);
+    const hasHalfStar = normalizedRating - fullStars >= 0.5;
+
+    return Array.from({ length: 5 }, (_, index) => {
+      if (index < fullStars) {
+        return <Star key={index} size={size} fill="currentColor" className="text-amber-500" />;
+      }
+
+      if (index === fullStars && hasHalfStar) {
+        return <StarHalf key={index} size={size} fill="currentColor" className="text-amber-500" />;
+      }
+
+      return <Star key={index} size={size} className="text-slate-300" />;
+    });
+  };
+
+  useEffect(() => {
+    if (heroImages.length <= 1) return undefined;
+
+    const intervalId = setInterval(() => {
+      setHeroImageIndex((currentIndex) => (currentIndex + 1) % heroImages.length);
+    }, 2000);
+
+    return () => clearInterval(intervalId);
+  }, [heroImages]);
+
   return (
   <div className="min-h-screen bg-gradient-to-r from-white-300 via-gray-100 to-white-200 text-gray-900 overflow-x-hidden"> {/* BACKGROUND FX */}
 
@@ -133,11 +216,7 @@ function LandingPage() {
 
           {/* LOGO */}
 
-          <motion.div
-            whileHover={{scale:1.05}}
-            className="flex items-center gap-4"
-          >
-
+          <div className="flex items-center gap-4">
             <motion.img
               animate={{
                 rotate:[0,3,-3,0]
@@ -148,9 +227,18 @@ function LandingPage() {
               }}
               src={logo}
               alt="logo"
-              className="w-14 h-14 object-contain"
+              className="w-16 h-16 object-contain sm:w-20 sm:h-20"
             />
-          </motion.div>
+
+            <div className="leading-tight">
+              <h1 className="font-black text-2xl text-red-600 tracking-tight">
+                ACGC Services
+              </h1>
+              <p className="text-2xl text-gray-700 font-bold tracking-tight sm:text-2xl">
+                Aluminum & Glass Services
+              </p>
+            </div>
+          </div>
 
           {featuredError && (
             <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
@@ -158,22 +246,6 @@ function LandingPage() {
               <p>{featuredError}</p>
             </div>
           )}
-
-            <div>
-
-              <h1 className="font-bold text-xl text-red-600">
-
-                ACGC Aluminum Services
-
-              </h1>
-
-              <p className="text-xs text-gray-600 font-medium">
-
-                Aluminum & Glass Management System
-
-              </p>
-
-            </div>
 
                 {/* DESKTOP NAV */}
 
@@ -365,33 +437,23 @@ function LandingPage() {
               initial={{opacity:0,y:50}}
               animate={{opacity:1,y:0}}
               transition={{delay:.3,duration:1}}
-              className="mt-8 text-5xl lg:text-6xl font-black leading-tight"
+              className="mt-8 text-[3rem] sm:text-[4rem] lg:text-[5.2rem] font-black tracking-[-0.06em] leading-[0.9] text-slate-900"
             >
-
-              Modern
-
-              <span className="block bg-gradient-to-r from-red-600 via-gray-700 to-gray-400 bg-clip-text text-transparent">
-
+              <span className="block">Modern</span>
+              <span className="block bg-gradient-to-r from-red-600 via-red-500 to-slate-500 bg-clip-text text-transparent">
                 Aluminum & Glass
-
               </span>
-
-              Management Platform
-
+              <span className="block">Management Platform</span>
             </motion.h1>
 
             <motion.p
               initial={{opacity:0,y:40}}
               animate={{opacity:1,y:0}}
               transition={{delay:.5,duration:1}}
-              className="mt-8 text-gray-600 text-lg leading-8 max-w-xl"
+              className="mt-8 max-w-[620px] text-base sm:text-lg leading-8 text-slate-600/90 tracking-[0.01em]"
             >
-
-              Premium aluminum fabrication, storefront systems,
-              tempered glass installation, project tracking,
-              and ordering solutions for residential and
-              commercial clients.
-
+              Premium aluminum fabrication, storefront systems, tempered glass installation,
+              project tracking, and ordering solutions for residential and commercial clients.
             </motion.p>
 
             {/* CTA */}
@@ -434,100 +496,41 @@ function LandingPage() {
 
           </div>
 
-          {/* RIGHT GLASS CARD */}
-
+          {/* RIGHT SIDE VISUAL */}
           <motion.div
-            initial={{opacity:0,scale:.7}}
-            animate={{opacity:1,scale:1}}
-            transition={{duration:1}}
-            className="relative"
+            initial={{ opacity: 0, x: 60 }}
+            animate={{ opacity: 1, x: 0, y: [0, -8, 0] }}
+            transition={{ delay: 0.6, duration: 1.2, ease: "easeOut" }}
+            className="relative hidden lg:flex items-center justify-center"
           >
+            <div className="relative w-full max-w-[700px]">
+              <div className="absolute -top-10 -right-8 h-36 w-36 rounded-full bg-red-500/15 blur-3xl" />
+              <div className="absolute -bottom-12 -left-10 h-40 w-40 rounded-full bg-slate-300/60 blur-3xl" />
 
-            <motion.div
-              animate={{
-                y:[0,-25,0]
-              }}
-              transition={{
-                duration:6,
-                repeat:Infinity
-              }}
-              className="bg-white/5 border border-white/10 backdrop-blur-3xl rounded-[40px] p-10 shadow-[0_20px_80px_rgba(255,0,0,.18)]"
-            >
-
-              <div className="flex justify-between mb-10">
-
-                <div>
-
-                  <h3 className="text-2xl font-bold">
-
-                    Project Analytics
-
-                  </h3>
-
-                  <p className="text-gray-400 mt-2">
-
-                    Real-time order monitoring
-
-                  </p>
-
+              <div className="relative -rotate-[1.5deg] rounded-[42px] border border-slate-200 bg-white/90 p-4 shadow-[0_38px_90px_rgba(15,23,42,0.16)] backdrop-blur-sm">
+                <div className="overflow-hidden rounded-[28px] bg-slate-100">
+                  <motion.img
+                    key={heroImages[heroImageIndex] || heroVisual}
+                    src={heroImages[heroImageIndex] || heroVisual}
+                    alt="Modern aluminum and glass installation"
+                    initial={{ opacity: 0, scale: 1.02 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.7, ease: "easeInOut" }}
+                    className="h-[560px] w-full object-cover object-center"
+                  />
                 </div>
-
-                <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center shadow-lg">
-
-                  <BriefcaseBusiness size={28} color="black" strokeWidth={2.5} />
-
-                </div>
-
               </div>
 
-              <div className="space-y-6">
-
-                <div className="bg-white/90 p-5 rounded-2xl border border-gray-200">
-
-                  <div className="flex justify-between">
-
-                    <span>Total Orders</span>
-
-                    <span className="text-red-500 font-bold">
-                      245
-                    </span>
-
-                  </div>
-
-                </div>
-
-                <div className="bg-white/90 p-5 rounded-2xl border border-gray-200">
-
-                  <div className="flex justify-between">
-
-                    <span>Active Projects</span>
-
-                    <span className="text-green-400 font-bold">
-                      89
-                    </span>
-
-                  </div>
-
-                </div>
-
-                <div className="bg-white/90 p-5 rounded-2xl border border-gray-200">
-
-                  <div className="flex justify-between">
-
-                    <span>Completed Jobs</span>
-
-                    <span className="text-blue-400 font-bold">
-                      156
-                    </span>
-
-                  </div>
-
-                </div>
-
+              <div className="absolute -left-6 bottom-12 rounded-2xl border border-red-100 bg-white/95 px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+                <p className="text-[9px] font-black uppercase tracking-[0.22em] text-red-600">Since 2014</p>
+                <p className="mt-1 text-lg font-black text-slate-900">Custom Solutions</p>
               </div>
 
-            </motion.div>
-
+              <div className="absolute -right-4 top-10 rounded-full border border-slate-200 bg-white/90 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-700 shadow-md">
+                Premium Build
+              </div>
+            </div>
           </motion.div>
 
         </div>
@@ -567,52 +570,75 @@ function LandingPage() {
 
   </motion.div>
 
-  <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3 mt-20">
+  <div className="mt-16 grid grid-cols-1 gap-6 md:grid-cols-3">
     {isLoadingFeatured ? (
-      <div className="col-span-full rounded-3xl bg-white/10 p-10 text-center text-white/80 shadow-lg">
+      <div className="col-span-full rounded-[24px] border border-slate-200 bg-white p-10 text-center text-slate-600 shadow-sm">
         Loading featured products...
       </div>
     ) : featuredProducts.length === 0 ? (
-      <div className="col-span-full rounded-3xl bg-white/10 p-10 text-center text-white/80 shadow-lg">
+      <div className="col-span-full rounded-[24px] border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-slate-600">
         No featured products are available right now.
       </div>
     ) : (
       featuredProducts.map((product, index) => {
         const imageUrl = getProductImage(product);
+        const reviewStats = featuredProductStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
+        const averageRating = Number(reviewStats.averageRating) || 0;
+        const reviewsCount = Number(reviewStats.ratingsCount) || 0;
+
         return (
           <motion.div
             key={product._id || product.id || index}
             initial={{opacity:0,y:80}}
             whileInView={{opacity:1,y:0}}
             viewport={{once:true}}
-            transition={{delay:index * 0.2,duration:0.8}}
-            whileHover={{
-              scale:1.02,
-            }}
-            className="bg-white rounded-3xl shadow-lg overflow-hidden hover:shadow-2xl transition"
+            transition={{delay:index * 0.12,duration:0.7}}
+            whileHover={{scale:1.01}}
+            className="group cursor-pointer overflow-hidden rounded-[20px] border border-slate-200 bg-slate-50 shadow-[0_8px_22px_rgba(15,23,42,0.05)] transition duration-300 hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_18px_30px_rgba(239,68,68,0.12)]"
           >
-            <div className="h-52 overflow-hidden bg-red-50">
+            <div className="relative h-100 overflow-hidden bg-slate-100">
               {imageUrl ? (
-                <img src={imageUrl} alt={product.product_name || product.name} className="w-full h-full object-cover" />
+                <img src={imageUrl} alt={product.product_name || product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
               ) : (
-                <div className="w-full h-full bg-gradient-to-br from-red-600/20 to-white/5" />
+                <div className="h-full w-full bg-gradient-to-br from-red-600/20 to-white/5" />
               )}
+              <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-slate-900/25 to-transparent" />
             </div>
 
-            <div className="p-6">
-              <span className="bg-red-100 text-red-600 px-3 py-1 rounded-full text-xs font-semibold">
-                {product.category || product.product_type || "General"}
-              </span>
+            <div className="space-y-5 p-5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold uppercase tracking-[0.18em] text-red-700">
+                  {product.category || product.product_type || "General"}
+                </span>
+                <span className="text-base font-extrabold text-emerald-600">{getProductPrice(product)}</span>
+              </div>
 
-              <h3 className="text-xl font-bold mt-4 text-slate-900">
-                {product.product_name || product.name || "Unnamed Product"}
-              </h3>
+              <div>
+                <h3 className="text-[1.8rem] font-black leading-tight text-slate-900">
+                  {product.product_name || product.name || "Unnamed Product"}
+                </h3>
+                <p className="mt-2 line-clamp-2 text-[0.95rem] leading-6 text-slate-700">
+                  {product.description || "Premium aluminum and glass product crafted for reliability and style."}
+                </p>
+              </div>
 
-              <p className="text-gray-700 mt-4 leading-7 min-h-[84px]">
-                {product.description || "Premium aluminum and glass product crafted for reliability and style."}
-              </p>
+              <div className="flex items-center justify-between gap-3 pt-1">
+                <div className="flex min-w-0 flex-col">
+                  <div className="flex items-center gap-1 text-amber-500">
+                    {renderRatingStars(averageRating, 14)}
+                  </div>
+                  <span className="mt-1 text-[15px] font-semibold text-slate-600">
+                    {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount} review${reviewsCount === 1 ? "" : "s"})` : "No reviews yet"}
+                  </span>
+                </div>
 
-              <div className="mt-1 flex items-center justify-between gap-4">
+                <Link
+                  to="/products"
+                  className="inline-flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                >
+                  View
+                  <ArrowRight size={14} />
+                </Link>
               </div>
             </div>
           </motion.div>

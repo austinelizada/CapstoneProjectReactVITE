@@ -145,6 +145,13 @@ router.post("/register", async (req, res) => {
         first_name: user.first_name,
         last_name: user.last_name,
         role: user.role,
+        phone: user.phone,
+        street_address: user.street_address,
+        city: user.city,
+        province: user.province,
+        zip_code: user.zip_code,
+        created_at: user.createdAt,
+        updated_at: user.updatedAt,
       },
     });
   } catch (error) {
@@ -408,6 +415,13 @@ router.post("/login", async (req, res) => {
         first_name: user.first_name,
         last_name: user.last_name,
         role,
+        phone: user.phone,
+        street_address: user.street_address,
+        city: user.city,
+        province: user.province,
+        zip_code: user.zip_code,
+        created_at: user.createdAt,
+        updated_at: user.updatedAt,
       },
     });
   } catch (error) {
@@ -578,6 +592,8 @@ router.put("/profile", authMiddleware, async (req, res) => {
         city: user.city,
         province: user.province,
         zip_code: user.zip_code,
+        created_at: user.createdAt,
+        updated_at: user.updatedAt,
       },
     });
   } catch (error) {

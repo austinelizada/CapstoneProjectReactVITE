@@ -127,7 +127,7 @@ function CustomerDashboard() {
     if (url.startsWith("uploads/")) return API_HOST ? `${API_HOST}/${url}` : `/${url}`;
     return API_HOST ? `${API_HOST}/${url}` : url;
   };
-  const { user, loading, updateProfile, logout } = useAuth();
+  const { user, loading, updateProfile, refreshUser, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -137,6 +137,9 @@ function CustomerDashboard() {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [productError, setProductError] = useState("");
+  const [featuredProducts, setFeaturedProducts] = useState([]);
+  const [featuredProductsLoading, setFeaturedProductsLoading] = useState(false);
+  const [featuredProductsError, setFeaturedProductsError] = useState("");
 
   const [cartItems, setCartItems] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -510,6 +513,75 @@ function CustomerDashboard() {
       setReviewFormLoading(false);
     }
   };
+
+  useEffect(() => {
+    let active = true;
+
+    const fetchFeaturedProducts = async () => {
+      setFeaturedProductsLoading(true);
+      setFeaturedProductsError("");
+
+      try {
+        let response = await getProducts({ featured: true });
+        let productsList = response.products || [];
+
+        if (!productsList.length) {
+          const fallbackResponse = await getProducts();
+          productsList = fallbackResponse.products || [];
+        }
+
+        const eligibleProducts = productsList.filter((product) => product.is_active !== false);
+
+        const productReviewData = await Promise.all(
+          eligibleProducts.map(async (product) => {
+            try {
+              const reviewResponse = await getProductReviews(product._id || product.id);
+              const reviews = Array.isArray(reviewResponse.reviews) ? reviewResponse.reviews : [];
+              const ratedReviews = reviews.filter((review) => Number(review.rating) > 0);
+              const averageRating = ratedReviews.length
+                ? ratedReviews.reduce((sum, review) => sum + Number(review.rating), 0) / ratedReviews.length
+                : 0;
+
+              return {
+                product,
+                averageRating,
+                ratingsCount: ratedReviews.length,
+              };
+            } catch (error) {
+              return {
+                product,
+                averageRating: 0,
+                ratingsCount: 0,
+              };
+            }
+          })
+        );
+
+        const sortedProducts = productReviewData
+          .sort((a, b) => {
+            if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
+            return b.ratingsCount - a.ratingsCount;
+          })
+          .map((entry) => entry.product)
+          .slice(0, 3);
+
+        if (!active) return;
+        setFeaturedProducts(sortedProducts);
+      } catch (error) {
+        if (!active) return;
+        setFeaturedProducts([]);
+        setFeaturedProductsError(error.data?.message || error.message || "Unable to load featured products.");
+      } finally {
+        if (active) setFeaturedProductsLoading(false);
+      }
+    };
+
+    fetchFeaturedProducts();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1353,13 +1425,13 @@ function CustomerDashboard() {
     setProfileSaving(true);
     try {
       const payload = {
-        first_name: profileForm.first_name,
-        last_name: profileForm.last_name,
-        phone: profileForm.phone,
-        street_address: profileForm.street_address,
-        city: profileForm.city,
-        province: profileForm.province,
-        zip_code: profileForm.zip_code,
+        first_name: profileForm.first_name.trim(),
+        last_name: profileForm.last_name.trim(),
+        phone: profileForm.phone.trim(),
+        street_address: normalizeAddress(profileForm.street_address || ""),
+        city: profileForm.city.trim(),
+        province: profileForm.province.trim(),
+        zip_code: profileForm.zip_code.trim(),
         current_password: profileForm.current_password,
       };
 
@@ -1367,17 +1439,30 @@ function CustomerDashboard() {
         payload.new_password = profileForm.new_password;
       }
 
-      payload.street_address = normalizeAddress(profileForm.street_address || "");
       const response = await updateProfile(payload);
+      const nextProfile = response.user || user;
 
-      setProfileMessage("Profile updated successfully.");
-      setProfileForm((prev) => ({
-        ...prev,
-        email: response.user.email || prev.email,
+      setProfileForm({
+        first_name: nextProfile?.first_name || "",
+        last_name: nextProfile?.last_name || "",
+        phone: nextProfile?.phone || "",
+        email: nextProfile?.email || profileForm.email,
+        street_address: nextProfile?.street_address || "",
+        city: nextProfile?.city || "",
+        province: nextProfile?.province || "",
+        zip_code: nextProfile?.zip_code || "",
         current_password: "",
         new_password: "",
         confirm_password: "",
-      }));
+      });
+
+      try {
+        await refreshUser();
+      } catch (refreshError) {
+        console.warn("Profile refresh after save failed", refreshError);
+      }
+
+      setProfileMessage("Profile updated successfully.");
       return true;
     } catch (error) {
       setProfileError(error.data?.message || error.message || "Failed to update profile.");
@@ -1780,6 +1865,7 @@ function CustomerDashboard() {
   );
 
   const cartQuantity = cartItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
+  const showFeaturedSection = activeTab === "products";
 
   if (loading) {
     return (
@@ -1795,10 +1881,10 @@ function CustomerDashboard() {
       <div className="bg-white shadow sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
-            <img src={logo} alt="ACGC Aluminum Services" className="w-12 h-12 object-contain" />
+            <img src={logo} alt="ACGC Aluminum Services" className="w-20 h-20 object-contain" />
             <div>
-              <h1 className="text-2xl font-bold text-red-600">ACGC Aluminum Services</h1>
-              <p className="text-xs text-gray-500">Aluminum & Glass Management System</p>
+              <h1 className="text-2xl font-bold text-red-600">ACGC Services</h1>
+              <p className="text-xl font-bold text-gray-700">Aluminum & Glass Services</p>
             </div>
           </div>
 
@@ -1988,12 +2074,108 @@ function CustomerDashboard() {
         </div>
       </div>
 
-      <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white">
-        <div className="max-w-7xl mx-auto px-6 py-14">
-          <h1 className="text-4xl font-bold">Welcome back, {user?.first_name || "Customer"}</h1>
-          <p className="mt-3 text-red-100 max-w-2xl">Browse aluminum and glass products, monitor your orders, and manage your account.</p>
+      {showFeaturedSection && (
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="rounded-[24px] border border-red-100 bg-white p-5 shadow-[0_14px_35px_rgba(148,163,184,0.12)]">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <div className="text-left">
+                <h2 className="text-5xl font-black leading-none tracking-[-0.05em] text-slate-900">
+                  Featured <span className="text-red-500">Products</span>
+                </h2>
+                <p className="mt-6 max-w-3xl text-lg text-slate-500">
+                  Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("products")}
+                className="rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 hover:border-red-300"
+              >
+                Browse all
+              </button>
+            </div>
+
+            {featuredProductsError ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {featuredProductsError}
+              </div>
+            ) : featuredProductsLoading ? (
+              <div className="grid gap-4 md:grid-cols-3">
+                {[...Array(3)].map((_, index) => (
+                  <div key={index} className="h-72 animate-pulse rounded-[20px] bg-slate-100" />
+                ))}
+              </div>
+            ) : featuredProducts.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+                No featured products are available right now.
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-3">
+                {featuredProducts.map((product) => {
+                  const reviewStats = productReviewStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
+                  const averageRating = Number(reviewStats.averageRating) || 0;
+                  const reviewsCount = Number(reviewStats.ratingsCount) || 0;
+
+                  return (
+                    <div
+                      key={product._id || product.name}
+                      onClick={() => handleViewProduct(product)}
+                      className="group cursor-pointer overflow-hidden rounded-[20px] border border-slate-200 bg-slate-50 shadow-[0_8px_22px_rgba(15,23,42,0.05)] transition duration-300 hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_18px_30px_rgba(239,68,68,0.12)]"
+                    >
+                      <div className="relative h-44 overflow-hidden bg-slate-100">
+                        <img
+                          src={getProductImage(product)}
+                          alt={product.name}
+                          className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                        />
+                        <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-slate-900/25 to-transparent" />
+                      </div>
+
+                      <div className="space-y-3 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-red-700">
+                            {product.category || "Product"}
+                          </span>
+                          <span className="text-sm font-bold text-emerald-600">{getProductPrice(product)}</span>
+                        </div>
+
+                        <div>
+                          <h3 className="text-xl font-bold leading-tight text-slate-900">{product.name}</h3>
+                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">
+                            {product.description || "Premium aluminum and glass solution for modern spaces."}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 pt-1">
+                          <div className="flex min-w-0 flex-col">
+                            <div className="flex items-center gap-1 text-amber-500">
+                              {renderRatingStars(averageRating, 14)}
+                            </div>
+                            <span className="mt-1 text-[11px] font-medium text-slate-500">
+                              {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount} review${reviewsCount === 1 ? "" : "s"})` : "No reviews yet"}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleViewProduct(product);
+                            }}
+                            className="inline-flex items-center gap-2 rounded-full bg-red-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700"
+                          >
+                            View
+                            <ArrowRight size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="max-w-7xl mx-auto p-6">
         {activeTab === "products" && (

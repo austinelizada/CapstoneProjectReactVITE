@@ -2,12 +2,16 @@ import Product from "../models/Product.js";
 
 export const listProducts = async (req, res) => {
   try {
-    const { search, category, adminOnly } = req.query;
+    const { search, category, adminOnly, featured } = req.query;
     const filter = {};
 
     // By default only show active products to non-admin (public) requests
     if (adminOnly !== "true") {
       filter.is_active = true;
+    }
+
+    if (featured === "true") {
+      filter.is_featured = true;
     }
 
     if (category && category !== "all") {
@@ -19,7 +23,7 @@ export const listProducts = async (req, res) => {
       filter.$or = [{ name: regex }, { sku: regex }, { description: regex }];
     }
 
-    const products = await Product.find(filter).sort({ createdAt: -1 });
+    const products = await Product.find(filter).sort({ is_featured: -1, createdAt: -1 });
     res.json({ success: true, products });
   } catch (error) {
     console.error("List products error:", error);
@@ -97,6 +101,7 @@ export const createProduct = async (req, res) => {
       unit_price: Number(unit_price) || 0,
       unit: unit || "per_piece",
       stock_quantity: Number(stock_quantity) || 0,
+      is_featured: req.body.is_featured !== undefined ? Boolean(req.body.is_featured) : false,
       image_url: image_url || "",
       created_by: req.user?.id || undefined,
       // ERP fields
@@ -156,6 +161,7 @@ export const updateProduct = async (req, res) => {
       unit_price: req.body.unit_price != null ? Number(req.body.unit_price) : product.unit_price,
       unit: req.body.unit ?? product.unit,
       stock_quantity: req.body.stock_quantity != null ? Number(req.body.stock_quantity) : product.stock_quantity,
+      is_featured: req.body.is_featured != null ? Boolean(req.body.is_featured) : product.is_featured,
       image_url: req.body.image_url ?? product.image_url,
       // ERP fields
       product_type: req.body.product_type ?? product.product_type,

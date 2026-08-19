@@ -5,6 +5,7 @@ export const getProducts = (params = {}) => {
   if (params.search) query.append("search", params.search);
   if (params.category) query.append("category", params.category);
   if (params.adminOnly) query.append("adminOnly", "true");
+  if (params.featured) query.append("featured", "true");
   return apiFetch(`/products?${query.toString()}`);
 };
 

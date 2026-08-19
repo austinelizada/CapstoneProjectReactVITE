@@ -44,8 +44,8 @@ function Sidebar({ isOpen }) {
               ACGC ADMIN
             </h1>
 
-            <p className="text-xs text-gray-700">
-              Aluminum Services
+            <p className="text-xs font-bold text-gray-700">
+              Aluminum & Glass Services
             </p>
           </div>
         </div>

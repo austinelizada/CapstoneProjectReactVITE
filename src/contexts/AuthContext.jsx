@@ -8,6 +8,7 @@ import {
   createAdmin as createAdminApi,
   updateProfile as updateProfileApi,
 } from "@/api/auth";
+import { normalizeUserProfile } from "@/lib/userProfile";
 
 let authInitializationStarted = false;
 const AuthContext = createContext(null);
@@ -51,6 +52,12 @@ export function AuthProvider({ children }) {
     setAuthError("");
   };
 
+  const normalizeAndPersistUser = (userData) => {
+    const normalized = normalizeUserProfile(userData);
+    setUserAndPersist(normalized);
+    return normalized;
+  };
+
   const loadUser = async () => {
     const token = localStorage.getItem("token");
     if (!token) {
@@ -60,7 +67,7 @@ export function AuthProvider({ children }) {
 
     try {
       const response = await getMe();
-      setUserAndPersist(response.user);
+      normalizeAndPersistUser(response.user);
     } catch (error) {
       const status = error.response?.status;
       const message = error.data?.message || error.message || "";
@@ -77,6 +84,22 @@ export function AuthProvider({ children }) {
         setToken(null);
         setUserAndPersist(null);
       }
+    }
+  };
+
+  const refreshUser = async () => {
+    try {
+      const response = await getMe();
+      return normalizeAndPersistUser(response.user);
+    } catch (error) {
+      const status = error.response?.status;
+      const message = error.data?.message || error.message || "";
+
+      if (!(status === 401 || status === 404 || /invalid|expired|not found/i.test(message))) {
+        console.error("Failed to refresh current user", error);
+      }
+
+      throw error;
     }
   };
 
@@ -136,8 +159,8 @@ export function AuthProvider({ children }) {
     try {
       const response = await loginApi({ identifier, password });
       setToken(response.token);
-      setUserAndPersist(response.user);
-      return response;
+      const userProfile = normalizeAndPersistUser(response.user);
+      return { ...response, user: userProfile };
     } finally {
       setLoginLoading(false);
     }
@@ -147,24 +170,24 @@ export function AuthProvider({ children }) {
     setAuthError("");
     const response = await registerApi(payload);
     setToken(response.token);
-    setUserAndPersist(response.user);
-    return response;
+    const userProfile = normalizeAndPersistUser(response.user);
+    return { ...response, user: userProfile };
   };
 
   const createAdmin = async (payload) => {
     setAuthError("");
     const response = await createAdminApi(payload);
     setToken(response.token);
-    setUserAndPersist(response.user);
+    const userProfile = normalizeAndPersistUser(response.user);
     setAdminExists(true);
-    return response;
+    return { ...response, user: userProfile };
   };
 
   const updateProfile = async (payload) => {
     setAuthError("");
     const response = await updateProfileApi(payload);
-    setUserAndPersist(response.user);
-    return response;
+    const userProfile = normalizeAndPersistUser(response.user);
+    return { ...response, user: userProfile };
   };
 
   const logout = () => {
@@ -184,6 +207,7 @@ export function AuthProvider({ children }) {
     register,
     createAdmin,
     updateProfile,
+    refreshUser,
     logout,
     refreshAdminStatus,
     loginLoading,
