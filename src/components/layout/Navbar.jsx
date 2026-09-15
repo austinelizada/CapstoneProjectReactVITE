@@ -1,15 +1,19 @@
 import { useState, useEffect } from "react";
-import { Menu, Bell } from "lucide-react";
+import { Menu, Bell, Moon, Sun } from "lucide-react";
+import { useAdminTheme } from "@/contexts/AdminThemeContext";
 
 function Navbar({ toggleSidebar }) {
+  const { darkMode, toggleDarkMode } = useAdminTheme();
+
   return (
-    <header className="bg-white shadow px-6 py-4 flex items-center justify-between">
+    <header className={`admin-navbar px-6 py-4 flex items-center justify-between shadow ${darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}>
 
       <div className="flex items-center gap-4">
 
         <button
           onClick={toggleSidebar}
-          className="p-2 rounded-lg hover:bg-gray-100"
+          className={`p-2 rounded-lg ${darkMode ? "hover:bg-slate-800" : "hover:bg-gray-100"}`}
+          aria-label="Toggle sidebar"
         >
           <Menu size={24} />
         </button>
@@ -23,6 +27,16 @@ function Navbar({ toggleSidebar }) {
       </div>
 
       <div className="flex items-center gap-4 relative">
+        <button
+          type="button"
+          onClick={toggleDarkMode}
+          className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition ${darkMode ? "bg-slate-800 text-amber-300 hover:bg-slate-700" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+          aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+          aria-pressed={darkMode}
+        >
+          {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+          <span>{darkMode ? "Light Mode" : "Dark Mode"}</span>
+        </button>
         <NotificationMenu />
       </div>
 

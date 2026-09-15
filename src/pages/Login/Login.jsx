@@ -5,6 +5,7 @@ import {
   Eye,
   EyeOff,
   ChevronLeft,
+  LoaderCircle,
 } from "lucide-react";
 
 import logo from "../../assets/images/ACGCLOGO1.png";
@@ -15,6 +16,7 @@ function Login() {
   const { login, authError, setAuthError, loginLoading } = useAuth();
 
   const [showPassword, setShowPassword] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
   const [formData, setFormData] = useState({
     identifier: "",
     password: "",
@@ -51,14 +53,52 @@ function Login() {
         password: formData.password,
       });
 
-      const destination =
-        location.state?.from?.pathname ||
-        (response.user?.role === "customer" ? "/customer-dashboard" : "/dashboard");
-      navigate(destination, { replace: true });
+      const requestedPath = location.state?.from?.pathname;
+      const isCustomer = response.user?.role === "customer";
+      const destination = isCustomer
+        ? requestedPath?.startsWith("/customer-dashboard")
+          ? requestedPath
+          : "/customer-dashboard"
+        : requestedPath && !requestedPath.startsWith("/customer-dashboard")
+          ? requestedPath
+          : "/dashboard";
+      setRedirecting(true);
+      window.setTimeout(() => {
+        navigate(destination, { replace: true });
+      }, 3000);
     } catch (err) {
       setError(err.data?.message || err.message || "Login failed.");
     }
   };
+
+  if (loginLoading || redirecting) {
+    return (
+      <div className="login-loading-page min-h-screen bg-gradient-to-br from-[#0f0f0f] via-[#1a0000] to-[#0f0f0f] flex items-center justify-center px-4">
+        <div className="text-center text-white">
+          <img
+            src={logo}
+            alt="ACGC Logo"
+            className="login-loading-logo w-56 mx-auto drop-shadow-2xl"
+          />
+          <div className="login-loading-spinner-wrap mx-auto mt-10">
+            <LoaderCircle
+              size={52}
+              strokeWidth={2.5}
+              className="login-loading-spinner text-red-500"
+              aria-hidden="true"
+            />
+          </div>
+          <h1 className="login-loading-heading mt-6 text-3xl font-black">Signing you in...</h1>
+          <p className="login-loading-text mt-3 text-slate-300">Preparing your dashboard</p>
+          <div className="login-loading-dots mt-6" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0f0f0f] via-[#1a0000] to-[#0f0f0f] flex items-center justify-center px-4 py-8">

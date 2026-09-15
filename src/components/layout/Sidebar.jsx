@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { createPortal } from "react-dom";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "../../contexts/AuthContext";
 
@@ -14,25 +15,29 @@ import {
   LogOut,
 } from "lucide-react";
 
+import { useAdminTheme } from "@/contexts/AdminThemeContext";
+
 function Sidebar({ isOpen }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const location = useLocation();
   const { logout } = useAuth();
+  const { darkMode } = useAdminTheme();
 
   const handleLogout = () => {
+    setShowLogoutModal(false);
     logout();
   };
 
   return (
     <>
       <aside
-        className={`bg-white border-gray-300 border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${
+        className={`admin-sidebar ${darkMode ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300"} border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${
           isOpen ? "w-72" : "w-20"
         }`}
       >
         {/* LOGO */}
-        <div className="flex items-center gap-1 p-5 border-b">
+        <div className={`flex items-center gap-1 p-5 border-b ${darkMode ? "border-slate-700" : ""}`}>
           <img
             src={logo}
             alt="ACGC Logo"
@@ -40,11 +45,11 @@ function Sidebar({ isOpen }) {
           />
 
           <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
-            <h1 className="text-lg font-bold text-red-700">
+            <h1 className="text-lg font-bold text-red-500">
               ACGC ADMIN
             </h1>
 
-            <p className="text-xs font-bold text-gray-700">
+            <p className={`text-xs font-bold ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
               Aluminum & Glass Services
             </p>
           </div>
@@ -113,7 +118,7 @@ function Sidebar({ isOpen }) {
           <button
             onClick={() => setShowLogoutModal(true)}
             title="Logout"
-            className={`flex w-full items-center gap-3 p-3 rounded-xl text-red-500 hover:bg-red-50 transition-all duration-300 ease-in-out ${isOpen ? "justify-start" : "justify-center"}`}
+            className={`flex w-full items-center gap-3 p-3 rounded-xl text-red-500 transition-all duration-300 ease-in-out ${darkMode ? "hover:bg-slate-800" : "hover:bg-red-50"} ${isOpen ? "justify-start" : "justify-center"}`}
           >
             <LogOut size={23} />
             <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
@@ -125,40 +130,37 @@ function Sidebar({ isOpen }) {
       </aside>
 
       {/* LOGOUT MODAL */}
-      {showLogoutModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-
-          <div className="bg-white w-[350px] rounded-xl p-6 shadow-lg">
-
-            <h2 className="text-xl font-bold text-gray-800">
-              Confirm Logout
-            </h2>
-
-            <p className="text-gray-500 mt-2">
-              Are you sure you want to logout?
+      {showLogoutModal && createPortal(
+        <div className="fixed inset-0 z-[100] flex min-h-screen items-center justify-center p-4">
+          <div
+            className="logout-modal-backdrop-in absolute inset-0 bg-black/45 backdrop-blur-md"
+            onClick={() => setShowLogoutModal(false)}
+          />
+          <div className={`logout-modal-in relative z-40 w-full max-w-sm rounded-2xl p-6 text-center shadow-2xl ${darkMode ? "bg-slate-800 text-white" : "bg-white text-slate-900"}`}>
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
+              <LogOut size={22} />
+            </div>
+            <h3 className="mt-4 text-lg font-semibold">Confirm Logout</h3>
+            <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
+              Are you sure you want to log out?
             </p>
-
-            <div className="flex justify-end gap-3 mt-6">
-
+            <div className="mt-5 flex justify-center gap-2">
               <button
                 onClick={() => setShowLogoutModal(false)}
-                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300"
+                className={`rounded-lg px-3 py-1 ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-gray-100 hover:bg-gray-200"}`}
               >
                 Cancel
               </button>
-
               <button
                 onClick={handleLogout}
-                className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700"
+                className="rounded-lg bg-red-600 px-3 py-1 text-white hover:bg-red-700"
               >
-                Logout
+                Confirm
               </button>
-
             </div>
-
           </div>
-
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

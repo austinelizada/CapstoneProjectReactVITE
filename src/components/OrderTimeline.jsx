@@ -15,7 +15,7 @@ const isValidImageSource = (src) => {
 
 const getValidImages = (images) => (Array.isArray(images) ? images.filter(isValidImageSource) : []);
 
-export default function OrderTimeline({ order, onOrderChange, audience = "customer", onViewContract = null }) {
+export default function OrderTimeline({ order, onOrderChange, audience = "customer", onViewContract = null, darkMode = false }) {
   const [photoGallery, setPhotoGallery] = useState(null);
   const [scheduleActionLoading, setScheduleActionLoading] = useState(false);
   const [scheduleActionError, setScheduleActionError] = useState("");
@@ -293,7 +293,7 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
 
   return (
     <>
-      <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+      <div className={`order-timeline rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm ${darkMode ? "order-timeline-dark" : ""}`}>
         <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Order Timeline</h5>
         <p className="text-sm text-slate-500 mt-1">Status history for this order.</p>
 

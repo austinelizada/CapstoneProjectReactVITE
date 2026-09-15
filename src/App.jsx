@@ -15,15 +15,58 @@ import Settings from "./pages/Settings/Settings";
 import CustomerDashboard from "./pages/CustomerDashboard/CustomerDashboard";
 import AdminCreationModal from "./components/AdminCreationModal";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { AdminThemeProvider, useAdminTheme } from "@/contexts/AdminThemeContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
+import { LoaderCircle } from "lucide-react";
+import logo from "./assets/images/ACGCLOGO1.png";
 
 
-function App() {
+function LogoutLoadingScreen() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AdminCreationModal />
-        <Routes>
+    <div className="login-loading-page min-h-screen bg-gradient-to-br from-[#0f0f0f] via-[#1a0000] to-[#0f0f0f] flex items-center justify-center px-4">
+      <div className="text-center text-white">
+        <img
+          src={logo}
+          alt="ACGC Logo"
+          className="login-loading-logo w-56 mx-auto drop-shadow-2xl"
+        />
+        <div className="login-loading-spinner-wrap mx-auto mt-10">
+          <LoaderCircle
+            size={52}
+            strokeWidth={2.5}
+            className="login-loading-spinner text-red-500"
+            aria-hidden="true"
+          />
+        </div>
+        <h1 className="login-loading-heading mt-6 text-3xl font-black">
+          Signing you out...
+        </h1>
+        <p className="login-loading-text mt-3 text-slate-300">
+          Securing your session
+        </p>
+        <div className="login-loading-dots mt-6" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppRoutes() {
+  const { logoutLoading, user } = useAuth();
+  const { darkMode } = useAdminTheme();
+
+  if (logoutLoading) {
+    return <LogoutLoadingScreen />;
+  }
+
+  return (
+    <div className={user?.role === "admin" && darkMode ? "admin-theme-shell admin-theme-dark" : "admin-theme-shell"}>
+      <AdminCreationModal />
+      <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
@@ -31,7 +74,7 @@ function App() {
           <Route
             path="/dashboard"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute roles={["admin"]}>
                 <Dashboard />
               </ProtectedRoute>
             }
@@ -108,7 +151,18 @@ function App() {
               </ProtectedRoute>
             }
           />
-        </Routes>
+      </Routes>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <AdminThemeProvider>
+          <AppRoutes />
+        </AdminThemeProvider>
       </BrowserRouter>
     </AuthProvider>
   );

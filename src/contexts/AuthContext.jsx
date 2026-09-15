@@ -25,6 +25,7 @@ export function AuthProvider({ children }) {
   const [adminLoading, setAdminLoading] = useState(true);
   const [adminError, setAdminError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+  const [logoutLoading, setLogoutLoading] = useState(false);
   const adminStatusFetching = useRef(false);
 
   const setToken = (token) => {
@@ -197,8 +198,10 @@ export function AuthProvider({ children }) {
   const logout = () => {
     recordActivity(user, "Logged out", "Authentication");
     clearAuth();
+    setLogoutLoading(true);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/login");
+      window.setTimeout(() => setLogoutLoading(false), 3000);
     }
   };
 
@@ -216,6 +219,7 @@ export function AuthProvider({ children }) {
     logout,
     refreshAdminStatus,
     loginLoading,
+    logoutLoading,
     authError,
     setAuthError,
   };

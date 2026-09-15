@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { createPortal } from "react-dom";
 import toast, { Toaster } from "react-hot-toast";
 import {
   Truck,
@@ -23,6 +24,10 @@ import {
   Bell,
   Star,
   StarHalf,
+  Clock3,
+  Wrench,
+  Sun,
+  Moon,
 } from "lucide-react";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
@@ -35,6 +40,7 @@ import OrderTimeline from "@/components/OrderTimeline";
 import { calculateEstimate } from "@/lib/estimator";
 import { buildOrderTimelineStages } from "@/lib/orderTimeline";
 import { getProgressColor } from "@/lib/utils";
+import { paginateItems } from "@/lib/pagination";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -131,15 +137,28 @@ function CustomerDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [activeTab, setActiveTab] = useState("products");
+  const [activeTab, setActiveTab] = useState("home");
+  const [darkMode, setDarkMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const savedTheme = localStorage.getItem("acgc-dark-mode");
+    if (savedTheme !== null) return savedTheme === "true";
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [productPage, setProductPage] = useState(1);
+  const [productsPerPage, setProductsPerPage] = useState(8);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [productError, setProductError] = useState("");
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [featuredProductsLoading, setFeaturedProductsLoading] = useState(false);
   const [featuredProductsError, setFeaturedProductsError] = useState("");
+  const [featuredRatingStats, setFeaturedRatingStats] = useState({
+    average: 0,
+    total: 0,
+    counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+  });
 
   const [cartItems, setCartItems] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -573,16 +592,39 @@ function CustomerDashboard() {
                 product,
                 averageRating,
                 ratingsCount: ratedReviews.length,
+                ratingCounts: [5, 4, 3, 2, 1].reduce((counts, star) => {
+                  counts[star] = ratedReviews.filter((review) => Math.round(Number(review.rating)) === star).length;
+                  return counts;
+                }, {}),
               };
             } catch (error) {
               return {
                 product,
                 averageRating: 0,
                 ratingsCount: 0,
+                ratingCounts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
               };
             }
           })
         );
+
+        const totalFeaturedRatings = productReviewData.reduce((sum, entry) => sum + entry.ratingsCount, 0);
+        const featuredRatingCounts = productReviewData.reduce((counts, entry) => {
+          [5, 4, 3, 2, 1].forEach((star) => {
+            counts[star] += entry.ratingCounts?.[star] || 0;
+          });
+          return counts;
+        }, { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 });
+        const featuredRatingTotal = [5, 4, 3, 2, 1].reduce(
+          (sum, star) => sum + featuredRatingCounts[star] * star,
+          0
+        );
+
+        setFeaturedRatingStats({
+          average: totalFeaturedRatings ? featuredRatingTotal / totalFeaturedRatings : 0,
+          total: totalFeaturedRatings,
+          counts: featuredRatingCounts,
+        });
 
         const sortedProducts = productReviewData
           .sort((a, b) => {
@@ -597,6 +639,7 @@ function CustomerDashboard() {
       } catch (error) {
         if (!active) return;
         setFeaturedProducts([]);
+        setFeaturedRatingStats({ average: 0, total: 0, counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } });
         setFeaturedProductsError(error.data?.message || error.message || "Unable to load featured products.");
       } finally {
         if (active) setFeaturedProductsLoading(false);
@@ -609,6 +652,10 @@ function CustomerDashboard() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    setProductPage(1);
+  }, [searchQuery, categoryFilter, productsPerPage]);
 
   useEffect(() => {
     let active = true;
@@ -667,6 +714,8 @@ function CustomerDashboard() {
       active = false;
     };
   }, [searchQuery, categoryFilter]);
+
+  const paginatedProducts = paginateItems(products, productPage, productsPerPage);
 
   useEffect(() => {
     if (!user) return;
@@ -1926,8 +1975,17 @@ function CustomerDashboard() {
     deliveryConfirmForm.province.trim()
   );
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("acgc-dark-mode", String(darkMode));
+    }
+  }, [darkMode]);
+
   const cartQuantity = cartItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
-  const showFeaturedSection = activeTab === "products";
+  const showFeaturedSection = activeTab === "home";
+  const sectionTextClass = darkMode ? "text-slate-100" : "text-slate-900";
+  const sectionMutedTextClass = darkMode ? "text-slate-300" : "text-slate-600";
+  const panelClass = darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200";
 
   if (loading) {
     return (
@@ -1938,61 +1996,153 @@ function CustomerDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className={`min-h-screen overflow-x-clip ${darkMode ? "bg-slate-900 text-slate-100" : "bg-gray-100 text-slate-900"}`}>
       <Toaster position="bottom-right" />
-      <div className="bg-white shadow sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-4">
+      <div className={`${darkMode ? "bg-slate-900/90 border-b border-slate-700 shadow-lg shadow-slate-950/20" : "bg-white/95 border-b border-slate-200 shadow-sm"} sticky top-0 z-50`}>
+        <div className="w-full px-6 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <button
+            type="button"
+            onClick={() => setActiveTab("home")}
+            className={`flex items-center gap-4 rounded-2xl border border-transparent px-2 py-1 text-left transition duration-200 ${
+              darkMode ? "hover:bg-slate-800/80 hover:shadow-sm" : "hover:bg-slate-100 hover:shadow-sm"
+            }`}
+            aria-label="Go to ACGC Services home"
+          >
             <img src={logo} alt="ACGC Aluminum Services" className="w-20 h-20 object-contain" />
             <div>
-              <h1 className="text-2xl font-bold text-red-600">ACGC Services</h1>
-              <p className="text-xl font-bold text-gray-700">Aluminum & Glass Services</p>
+              <h1 className="text-2xl font-bold text-red-500">
+                ACGC Services
+              </h1>
+              <p className={`text-xl font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                Aluminum & Glass Services
+              </p>
             </div>
-          </div>
+          </button>
 
-          <div className="flex flex-wrap items-center gap-2 md:gap-4">
-            <button onClick={() => setActiveTab("cart")} className={`px-4 py-2 rounded-xl flex items-center gap-2 ${activeTab === "cart" ? "bg-gray-100 text-red" : "hover:bg-gray-100"}`}>
-              <ShoppingCart size={40} />
+          <div className="flex flex-wrap items-center gap-2 md:gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                const nextMode = !darkMode;
+                setDarkMode(nextMode);
+                toast.success(nextMode ? "Night mode enabled" : "Day mode enabled", {
+                  position: "top-center",
+                  duration: 1800,
+                });
+              }}
+              className={`relative inline-flex h-10 w-[128px] shrink-0 items-center rounded-full border p-1 transition-all duration-500 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500/40 ${
+                darkMode
+                  ? "border-black bg-black text-white hover:bg-slate-950"
+                  : "border-slate-300 bg-slate-200 text-slate-950 hover:bg-slate-300"
+              }`}
+              aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
+              aria-pressed={darkMode}
+            >
+              <span className={`absolute inset-y-1 flex w-[84px] items-center justify-center gap-1 text-[8px] font-black uppercase tracking-[0.06em] transition-all duration-500 ease-in-out ${
+                darkMode ? "left-[40px] text-white" : "left-1 text-slate-950"
+              }`}>
+                {darkMode ? "Night Mode" : "Day Mode"}
+              </span>
+              <span className={`relative z-10 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-white text-black shadow-sm transition-all duration-500 ease-in-out ${
+                darkMode ? "translate-x-0 border-slate-300" : "translate-x-[86px] border-slate-200"
+              }`}>
+                {darkMode ? <Moon size={18} strokeWidth={1.8} /> : <Sun size={18} strokeWidth={1.8} />}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab("cart")}
+              className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                activeTab === "cart"
+                  ? darkMode
+                    ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
+                    : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
+                  : darkMode
+                    ? "text-slate-200 hover:bg-slate-800"
+                    : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <ShoppingCart size={18} />
               <span>Cart</span>
               {cartQuantity > 0 && (
-                <span className="ml-1 inline-flex items-center justify-center h-6 w-6 rounded-full bg-red-600 text-white text-xs font-semibold">
+                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
                   {cartQuantity}
                 </span>
               )}
             </button>
-            <button onClick={() => setActiveTab("products")} className={`px-4 py-2 rounded-xl ${activeTab === "products" ? "bg-gray-100 text-red" : "hover:bg-gray-100"}`}>
+            <button
+              onClick={() => setActiveTab("products")}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                activeTab === "products"
+                  ? darkMode
+                    ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
+                    : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
+                  : darkMode
+                    ? "text-slate-200 hover:bg-slate-800"
+                    : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
               Products
             </button>
-            <button onClick={() => setActiveTab("orders")} className={`px-4 py-2 rounded-xl ${activeTab === "orders" ? "bg-gray-100 text-red" : "hover:bg-gray-100"}`}>
+            <button
+              onClick={() => setActiveTab("orders")}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                activeTab === "orders"
+                  ? darkMode
+                    ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
+                    : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
+                  : darkMode
+                    ? "text-slate-200 hover:bg-slate-800"
+                    : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
               My Orders
             </button>
-            <button onClick={() => setActiveTab("about")} className={`px-4 py-2 rounded-xl ${activeTab === "about" ? "bg-gray-100 text-red" : "hover:bg-gray-100"}`}>
+            <button
+              onClick={() => setActiveTab("about")}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                activeTab === "about"
+                  ? darkMode
+                    ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
+                    : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
+                  : darkMode
+                    ? "text-slate-200 hover:bg-slate-800"
+                    : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
               About Us
             </button>
             <div className="relative">
               <button
                 onClick={() => setNotificationsOpen((s) => !s)}
-                className={`px-4 py-2 rounded-xl flex items-center gap-2 ${notificationsOpen ? "bg-gray-100 text-red" : "hover:bg-gray-100"}`}
+                className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                  notificationsOpen
+                    ? darkMode
+                      ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
+                      : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
+                    : darkMode
+                      ? "text-slate-200 hover:bg-slate-800"
+                      : "text-slate-700 hover:bg-slate-100"
+                }`}
                 aria-haspopup="menu"
                 aria-expanded={notificationsOpen}
               >
                 <Bell size={18} />
                 <span>Notifications</span>
                 {orders.length > 0 && (
-                  <span className="ml-1 inline-flex items-center justify-center h-6 w-6 rounded-full bg-red-600 text-white text-xs font-semibold">
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
                     {orders.length}
                   </span>
                 )}
               </button>
 
               {notificationsOpen && (
-                <div className="absolute right-0 mt-2 w-80 bg-white border rounded shadow-lg z-20 max-h-96 overflow-y-auto">
+                <div className={`absolute right-0 z-20 mt-2 w-80 overflow-y-auto rounded-xl border shadow-lg max-h-96 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
                   {orders.length === 0 ? (
-                    <div className="px-4 py-6 text-center text-gray-600">
+                    <div className={`px-4 py-6 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
                       <p>No notifications yet</p>
                     </div>
                   ) : (
-                    <div className="divide-y">
+                    <div className={darkMode ? "divide-y divide-slate-700" : "divide-y divide-slate-200"}>
                       {orders
                         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
                         .slice(0, 5)
@@ -2031,16 +2181,20 @@ function CustomerDashboard() {
                                 setActiveTab("orders");
                                 setNotificationsOpen(false);
                               }}
-                              className="w-full text-left px-4 py-3 hover:bg-gray-50 transition"
+                              className={`w-full px-4 py-3 text-left transition ${darkMode ? "hover:bg-slate-700" : "hover:bg-gray-50"}`}
                             >
                               <div className="flex gap-3">
-                                <div className="flex-shrink-0">
+                                <div className="shrink-0">
                                   <Bell size={16} className={order.status === "completed" ? "text-emerald-600" : order.status === "cancelled" ? "text-red-600" : "text-amber-600"} />
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                  <p className="text-sm font-semibold text-slate-950 truncate">{product.name || "Project Update"}</p>
-                                  <p className="text-xs text-slate-600 mt-0.5">{notificationMessage()}</p>
-                                  <p className="text-xs text-slate-400 mt-1">{order.tracking}</p>
+                                  <p className={`truncate text-sm font-semibold ${darkMode ? "text-white" : "text-slate-950"}`}>
+                                    {product.name || "Project Update"}
+                                  </p>
+                                  <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                                    {notificationMessage()}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-400">{order.tracking}</p>
                                 </div>
                               </div>
                             </button>
@@ -2051,7 +2205,7 @@ function CustomerDashboard() {
                           setActiveTab("notifications");
                           setNotificationsOpen(false);
                         }}
-                        className="w-full text-center px-4 py-2 text-sm font-semibold text-red-600 hover:bg-gray-50"
+                        className={`w-full px-4 py-2 text-center text-sm font-semibold ${darkMode ? "text-red-300 hover:bg-slate-700" : "text-red-600 hover:bg-gray-50"}`}
                       >
                         View All
                       </button>
@@ -2063,7 +2217,13 @@ function CustomerDashboard() {
             <div className="relative">
               <button
                 onClick={() => setMenuOpen((s) => !s)}
-                className={`px-4 py-2 rounded-xl flex items-center gap-2 ${activeTab === "profile" ? "bg-red-600 text-white" : "hover:bg-gray-100"}`}
+                className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                  activeTab === "profile"
+                    ? "bg-red-600 text-white shadow-sm"
+                    : darkMode
+                      ? "text-slate-200 hover:bg-slate-800"
+                      : "text-slate-700 hover:bg-slate-100"
+                }`}
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
               >
@@ -2072,13 +2232,13 @@ function CustomerDashboard() {
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 mt-2 w-44 bg-white border rounded shadow-md z-20">
+                <div className={`absolute right-0 z-20 mt-2 w-44 rounded-xl border shadow-md ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
                   <button
                     onClick={() => {
                       setMenuOpen(false);
                       setActiveTab("profile");
                     }}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-50 flex items-center gap-2"
+                    className={`flex w-full items-center gap-2 px-4 py-2 text-left ${darkMode ? "text-slate-200 hover:bg-slate-700" : "text-slate-700 hover:bg-gray-50"}`}
                   >
                     <User size={16} />
                     <span>My Profile</span>
@@ -2089,7 +2249,7 @@ function CustomerDashboard() {
                       setMenuOpen(false);
                       setActiveTab("contracts");
                     }}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-50 flex items-center gap-2"
+                    className={`flex w-full items-center gap-2 px-4 py-2 text-left ${darkMode ? "text-slate-200 hover:bg-slate-700" : "text-slate-700 hover:bg-gray-50"}`}
                   >
                     <FileText size={16} />
                     <span>Contracts</span>
@@ -2100,7 +2260,7 @@ function CustomerDashboard() {
                       setMenuOpen(false);
                       setConfirmOpen(true);
                     }}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-50 flex items-center gap-2 text-red-600"
+                    className={`flex w-full items-center gap-2 px-4 py-2 text-left ${darkMode ? "text-red-300 hover:bg-slate-700" : "text-red-600 hover:bg-gray-50"}`}
                   >
                     <LogOut size={16} />
                     <span>Logout</span>
@@ -2108,43 +2268,100 @@ function CustomerDashboard() {
                 </div>
               )}
 
-              {confirmOpen && (
-                <div className="fixed inset-0 z-30 flex items-center justify-center">
-                  <div className="absolute inset-0 bg-black/40" onClick={() => setConfirmOpen(false)} />
-                  <div className="bg-white rounded shadow-lg p-6 z-40 w-full max-w-sm">
-                    <h3 className="text-lg font-semibold">Confirm Logout</h3>
-                    <p className="text-sm text-gray-600 mt-2">Are you sure you want to log out?</p>
-                    <div className="mt-4 flex justify-end gap-2">
+              {confirmOpen && createPortal(
+                <div className="fixed inset-0 z-[100] flex min-h-screen items-center justify-center p-4">
+                  <div className="logout-modal-backdrop-in absolute inset-0 bg-black/45 backdrop-blur-md" onClick={() => setConfirmOpen(false)} />
+                  <div className={`logout-modal-in relative z-40 w-full max-w-sm rounded-2xl p-6 text-center shadow-2xl ${darkMode ? "bg-slate-800 text-white" : "bg-white text-slate-900"}`}>
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
+                      <LogOut size={22} />
+                    </div>
+                    <h3 className="mt-4 text-lg font-semibold">Confirm Logout</h3>
+                    <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Are you sure you want to log out?</p>
+                    <div className="mt-5 flex justify-center gap-2">
                       <button
                         onClick={() => setConfirmOpen(false)}
-                        className="px-3 py-1 rounded bg-gray-100 hover:bg-gray-200"
+                        className={`rounded-lg px-3 py-1 ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-gray-100 hover:bg-gray-200"}`}
                       >
                         Cancel
                       </button>
                       <button
                         onClick={handleLogoutConfirm}
-                        className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700"
+                        className="rounded-lg bg-red-600 px-3 py-1 text-white hover:bg-red-700"
                       >
-                        Logout
+                        Confirm
                       </button>
                     </div>
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           </div>
         </div>
       </div>
 
+      {activeTab === "home" && (
+        <>
+          <section className="relative overflow-hidden bg-[#941d24] text-white">
+            <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] [background-size:42px_42px]" />
+            <div className="relative mx-auto flex min-h-[360px] max-w-7xl items-center justify-center px-6 py-16 text-center">
+              <div className="max-w-2xl">
+                <p className="text-sm font-semibold uppercase tracking-[0.28em] text-red-100">ACGC Services</p>
+                <h2 className="mt-4 text-4xl font-black leading-tight sm:text-6xl">Custom Glass & Aluminum Solutions</h2>
+                <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-red-100 sm:text-lg">
+                  Professional fabrication and installation of glass windows, doors, partitions, and aluminum works for your space.
+                </p>
+                <div className="mt-8 flex flex-wrap justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("products")}
+                    className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-red-700 shadow-lg transition hover:bg-red-50"
+                  >
+                    Browse Products
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("orders")}
+                    className="rounded-xl border border-white/70 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10"
+                  >
+                    View My Orders
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="relative z-10 mx-auto -mt-8 max-w-5xl px-6">
+            <div className={`grid gap-6 rounded-3xl px-6 py-8 text-center shadow-xl sm:grid-cols-3 sm:px-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+              <div className="flex flex-col items-center">
+                <ShieldCheck className={`h-12 w-12 ${darkMode ? "text-slate-100" : "text-slate-900"}`} strokeWidth={1.7} />
+                <h3 className={`mt-4 text-xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Quality Guaranteed</h3>
+                <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Premium materials and careful workmanship.</p>
+              </div>
+              <div className="flex flex-col items-center">
+                <Clock3 className={`h-12 w-12 ${darkMode ? "text-slate-100" : "text-slate-900"}`} strokeWidth={1.7} />
+                <h3 className={`mt-4 text-xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Fast Turnaround</h3>
+                <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Efficient production for your project timeline.</p>
+              </div>
+              <div className="flex flex-col items-center">
+                <Wrench className={`h-12 w-12 ${darkMode ? "text-slate-100" : "text-slate-900"}`} strokeWidth={1.7} />
+                <h3 className={`mt-4 text-xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Expert Installation</h3>
+                <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Professional site inspection and installation.</p>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+
       {showFeaturedSection && (
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          <div className="rounded-[24px] border border-red-100 bg-white p-5 shadow-[0_14px_35px_rgba(148,163,184,0.12)]">
+        <div className={`max-w-7xl mx-auto px-6 py-8 ${darkMode ? "bg-slate-900" : "bg-gray-100"}`}>
+          <div className={`rounded-[24px] border p-5 shadow-[0_14px_35px_rgba(148,163,184,0.12)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"}`}>
             <div className="mb-5 flex items-center justify-between gap-4">
               <div className="text-left">
-                <h2 className="text-5xl font-black leading-none tracking-[-0.05em] text-slate-900">
+                <h2 className={`text-5xl font-black leading-none tracking-[-0.05em] ${darkMode ? "text-white" : "text-slate-900"}`}>
                   Featured <span className="text-red-500">Products</span>
                 </h2>
-                <p className="mt-6 max-w-3xl text-lg text-slate-500">
+                <p className={`mt-6 max-w-3xl text-lg ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
                   Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
                 </p>
               </div>
@@ -2161,7 +2378,7 @@ function CustomerDashboard() {
                 ))}
               </div>
             ) : featuredProducts.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+              <div className={`rounded-2xl border border-dashed p-8 text-center ${darkMode ? "border-slate-600 bg-slate-700 text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
                 No featured products are available right now.
               </div>
             ) : (
@@ -2174,10 +2391,11 @@ function CustomerDashboard() {
                   return (
                     <div
                       key={product._id || product.name}
-                      onClick={() => handleViewProduct(product)}
-                      className="group cursor-pointer overflow-hidden rounded-[20px] border border-slate-200 bg-slate-50 shadow-[0_8px_22px_rgba(15,23,42,0.05)] transition duration-300 hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_18px_30px_rgba(239,68,68,0.12)]"
+                      className={`group overflow-hidden rounded-[20px] border shadow-[0_8px_22px_rgba(15,23,42,0.05)] ${
+                        darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"
+                      }`}
                     >
-                      <div className="relative h-44 overflow-hidden bg-slate-100">
+                      <div className={`relative h-44 overflow-hidden ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
                         <img
                           src={getProductImage(product)}
                           alt={product.name}
@@ -2188,15 +2406,17 @@ function CustomerDashboard() {
 
                       <div className="space-y-3 p-4">
                         <div className="flex items-center justify-between gap-3">
-                          <span className="rounded-full bg-red-50 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-red-700">
+                          <span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${
+                            darkMode ? "bg-red-950/60 text-red-300" : "bg-red-50 text-red-700"
+                          }`}>
                             {product.category || "Product"}
                           </span>
-                          <span className="text-sm font-bold text-emerald-600">{getProductPrice(product)}</span>
+                          <span className="text-m font-bold text-red-500">{getProductPrice(product)}</span>
                         </div>
 
                         <div>
-                          <h3 className="text-xl font-bold leading-tight text-slate-900">{product.name}</h3>
-                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">
+                          <h3 className={`text-xl font-bold leading-tight ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name}</h3>
+                          <p className={`mt-1 text-xs leading-5 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                             {product.description || "Premium aluminum and glass solution for modern spaces."}
                           </p>
                         </div>
@@ -2206,7 +2426,7 @@ function CustomerDashboard() {
                             <div className="flex items-center gap-1 text-amber-500">
                               {renderRatingStars(averageRating, 14)}
                             </div>
-                            <span className="mt-1 text-[11px] font-medium text-slate-500">
+                            <span className={`mt-1 text-[11px] font-medium ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                               {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount} review${reviewsCount === 1 ? "" : "s"})` : "No reviews yet"}
                             </span>
                           </div>
@@ -2218,17 +2438,55 @@ function CustomerDashboard() {
               </div>
             )}
           </div>
+
+          <section className={`mt-8 rounded-3xl px-6 py-8 shadow-sm sm:px-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+            <h2 className={`text-center text-3xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Customer Ratings</h2>
+            <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
+              <div className="text-center">
+                <p className={`text-6xl font-black leading-none ${darkMode ? "text-white" : "text-slate-950"}`}>
+                  {featuredRatingStats.average.toFixed(1)}
+                </p>
+                <div className="mt-3 flex justify-center gap-1 text-amber-500">
+                  {renderRatingStars(featuredRatingStats.average, 22)}
+                </div>
+                <p className={`mt-3 text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                  Average Rating ({featuredRatingStats.total} review{featuredRatingStats.total === 1 ? "" : "s"})
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {[5, 4, 3, 2, 1].map((star) => {
+                  const count = featuredRatingStats.counts[star] || 0;
+                  const percentage = featuredRatingStats.total
+                    ? Math.round((count / featuredRatingStats.total) * 100)
+                    : 0;
+                  return (
+                    <div key={star} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 text-sm">
+                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{star}</span>
+                      <div className={`h-3 overflow-hidden rounded-full ${darkMode ? "bg-slate-700" : "bg-slate-100"}`}>
+                        <div
+                          className="h-full rounded-full bg-amber-400 transition-all"
+                          style={{ width: `${percentage}%` }}
+                        />
+                      </div>
+                      <span className={`w-12 text-right font-semibold ${darkMode ? "text-slate-300" : "text-slate-500"}`}>{percentage}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto p-6">
+      <div className={`max-w-7xl mx-auto p-6 ${darkMode ? "bg-slate-900" : "bg-gray-100"}`}>
         {activeTab === "products" && (
           <>
             <div>
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
                 <div>
-                  <h2 className="text-3xl font-bold">Products</h2>
-                  <p className="text-gray-500">Browse available aluminum & glass products</p>
+                  <h2 className={`text-3xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Products</h2>
+                  <p className={darkMode ? "text-slate-300" : "text-gray-500"}>Browse available aluminum & glass products</p>
                 </div>
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end w-full max-w-3xl">
                   <div className="relative w-full sm:w-80">
@@ -2238,14 +2496,14 @@ function CustomerDashboard() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search products..."
-                      className="w-full pl-10 pr-4 py-3 border rounded-2xl"
+                      className={`w-full pl-10 pr-4 py-3 border rounded-2xl ${darkMode ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400" : "border-slate-200 bg-white text-slate-900"}`}
                     />
                   </div>
                   <div className="w-full sm:w-56">
                     <select
                       value={categoryFilter}
                       onChange={(e) => setCategoryFilter(e.target.value)}
-                      className="w-full border rounded-2xl py-3 px-4"
+                      className={`w-full border rounded-2xl py-3 px-4 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
                     >
                       <option value="All">All categories</option>
                         <option value="Windows">Windows</option>
@@ -2265,15 +2523,20 @@ function CustomerDashboard() {
               {isLoadingProducts ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">{[...Array(6)].map((_, i) => <div key={i} className="animate-pulse bg-white rounded-3xl p-6 h-96" />)}</div>
               ) : products.length === 0 ? (
-                <div className="rounded-3xl bg-white p-10 text-center shadow"><p className="text-gray-600">No products matched your search.</p></div>
+                <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800 text-slate-200" : "bg-white text-gray-600"}`}><p className={darkMode ? "text-slate-300" : "text-gray-600"}>No products matched your search.</p></div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                  {products.map((product) => (
-                    <div
-                      key={product._id || product.name}
-                      className="group bg-white rounded-1xl shadow-lg overflow-hidden border border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.01] transition duration-200 ease-out cursor-pointer flex flex-col h-full relative"
-                      onClick={() => handleViewProduct(product)}
-                    >
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    {paginatedProducts.items.map((product) => (
+                      <div
+                        key={product._id || product.name}
+                        className={`group rounded-1xl shadow-lg overflow-hidden border transition duration-200 ease-out cursor-pointer flex flex-col h-full relative ${
+                          darkMode
+                            ? "bg-slate-800 border-slate-700 hover:border-slate-500 hover:shadow-[0_18px_30px_rgba(15,23,42,0.5)]"
+                            : "bg-white border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl"
+                        }`}
+                        onClick={() => handleViewProduct(product)}
+                      >
                       <div className="relative h-70 overflow-hidden bg-red-50">
                         <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover transition duration-300 group-hover:scale-200" />
                         <div className="absolute inset-0 flex items-center justify-center bg-slate-900/55 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
@@ -2288,30 +2551,30 @@ function CustomerDashboard() {
                             {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
                           </span>
                           <div>
-                            <h3 className="text-2xl font-semibold text-slate-900">{product.name}</h3>
-                            <p className="mt-2 text-sm text-slate-500">{product.product_type || product.category || "General"}</p>
+                            <h3 className={`text-2xl font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name}</h3>
+                            <p className={`mt-2 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{product.product_type || product.category || "General"}</p>
                           </div>
-                          <div className="flex items-center gap-2 text-sm text-slate-600">
+                          <div className={`flex items-center gap-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                             {renderRatingStars(productReviewStats[product._id || product.id]?.averageRating || 0, 16)}
-                            <span className="font-medium text-slate-700">
+                            <span className={darkMode ? "font-medium text-slate-200" : "font-medium text-slate-700"}>
                               {productReviewStats[product._id || product.id]?.averageRating > 0
                                 ? `${productReviewStats[product._id || product.id].averageRating.toFixed(1)} (${productReviewStats[product._id || product.id].ratingsCount} rating${productReviewStats[product._id || product.id].ratingsCount === 1 ? "" : "s"})`
                                 : "No ratings yet"}
                             </span>
                           </div>
-                          <div className="space-y-2 text-sm text-slate-600">
+                          <div className={`space-y-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                             {product.dimensions ? (
-                              <p><span className="font-medium text-slate-900">Dimensions:</span> {product.dimensions}</p>
+                              <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Dimensions:</span> {product.dimensions}</p>
                             ) : product.standard_size ? (
-                              <p><span className="font-medium text-slate-900">Dimensions:</span> {product.standard_size}</p>
+                              <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Dimensions:</span> {product.standard_size}</p>
                             ) : product.width && product.height ? (
-                              <p><span className="font-medium text-slate-900">Dimensions:</span> {product.width} × {product.height}</p>
+                              <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Dimensions:</span> {product.width} × {product.height}</p>
                             ) : null}
-                            <p><span className="font-medium text-slate-900">Unit Rate:</span> {getProductUnitRate(product)}</p>
+                            <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Unit Rate:</span> {getProductUnitRate(product)}</p>
                           </div>
                         </div>
                         <div className="mt-auto space-y-3">
-                          <p className="text-2xl font-bold text-red-600">{getProductPrice(product)}</p>
+                          <p className="text-2xl font-bold text-red-500">{getProductPrice(product)}</p>
                           <div className="grid grid-cols-3 gap-2">
                             <button
                               type="button"
@@ -2353,14 +2616,93 @@ function CustomerDashboard() {
                         </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+
+                  {products.length > 0 && (
+                    <div className={`mt-8 grid gap-4 rounded-[20px] border p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)] md:grid-cols-[1fr_auto_1fr] md:items-center ${
+                      darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"
+                    }`}>
+                      <div className={`flex items-center gap-3 text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                        <span>Items per page</span>
+                        <select
+                          value={productsPerPage}
+                          onChange={(event) => setProductsPerPage(Number(event.target.value))}
+                          className={`rounded-xl border px-3 py-2 text-sm font-semibold outline-none transition ${
+                            darkMode
+                              ? "border-slate-600 bg-slate-700 text-slate-100 focus:border-red-400 focus:ring-2 focus:ring-red-500/30"
+                              : "border-red-200 bg-red-50 text-slate-800 focus:border-red-300 focus:ring-2 focus:ring-red-100"
+                          }`}
+                        >
+                          <option value={4}>4</option>
+                          <option value={8}>8</option>
+                          <option value={12}>12</option>
+                          <option value={16}>16</option>
+                        </select>
+                      </div>
+
+                      {products.length > 0 && (
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setProductPage((page) => Math.max(1, page - 1))}
+                            disabled={paginatedProducts.currentPage === 1}
+                            className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                              darkMode
+                                ? "border-slate-600 bg-slate-700 text-slate-100 hover:border-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-red-200 hover:text-red-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                            }`}
+                          >
+                            Previous
+                          </button>
+
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: Math.max(1, paginatedProducts.totalPages) }, (_, index) => index + 1).map((pageNumber) => (
+                              <button
+                                key={pageNumber}
+                                type="button"
+                                onClick={() => setProductPage(pageNumber)}
+                                className={`h-9 min-w-9 rounded-xl px-2 text-sm font-bold transition ${
+                                  pageNumber === paginatedProducts.currentPage
+                                    ? "bg-red-600 text-white shadow-sm"
+                                    : darkMode
+                                      ? "border border-slate-600 bg-slate-700 text-slate-100 hover:border-red-400 hover:text-red-300"
+                                      : "border border-slate-200 bg-white text-slate-700 hover:border-red-200 hover:text-red-600"
+                                }`}
+                              >
+                                {pageNumber}
+                              </button>
+                            ))}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setProductPage((page) => Math.min(Math.max(1, paginatedProducts.totalPages), page + 1))}
+                            disabled={paginatedProducts.currentPage >= paginatedProducts.totalPages}
+                            className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                              darkMode
+                                ? "border-slate-600 bg-slate-700 text-slate-100 hover:border-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-red-200 hover:text-red-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                            }`}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      )}
+
+                      <div className={`text-right text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                        Showing {paginatedProducts.items.length ? (paginatedProducts.currentPage - 1) * productsPerPage + 1 : 0}
+                        {paginatedProducts.items.length ? `-${Math.min(paginatedProducts.currentPage * productsPerPage, products.length)}` : ""} of {products.length} products
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
             {selectedProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
-                <div className="w-full max-h-[95vh] max-w-5xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col">
+                <div className={`order-flow-modal w-full max-h-[95vh] max-w-5xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Header with shared brand gradient */}
                   <div className="flex-shrink-0 bg-red-600 px-6 py-5">
                     <div className="flex items-center justify-between gap-4">
@@ -2430,7 +2772,7 @@ function CustomerDashboard() {
                         {/* Price Card */}
                         <div className="rounded-3xl bg-red-50 border-2 border-red-200 p-6">
                           <p className="text-sm text-slate-600 font-medium uppercase tracking-[0.2em]">Starting from</p>
-                          <p className="text-4xl font-bold text-red-600 mt-2">{getProductPrice(selectedProduct)}</p>
+                          <p className="text-4xl font-bold text-white-600 mt-2">{getProductPrice(selectedProduct)}</p>
                           <p className="text-xs text-slate-500 mt-3">*Price may vary based on specifications</p>
                         </div>
 
@@ -2440,7 +2782,7 @@ function CustomerDashboard() {
                             openCartDecisionModal(selectedProduct, "estimate");
                             closeProductModal();
                           }}
-                          className="w-full rounded-2xl bg-red-600 text-white font-bold py-4 hover:bg-red-700 transition shadow-md flex items-center justify-center gap-2"
+                          className="w-full rounded-2xl bg-gray-600 text-white font-bold py-4 hover:bg-gray-700 transition shadow-md flex items-center justify-center gap-2"
                         >
                           <Ruler size={20} />
                           Estimate Product
@@ -2518,7 +2860,7 @@ function CustomerDashboard() {
 
             {showCartDecisionModal && cartDecisionProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
-                <div className="w-full max-h-[95vh] max-w-4xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col">
+                <div className={`order-flow-modal w-full max-h-[95vh] max-w-4xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Sticky Header with Gradient */}
                   <div className="flex-shrink-0 bg-gradient-to-r from-red-600 to-red-700 px-6 py-5">
                     <div className="flex items-center justify-between gap-4">
@@ -2541,7 +2883,7 @@ function CustomerDashboard() {
                       // CHOICE STEP
                       <div className="px-6 py-8 space-y-6">
                         {/* Product Preview Card */}
-                        <div className="rounded-2xl border-2 border-red-200 bg-red-50 p-6">
+                        <div className="rounded-2xl border-2 border-white-200 bg-gray-100 p-6">
                           <div className="flex items-center gap-4">
                             <img src={getProductImage(cartDecisionProduct)} alt={cartDecisionProduct.name} className="w-28 h-28 rounded-2xl object-cover bg-white shadow-md flex-shrink-0" />
                             <div className="flex-1">
@@ -2559,7 +2901,7 @@ function CustomerDashboard() {
                             onClick={handleCartDecisionEstimate}
                             className="group relative rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-xl"
                           >
-                            <div className="absolute inset-0 bg-red-600 transition" />
+                            <div className="absolute inset-0 bg-gray-600 transition" />
                             <div className="relative px-6 py-8 text-left text-white">
                               <div className="flex items-start justify-between mb-3">
                                 <Ruler size={32} className="text-white" />
@@ -2791,7 +3133,7 @@ function CustomerDashboard() {
                   </div>
 
                   {/* Sticky Footer */}
-                  <div className="flex-shrink-0 border-t-2 border-gray-200 bg-white px-6 py-4">
+                  <div className="flex-shrink-0 px-6 py-4">
                     {cartDecisionStep === "choice" ? null : (
                       <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
                         <button
@@ -2827,7 +3169,7 @@ function CustomerDashboard() {
 
             {showDeliveryConfirmModal && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-                <div className="w-full max-w-5xl rounded-3xl bg-white shadow-2xl overflow-hidden max-h-[95vh] flex flex-col">
+                <div className={`order-flow-modal w-full max-w-5xl rounded-3xl bg-white shadow-2xl overflow-hidden max-h-[95vh] flex flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   <div className="flex-shrink-0 bg-red-600 px-6 py-5 text-white">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
@@ -3013,7 +3355,7 @@ function CustomerDashboard() {
 
             {showOrderNowModal && orderNowProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-                <div className="w-full max-w-3xl rounded-3xl bg-white shadow-2xl overflow-hidden">
+                <div className={`order-flow-modal w-full max-w-3xl rounded-3xl bg-white shadow-2xl overflow-hidden ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   <div className="border-b px-6 py-5 bg-red-600 text-white">
                     <div className="flex flex-col gap-1">
                       <h3 className="text-xl font-bold">Order Now</h3>
@@ -3142,7 +3484,7 @@ function CustomerDashboard() {
 
             {showOrderReviewModal && (cartDecisionProduct || orderNowProduct) && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-                <div className="w-full max-w-xl rounded-3xl bg-white shadow-2xl overflow-hidden max-h-[90vh] flex min-h-[20rem] flex-col">
+                <div className={`order-flow-modal w-full max-w-xl rounded-3xl bg-white shadow-2xl overflow-hidden max-h-[90vh] flex min-h-[20rem] flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   <div className="bg-red-600 border-b px-5 py-4">
                     <h3 className="text-white text-medium font-bold">Order Summary & Policy</h3>
                     <p className="mt-2 text-sm text-white">Review your order details and confirm the payment policy before submitting.</p>
@@ -3296,7 +3638,7 @@ function CustomerDashboard() {
 
             {showOrderSuccessModal && orderSuccessData && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-                <div className="w-full max-w-xl overflow-hidden rounded-[28px] border border-red-100 bg-gradient-to-br from-white via-rose-50 to-red-50 shadow-[0_28px_80px_rgba(220,38,38,0.16)] max-h-[90vh] flex min-h-[18rem] flex-col">
+                <div className={`order-flow-modal order-success-modal w-full max-w-xl overflow-hidden rounded-[28px] border border-red-100 bg-gradient-to-br from-white via-rose-50 to-red-50 shadow-[0_28px_80px_rgba(220,38,38,0.16)] max-h-[90vh] flex min-h-[18rem] flex-col ${darkMode ? "order-flow-modal-dark order-success-modal-dark" : ""}`}>
                   <div className="relative overflow-hidden bg-red-600 px-5 py-5 text-white">
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.25),_transparent_40%)]" />
                     <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -3378,12 +3720,12 @@ function CustomerDashboard() {
 
         {activeTab === "orders" && (
           <>
-            <div className="bg-white rounded-3xl shadow p-10 mb-8">
+            <div className={`rounded-3xl p-10 mb-8 shadow ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
               <div className="flex items-center gap-3 mb-4">
                 <Truck size={30} className="text-red-600" />
                 <div>
                   <h2 className="text-2xl font-bold">Track an Order</h2>
-                  <p className="text-gray-500">Enter your tracking number to see current order status.</p>
+                  <p className={darkMode ? "text-slate-300" : "text-gray-500"}>Enter your tracking number to see current order status.</p>
                 </div>
               </div>
               <div className="grid gap-4 sm:grid-cols-[1fr_auto_auto]">
@@ -3392,7 +3734,7 @@ function CustomerDashboard() {
                   value={trackingNumber}
                   onChange={(e) => setTrackingNumber(e.target.value)}
                   placeholder="Enter tracking ID"
-                  className="w-full border rounded-2xl px-4 py-3"
+                  className={`w-full rounded-2xl border px-4 py-3 ${darkMode ? "border-slate-600 bg-slate-900 text-white placeholder:text-slate-400" : "border-slate-200 bg-white text-slate-900"}`}
                 />
                 <button
                   onClick={handleTrackingSubmit}
@@ -3406,27 +3748,27 @@ function CustomerDashboard() {
                       setTrackingNumber("");
                       setTrackingResult(null);
                     }}
-                    className="bg-slate-300 hover:bg-slate-400 text-slate-900 px-6 rounded-2xl py-3 font-semibold"
+                    className={`px-6 py-3 rounded-2xl font-semibold ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-slate-300 text-slate-900 hover:bg-slate-400"}`}
                   >
                     Clear
                   </button>
                 )}
               </div>
               {trackingResult && (
-                <div className="mt-6 rounded-3xl border border-gray-200 bg-gray-50 p-6 text-left">
+                <div className={`mt-6 rounded-3xl border p-6 text-left ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-gray-50"}`}>
                   {trackingResult.error ? (
                     <p className="text-red-600">{trackingResult.error}</p>
                   ) : (
                     <>
-                      <p className="text-gray-500">{trackingResult.message}</p>
+                      <p className={darkMode ? "text-slate-300" : "text-gray-500"}>{trackingResult.message}</p>
                       <div className="mt-4 grid gap-4 sm:grid-cols-2">
                         <div>
-                          <p className="text-sm text-gray-500">Tracking ID</p>
-                          <p className="font-semibold">{trackingResult.tracking}</p>
+                          <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Tracking ID</p>
+                          <p className={darkMode ? "font-semibold text-white" : "font-semibold"}>{trackingResult.tracking}</p>
                         </div>
                         <div>
-                          <p className="text-sm text-gray-500">Status</p>
-                          <p className="font-semibold">{getOrderStatusLabel(trackingResult.status)}</p>
+                          <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Status</p>
+                          <p className={darkMode ? "font-semibold text-white" : "font-semibold"}>{getOrderStatusLabel(trackingResult.status)}</p>
                         </div>
                       </div>
                     </>
@@ -3437,8 +3779,8 @@ function CustomerDashboard() {
 
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
-                <h2 className="text-2xl font-black tracking-[-0.03em] text-black-600">My Orders</h2>
-                <p className="mt-2 text-sm font-medium text-slate-500">Review your completed and in-progress orders with item details and history.</p>
+                <h2 className={`text-2xl font-black tracking-[-0.03em] ${darkMode ? "text-white" : "text-slate-900"}`}>My Orders</h2>
+                <p className={`mt-2 text-sm font-medium ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Review your completed and in-progress orders with item details and history.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {[
@@ -3459,7 +3801,9 @@ function CustomerDashboard() {
                     className={`px-4 py-2 rounded-2xl text-sm font-bold transition ${
                       orderFilter === tab.value 
                         ? "bg-red-700 text-white shadow-sm shadow-red-200" 
-                        : "bg-white text-slate-700 border border-red-200 hover:bg-red-50 hover:text-red-700"
+                        : darkMode
+                          ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700 hover:text-white"
+                          : "bg-white text-slate-700 border border-red-200 hover:bg-red-50 hover:text-red-700"
                     }`}
                   >
                     {tab.label}
@@ -3478,15 +3822,15 @@ function CustomerDashboard() {
             {ordersLoading ? (
               <div className="space-y-4">
                 {[...Array(2)].map((_, index) => (
-                  <div key={index} className="animate-pulse rounded-3xl bg-white p-8 shadow" />
+                  <div key={index} className={`animate-pulse rounded-3xl p-8 shadow ${darkMode ? "bg-slate-800" : "bg-white"}`} />
                 ))}
               </div>
             ) : filteredOrders.length === 0 ? (
-              <div className="rounded-3xl bg-white p-10 text-center shadow">
-                <p className="text-gray-600">No orders found.</p>
+              <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800" : "bg-white"}`}>
+                <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No orders found.</p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-[28px] border border-red-200 bg-white shadow-[0_18px_45px_rgba(127,29,29,0.08)]">
+              <div className={`overflow-hidden rounded-[28px] border shadow-[0_18px_45px_rgba(127,29,29,0.08)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
                 <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
                   <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
                     <tr>
@@ -3503,8 +3847,8 @@ function CustomerDashboard() {
                     {pagedFilteredOrders.map((order) => {
                       const product = order.items?.[0] || {};
                       return (
-                        <tr key={order._id || order.tracking} className="border-t border-red-100 hover:bg-red-50/70 transition">
-                          <td className="px-6 py-5 align-middle text-sm font-black text-red-700 text-center">{order.tracking || order._id || "—"}</td>
+                        <tr key={order._id || order.tracking} className={`border-t transition ${darkMode ? "border-slate-700 hover:bg-slate-700/60" : "border-red-100 hover:bg-red-50/70"}`}>
+                          <td className="px-6 py-5 align-middle text-sm font-black text-red-500 text-center">{order.tracking || order._id || "—"}</td>
                           <td className="px-6 py-5 align-middle">
                             <div className="mx-auto h-16 w-16 overflow-hidden rounded-2xl border border-red-100 bg-red-50 shadow-sm">
                               <img
@@ -3518,18 +3862,18 @@ function CustomerDashboard() {
                               />
                             </div>
                           </td>
-                          <td className="px-6 py-5 align-middle text-sm text-slate-700">
-                            <p className="font-black text-slate-900">{product.name || product.product_name || "Project item"}</p>
-                            <p className="text-xs font-medium text-slate-500 mt-1">Qty: {product.quantity || 1}</p>
+                          <td className={`px-6 py-5 align-middle text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                            <p className={`font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Project item"}</p>
+                            <p className={`mt-1 text-xs font-medium ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Qty: {product.quantity || 1}</p>
                           </td>
                           <td className="px-6 py-5 align-middle text-center">
                             <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${getOrderStatusClasses(order.status)}`}>
                               {getOrderStatusLabel(order.status)}
                             </span>
                           </td>
-                          <td className="px-6 py-5 align-middle text-sm font-black text-slate-800 text-right">{formatCurrency(order.total_amount)}</td>
-                          <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
-                          <td className="px-6 py-5 align-middle text-sm text-slate-700">
+                          <td className={`px-6 py-5 align-middle text-sm font-black text-right ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{formatCurrency(order.total_amount)}</td>
+                          <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
+                          <td className={`px-6 py-5 align-middle text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                             <div className="flex flex-wrap justify-center gap-2">
                               <button
                                 type="button"
@@ -3581,8 +3925,8 @@ function CustomerDashboard() {
                 </table>
 
                 {filteredOrders.length > ORDER_PAGE_SIZE && (
-                  <div className="flex items-center justify-between gap-3 border-t border-red-100 bg-white px-6 py-4">
-                    <div className="text-sm font-semibold text-slate-600">
+                  <div className={`flex items-center justify-between gap-3 border-t px-6 py-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"}`}>
+                    <div className={`text-sm font-semibold ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
                       Showing {Math.min(pageStart + 1, filteredOrders.length)}-{Math.min(pageStart + ORDER_PAGE_SIZE, filteredOrders.length)} of {filteredOrders.length}
                     </div>
                     <div className="flex items-center gap-2">
@@ -3590,7 +3934,7 @@ function CustomerDashboard() {
                         type="button"
                         onClick={() => setOrderPage((page) => Math.max(1, page - 1))}
                         disabled={safeOrderPage === 1}
-                        className="rounded-2xl border border-red-200 px-4 py-2 text-sm font-black text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        className={`rounded-2xl border px-4 py-2 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-700" : "border-red-200 text-red-700 hover:bg-red-50"}`}
                       >
                         Previous
                       </button>
@@ -3601,7 +3945,7 @@ function CustomerDashboard() {
                         type="button"
                         onClick={() => setOrderPage((page) => Math.min(orderPageCount, page + 1))}
                         disabled={safeOrderPage >= orderPageCount}
-                        className="rounded-2xl border border-red-200 px-4 py-2 text-sm font-black text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        className={`rounded-2xl border px-4 py-2 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-700" : "border-red-200 text-red-700 hover:bg-red-50"}`}
                       >
                         Next
                       </button>
@@ -3615,7 +3959,7 @@ function CustomerDashboard() {
 
         {selectedOrderForModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-            <div className="w-full max-w-4xl overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-2xl max-h-[90vh] flex flex-col">
+            <div className={`order-details-modal w-full max-w-4xl overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-2xl max-h-[90vh] flex flex-col ${darkMode ? "order-details-modal-dark" : ""}`}>
               <div className="px-6 py-4 border-b border-slate-200 bg-white">
                 <div className="flex items-center justify-between">
                   <div className="min-w-0">
@@ -3648,7 +3992,7 @@ function CustomerDashboard() {
                       <span className="h-5 w-5 rounded-[4px] border border-slate-300 bg-slate-100" />
                       <h5 className="text-[22px] font-black uppercase tracking-[0.16em] text-slate-900">Order details</h5>
                     </div>
-                    <span className="rounded-full border border-red-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-red-700">
+                    <span className="rounded-full border border-red-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-green-500">
                       {selectedOrderForModal.order_type?.replace(/_/g, " ") || "Online order"}
                     </span>
                   </div>
@@ -3847,6 +4191,7 @@ function CustomerDashboard() {
                   order={selectedOrderForModal}
                   onOrderChange={handleOrderUpdate}
                   audience="customer"
+                  darkMode={darkMode}
                   onViewContract={() => openContractModal(selectedOrderForModal)}
                 />
               </div>
@@ -4106,18 +4451,18 @@ function CustomerDashboard() {
         )}
 
         {activeTab === "cart" && (
-          <div className="bg-white rounded-3xl shadow p-10">
+          <div className={`rounded-3xl shadow p-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
             <div className="flex flex-col items-center gap-4 md:flex-row md:justify-between">
               <div>
-                <h2 className="text-2xl font-bold">Shopping Cart</h2>
-                <p className="text-gray-500">Review the items you’ve added for checkout.</p>
+                <h2 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Shopping Cart</h2>
+                <p className={darkMode ? "text-slate-300" : "text-gray-500"}>Review the items you’ve added for checkout.</p>
               </div>
               <div className="rounded-full bg-red-100 px-4 py-2 text-red-700">{cartQuantity} item{cartQuantity === 1 ? "" : "s"}</div>
             </div>
-            {cartItems.length === 0 ? (<div className="mt-10 text-center text-gray-600">Your cart is empty. Add a product to start shopping.</div>) : (<>
-              <div className="mt-8 rounded-3xl border border-gray-200 bg-gray-50 p-4">
-                <div className="flex flex-col gap-4 rounded-3xl bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-                  <label className="inline-flex items-center gap-3 text-sm font-semibold text-gray-700">
+            {cartItems.length === 0 ? (<div className={`mt-10 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Your cart is empty. Add a product to start shopping.</div>) : (<>
+              <div className={`mt-8 rounded-3xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-gray-50"}`}>
+                <div className={`flex flex-col gap-4 rounded-3xl p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between ${darkMode ? "bg-slate-800 border border-slate-700" : "bg-white"}`}>
+                  <label className={`inline-flex items-center gap-3 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-gray-700"}`}>
                     <input
                       type="checkbox"
                       checked={allSelected}
@@ -4126,13 +4471,13 @@ function CustomerDashboard() {
                     />
                     Select All ({cartItems.length} Item{cartItems.length === 1 ? "" : "s"})
                   </label>
-                  <div className="text-sm text-gray-600">
+                  <div className={darkMode ? "text-sm text-slate-300" : "text-sm text-gray-600"}>
                     Selected: {selectedItemCount} of {cartItems.length} Item{cartItems.length === 1 ? "" : "s"}
                   </div>
                 </div>
                 <div className="mt-4 space-y-4">
                   {cartItems.map((item) => (
-                    <div key={item.cartId || item._id || item.name} className="flex flex-col gap-4 rounded-3xl border border-gray-200 bg-white p-5 md:flex-row md:items-center md:justify-between">
+                    <div key={item.cartId || item._id || item.name} className={`flex flex-col gap-4 rounded-3xl border p-5 md:flex-row md:items-center md:justify-between ${darkMode ? "border-slate-700 bg-slate-800" : "border-gray-200 bg-white"}`}>
                       <div className="flex items-start gap-4">
                         <label className="inline-flex items-center gap-3">
                           <input
@@ -4147,14 +4492,14 @@ function CustomerDashboard() {
                             <img src={getProductImage(item)} alt={item.name} className="h-full w-full object-cover" />
                           </div>
                           <div>
-                            <p className="font-semibold text-gray-900">{item.name}</p>
-                            <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-gray-500">
+                            <p className={darkMode ? "font-semibold text-white" : "font-semibold text-gray-900"}>{item.name}</p>
+                            <div className={`mt-2 flex flex-wrap items-center gap-3 text-sm ${darkMode ? "text-slate-300" : "text-gray-500"}`}>
                               <span>Qty: {item.quantity}</span>
                               {item.is_estimate && item.width && item.height && (
                                 <span>Measurements: {item.width} {item.measurementUnit || item.unit || ""} × {item.height} {item.measurementUnit || item.unit || ""}</span>
                               )}
                             </div>
-                            <p className="mt-2 text-sm text-gray-500">
+                            <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-gray-500"}`}>
                               {item.is_estimate ? `₱${Number(item.estimated_price || 0).toLocaleString()} (estimated)` : getProductPrice(item)}
                             </p>
                           </div>
@@ -4184,19 +4529,19 @@ function CustomerDashboard() {
               </div>
               {checkoutError && <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">{checkoutError}</div>}
               {checkoutMessage && <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-700">{checkoutMessage}</div>}
-              <div className="mt-6 rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className={`mt-6 rounded-3xl border p-5 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl bg-gray-50 p-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Selected Products</p>
-                    <p className="mt-2 text-lg font-semibold text-gray-900">{selectedItemCount}</p>
+                  <div className={`rounded-2xl p-4 ${darkMode ? "bg-slate-800" : "bg-gray-50"}`}>
+                    <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-gray-500"}`}>Selected Products</p>
+                    <p className={`mt-2 text-lg font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{selectedItemCount}</p>
                   </div>
-                  <div className="rounded-2xl bg-gray-50 p-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Total Quantity</p>
-                    <p className="mt-2 text-lg font-semibold text-gray-900">{selectedQuantityTotal}</p>
+                  <div className={`rounded-2xl p-4 ${darkMode ? "bg-slate-800" : "bg-gray-50"}`}>
+                    <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-gray-500"}`}>Total Quantity</p>
+                    <p className={`mt-2 text-lg font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{selectedQuantityTotal}</p>
                   </div>
-                  <div className="rounded-2xl bg-gray-50 p-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Estimated Total</p>
-                    <p className="mt-2 text-lg font-semibold text-gray-900">{formatCurrency(selectedSubtotal)}</p>
+                  <div className={`rounded-2xl p-4 ${darkMode ? "bg-slate-800" : "bg-gray-50"}`}>
+                    <p className={`text-xs uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-gray-500"}`}>Estimated Total</p>
+                    <p className={`mt-2 text-lg font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(selectedSubtotal)}</p>
                   </div>
                 </div>
               </div>
@@ -4220,15 +4565,15 @@ function CustomerDashboard() {
         )}
 
         {activeTab === "about" && (
-          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
-            <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          <div className={`rounded-[28px] border p-8 shadow-sm sm:p-10 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}>
+            <div className={`flex items-center justify-between gap-4 border-b pb-4 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
               <div className="flex items-center gap-3">
                 <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-red-600">
                   <Info size={20} />
                 </span>
-                <h2 className="text-3xl font-black tracking-tight text-slate-950">About Us</h2>
+                <h2 className={`text-3xl font-black tracking-tight ${darkMode ? "text-white" : "text-slate-950"}`}>About Us</h2>
               </div>
-              <span className="rounded-full border border-red-200 bg-white px-5 py-2 text-[11px] font-black uppercase tracking-[0.2em] text-red-700">
+              <span className={`rounded-full border px-5 py-2 text-[11px] font-black uppercase tracking-[0.2em] ${darkMode ? "border-slate-600 bg-slate-700 text-slate-100" : "border-red-200 bg-white text-red-700"}`}>
                 ACGC Services
               </span>
             </div>
@@ -4236,30 +4581,30 @@ function CustomerDashboard() {
             <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_1fr]">
               <div className="space-y-5">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.28em] text-slate-500">Who We Are</p>
-                  <p className="mt-3 text-sm leading-8 text-slate-600">
+                  <p className={`text-xs font-black uppercase tracking-[0.28em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Who We Are</p>
+                  <p className={`mt-3 text-sm leading-8 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                     ACGC Aluminum & Glass Construction provides durable and professional aluminum and glass solutions for residential and commercial spaces. We combine accurate measurements, quality materials, and dependable installation services to help every project feel complete.
                   </p>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                  <div className={`rounded-2xl border p-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-100 bg-slate-50"}`}>
                     <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Mission</p>
-                    <p className="mt-3 text-sm leading-7 text-slate-600">
+                    <p className={`mt-3 text-sm leading-7 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                       To deliver clean, dependable, and customer-focused aluminum and glass workmanship.
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                  <div className={`rounded-2xl border p-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-100 bg-slate-50"}`}>
                     <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Work</p>
-                    <p className="mt-3 text-sm leading-7 text-slate-600">
+                    <p className={`mt-3 text-sm leading-7 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                       Windows, doors, partitions, shutters, safety glass, and custom aluminum fabrication.
                     </p>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-red-100 bg-red-50 p-5">
+                <div className={`rounded-2xl border p-5 ${darkMode ? "border-red-900 bg-red-950/60" : "border-red-100 bg-red-50"}`}>
                   <p className="text-[11px] font-black uppercase tracking-[0.25em] text-red-700">Our Promise</p>
-                  <p className="mt-3 text-sm leading-7 text-slate-700">
+                  <p className={`mt-3 text-sm leading-7 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                     Every job is handled with honest guidance, careful project planning, and professional execution.
                   </p>
                 </div>
@@ -4295,8 +4640,8 @@ function CustomerDashboard() {
           <>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
-                <h2 className="text-2xl font-bold text-slate-950">Notifications</h2>
-                <p className="text-slate-500">Stay updated on your orders and project status.</p>
+                <h2 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Notifications</h2>
+                <p className={darkMode ? "text-slate-300" : "text-slate-500"}>Stay updated on your orders and project status.</p>
               </div>
             </div>
 
@@ -4307,8 +4652,8 @@ function CustomerDashboard() {
                 ))}
               </div>
             ) : orders.length === 0 ? (
-              <div className="rounded-3xl bg-white p-10 text-center shadow">
-                <p className="text-gray-600">No notifications yet. You'll see updates about your orders here.</p>
+              <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800 text-slate-200" : "bg-white text-gray-600"}`}>
+                <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No notifications yet. You'll see updates about your orders here.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -4351,18 +4696,18 @@ function CustomerDashboard() {
                     return (
                       <div
                         key={order._id || order.tracking}
-                        className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
+                        className={`rounded-[28px] border p-5 shadow-sm transition hover:shadow-md ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}
                       >
                         <div className="flex gap-4">
-                          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-100 ${notificationIcon()}`}>
+                          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${darkMode ? "bg-slate-700" : "bg-slate-100"} ${notificationIcon()}`}>
                             <Bell size={20} />
                           </div>
 
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">
-                                <h3 className="font-semibold text-slate-950 break-words">{product.name || "Project Update"}</h3>
-                                <p className="mt-1 text-sm text-slate-600">{notificationMessage()}</p>
+                                <h3 className={`font-semibold break-words ${darkMode ? "text-white" : "text-slate-950"}`}>{product.name || "Project Update"}</h3>
+                                <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{notificationMessage()}</p>
                                 <p className="mt-2 text-xs text-slate-400">{order.tracking}</p>
                               </div>
                               <span className={`inline-flex shrink-0 items-center rounded-full px-3 py-1 text-xs font-semibold ${getOrderStatusClasses(order.status)}`}>
@@ -4370,14 +4715,14 @@ function CustomerDashboard() {
                               </span>
                             </div>
 
-                            <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                            <div className={`mt-3 flex items-center justify-between text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                               <span>{order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</span>
                               <button
                                 onClick={() => {
                                   setSelectedOrderForModal(order);
                                   setActiveTab("orders");
                                 }}
-                                className="text-slate-950 hover:text-red-600 font-semibold transition"
+                                className={darkMode ? "text-white hover:text-red-300 font-semibold transition" : "text-slate-950 hover:text-red-600 font-semibold transition"}
                               >
                                 View Order
                               </button>
@@ -4394,7 +4739,7 @@ function CustomerDashboard() {
 
         {activeTab === "profile" && (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div className="bg-white rounded-3xl shadow p-8">
+            <div className={`rounded-3xl shadow p-8 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
               <div className="flex flex-col items-center">
                 <div className="relative">
                   <img
@@ -4407,43 +4752,43 @@ function CustomerDashboard() {
                   </button>
                 </div>
 
-                <h2 className="text-2xl font-bold mt-5">{`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer"}</h2>
-                <p className="text-gray-500 capitalize">{user?.role || "customer"}</p>
+                <h2 className={`text-2xl font-bold mt-5 ${darkMode ? "text-white" : "text-slate-900"}`}>{`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer"}</h2>
+                <p className={darkMode ? "text-slate-300 capitalize" : "text-gray-500 capitalize"}>{user?.role || "customer"}</p>
 
                 <div className="mt-6 w-full space-y-4">
-                  <div className="bg-gray-50 rounded-2xl p-4 flex items-center gap-4">
+                  <div className={`rounded-2xl p-4 flex items-center gap-4 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
                     <Mail className="text-red-600" />
                     <div>
-                      <p className="text-sm text-gray-500">Email</p>
-                      <p className="font-medium">{profileForm.email}</p>
+                      <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Email</p>
+                      <p className={`font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.email}</p>
                     </div>
                   </div>
 
-                  <div className="bg-gray-50 rounded-2xl p-4 flex items-center gap-4">
+                  <div className={`rounded-2xl p-4 flex items-center gap-4 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
                     <Phone className="text-red-600" />
                     <div>
-                      <p className="text-sm text-gray-500">Phone</p>
-                      <p className="font-medium">{profileForm.phone || "Not set"}</p>
+                      <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Phone</p>
+                      <p className={`font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.phone || "Not set"}</p>
                     </div>
                   </div>
 
-                  <div className="bg-gray-50 rounded-2xl p-4 flex items-center gap-4">
+                  <div className={`rounded-2xl p-4 flex items-center gap-4 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
                     <ShieldCheck className="text-red-600" />
                     <div>
-                      <p className="text-sm text-gray-500">Role</p>
-                      <p className="font-medium capitalize">{user?.role || "customer"}</p>
+                      <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Role</p>
+                      <p className={`font-medium capitalize ${darkMode ? "text-white" : "text-slate-900"}`}>{user?.role || "customer"}</p>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="xl:col-span-2 bg-white rounded-3xl shadow p-8">
+            <div className={`xl:col-span-2 rounded-3xl shadow p-8 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
               <div className="flex items-center gap-3 mb-6">
                 <User size={28} className="text-red-600" />
                 <div>
-                  <h2 className="text-2xl font-bold">Profile Settings</h2>
-                  <p className="text-gray-500">Update your account and password settings.</p>
+                  <h2 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Profile Settings</h2>
+                  <p className={darkMode ? "text-slate-300" : "text-gray-500"}>Update your account and password settings.</p>
                 </div>
               </div>
 
@@ -4461,14 +4806,14 @@ function CustomerDashboard() {
 
               <div className="mt-8">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="rounded-3xl bg-gray-100 border border-gray-200 p-2 flex overflow-hidden">
+                  <div className={`rounded-3xl border p-2 flex overflow-hidden ${darkMode ? "bg-slate-900 border-slate-700" : "bg-gray-100 border-gray-200"}`}>
                     <button
                       type="button"
                       onClick={() => setProfileTab("profile")}
                       className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
                         profileTab === "profile"
-                          ? "bg-white text-red-600 shadow-sm"
-                          : "text-gray-600 hover:text-red-600"
+                          ? darkMode ? "bg-slate-700 text-red-400 shadow-sm" : "bg-white text-red-600 shadow-sm"
+                          : darkMode ? "text-slate-300 hover:text-red-300" : "text-gray-600 hover:text-red-600"
                       }`}
                     >
                       Profile
@@ -4478,8 +4823,8 @@ function CustomerDashboard() {
                       onClick={() => setProfileTab("security")}
                       className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
                         profileTab === "security"
-                          ? "bg-white text-red-600 shadow-sm"
-                          : "text-gray-600 hover:text-red-600"
+                          ? darkMode ? "bg-slate-700 text-red-400 shadow-sm" : "bg-white text-red-600 shadow-sm"
+                          : darkMode ? "text-slate-300 hover:text-red-300" : "text-gray-600 hover:text-red-600"
                       }`}
                     >
                       Security
@@ -4491,7 +4836,7 @@ function CustomerDashboard() {
                   {profileTab === "profile" ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
-                        <label className="text-sm font-medium text-gray-600">First Name</label>
+                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>First Name</label>
                         <div className="relative mt-2">
                           <User size={18} className="absolute left-4 top-4 text-gray-400" />
                           <input
@@ -4500,13 +4845,13 @@ function CustomerDashboard() {
                             value={profileForm.first_name}
                             onChange={handleProfileChange}
                             placeholder="First Name"
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                            className={`w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="text-sm font-medium text-gray-600">Last Name</label>
+                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Last Name</label>
                         <div className="relative mt-2">
                           <User size={18} className="absolute left-4 top-4 text-gray-400" />
                           <input
@@ -4515,13 +4860,13 @@ function CustomerDashboard() {
                             value={profileForm.last_name}
                             onChange={handleProfileChange}
                             placeholder="Last Name"
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                            className={`w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="text-sm font-medium text-gray-600">Phone Number</label>
+                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Phone Number</label>
                         <div className="relative mt-2">
                           <Phone size={18} className="absolute left-4 top-4 text-gray-400" />
                           <input
@@ -4530,13 +4875,13 @@ function CustomerDashboard() {
                             value={profileForm.phone}
                             onChange={handleProfileChange}
                             placeholder="Phone Number"
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                            className={`w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="text-sm font-medium text-gray-600">Email Address</label>
+                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Email Address</label>
                         <div className="relative mt-2">
                           <Mail size={18} className="absolute left-4 top-4 text-gray-400" />
                           <input
@@ -4544,56 +4889,56 @@ function CustomerDashboard() {
                             name="email"
                             value={profileForm.email}
                             disabled
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl bg-gray-100 text-gray-500"
+                            className={`w-full pl-12 pr-4 py-3 border rounded-2xl ${darkMode ? "bg-slate-900 border-slate-700 text-slate-400" : "bg-gray-100 text-gray-500 border-slate-200"}`}
                           />
                         </div>
                       </div>
 
                       <div className="md:col-span-2">
-                        <label className="text-sm font-medium text-gray-600">Street Address</label>
+                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Street Address</label>
                         <input
                           type="text"
                           name="street_address"
                           value={profileForm.street_address}
                           onChange={handleProfileChange}
                           placeholder="Street address"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className={`w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
 
                       <div>
-                        <label className="text-sm font-medium text-gray-600">City</label>
+                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>City</label>
                         <input
                           type="text"
                           name="city"
                           value={profileForm.city}
                           onChange={handleProfileChange}
                           placeholder="City"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className={`w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
 
                       <div>
-                        <label className="text-sm font-medium text-gray-600">Province</label>
+                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Province</label>
                         <input
                           type="text"
                           name="province"
                           value={profileForm.province}
                           onChange={handleProfileChange}
                           placeholder="Province"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className={`w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
 
                       <div className="md:col-span-2">
-                        <label className="text-sm font-medium text-gray-600">Zip Code</label>
+                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Zip Code</label>
                         <input
                           type="text"
                           name="zip_code"
                           value={profileForm.zip_code}
                           onChange={handleProfileChange}
                           placeholder="Zip Code"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className={`w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
                     </div>
@@ -4710,8 +5055,8 @@ function CustomerDashboard() {
           <>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
-                <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">My Contracts & Warranties</h2>
-                <p className="text-slate-500">Review your contracts and warranty coverage.</p>
+                <h2 className={`text-2xl font-black tracking-[-0.03em] ${darkMode ? "text-white" : "text-slate-950"}`}>My Contracts & Warranties</h2>
+                <p className={darkMode ? "text-slate-400" : "text-slate-500"}>Review your contracts and warranty coverage.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -4720,7 +5065,9 @@ function CustomerDashboard() {
                   className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
                     contractHistoryTab === "accepted" && !warrantyHistoryTab
                       ? "bg-red-600 text-white shadow-sm"
-                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                      : darkMode
+                        ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
                   Accepted Contracts ({acceptedContracts.length})
@@ -4731,7 +5078,9 @@ function CustomerDashboard() {
                   className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
                     contractHistoryTab === "rejected" && !warrantyHistoryTab
                       ? "bg-red-600 text-white shadow-sm"
-                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                      : darkMode
+                        ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
                   Declined Contracts ({rejectedContracts.length})
@@ -4742,7 +5091,9 @@ function CustomerDashboard() {
                   className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
                     warrantyHistoryTab === "active"
                       ? "bg-emerald-600 text-white shadow-sm"
-                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                      : darkMode
+                        ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
                   Active Warranty ({activeWarranties.length})
@@ -4753,7 +5104,9 @@ function CustomerDashboard() {
                   className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
                     warrantyHistoryTab === "expired"
                       ? "bg-red-600 text-white shadow-sm"
-                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                      : darkMode
+                        ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700"
+                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
                   Out-of-Warranty ({expiredWarranties.length})
@@ -4764,16 +5117,16 @@ function CustomerDashboard() {
             {ordersLoading ? (
               <div className="space-y-4">
                 {[...Array(2)].map((_, index) => (
-                  <div key={index} className="animate-pulse rounded-[28px] bg-white p-8 shadow" />
+                  <div key={index} className={`animate-pulse rounded-[28px] p-8 shadow ${darkMode ? "bg-slate-800" : "bg-white"}`} />
                 ))}
               </div>
             ) : warrantyHistoryTab ? (
               warrantiesInTab.length === 0 ? (
-                <div className="rounded-[28px] border border-red-200 bg-white p-10 text-center shadow-sm">
-                  <p className="text-gray-600">No {warrantyHistoryTab === "active" ? "active" : "expired"} warranties found.</p>
+                <div className={`rounded-[28px] border p-10 text-center shadow-sm ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
+                  <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No {warrantyHistoryTab === "active" ? "active" : "expired"} warranties found.</p>
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-[28px] border border-red-200 bg-white shadow-[0_18px_45px_rgba(127,29,29,0.08)]">
+                <div className={`overflow-hidden rounded-[28px] border shadow-[0_18px_45px_rgba(127,29,29,0.08)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
                   <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
                     <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
                       <tr>
@@ -4798,14 +5151,14 @@ function CustomerDashboard() {
                         const statusLabel = isActive ? "Active" : "Expired";
 
                         return (
-                          <tr key={order._id || order.tracking} className="border-t border-red-100 hover:bg-red-50/70 transition">
+                          <tr key={order._id || order.tracking} className={`border-t transition ${darkMode ? "border-slate-700 hover:bg-slate-700/60" : "border-red-100 hover:bg-red-50/70"}`}>
                             <td className="px-6 py-5 align-middle text-sm font-black text-red-700 text-center">{order.tracking || order._id || "—"}</td>
-                            <td className="px-6 py-5 align-middle text-sm text-slate-700">
-                              <span className="font-black text-slate-900">{product.name || product.product_name || "Product"}</span>
+                            <td className={`px-6 py-5 align-middle text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                              <span className={`font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Product"}</span>
                             </td>
-                            <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{order.warranty_period || "—"}</td>
-                            <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{warrantyStartDate}</td>
-                            <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{warrantyExpiryDate}</td>
+                            <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{order.warranty_period || "—"}</td>
+                            <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{warrantyStartDate}</td>
+                            <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{warrantyExpiryDate}</td>
                             <td className="px-6 py-5 align-middle text-center">
                               <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass}`}>{statusLabel}</span>
                             </td>
@@ -4828,11 +5181,11 @@ function CustomerDashboard() {
                 </div>
               )
             ) : contractsInTab.length === 0 ? (
-              <div className="rounded-[28px] border border-red-200 bg-white p-10 text-center shadow-sm">
-                <p className="text-gray-600">No {contractHistoryTab === "accepted" ? "accepted" : "rejected"} contracts found yet.</p>
+              <div className={`rounded-[28px] border p-10 text-center shadow-sm ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
+                <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No {contractHistoryTab === "accepted" ? "accepted" : "rejected"} contracts found yet.</p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-[28px] border border-red-200 bg-white shadow-[0_18px_45px_rgba(127,29,29,0.08)]">
+              <div className={`overflow-hidden rounded-[28px] border shadow-[0_18px_45px_rgba(127,29,29,0.08)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
                 <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
                   <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
                     <tr>
@@ -4853,16 +5206,16 @@ function CustomerDashboard() {
                         : "bg-red-100 text-red-700";
 
                       return (
-                        <tr key={order._id || order.tracking} className="border-t border-red-100 hover:bg-red-50/70 transition">
+                        <tr key={order._id || order.tracking} className={`border-t transition ${darkMode ? "border-slate-700 hover:bg-slate-700/60" : "border-red-100 hover:bg-red-50/70"}`}>
                           <td className="px-6 py-5 align-middle text-sm font-black text-red-700 text-center">{order.tracking || order._id || "—"}</td>
-                          <td className="px-6 py-5 align-middle text-sm text-slate-700">
-                            <span className="font-black text-slate-900">{product.name || product.product_name || "Project"}</span>
+                          <td className={`px-6 py-5 align-middle text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                            <span className={`font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Project"}</span>
                           </td>
-                          <td className="px-6 py-5 align-middle text-sm font-black text-slate-800 text-right">{formatCurrency(order.contract_amount || order.total_amount)}</td>
+                          <td className={`px-6 py-5 align-middle text-sm font-black text-right ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{formatCurrency(order.contract_amount || order.total_amount)}</td>
                           <td className="px-6 py-5 align-middle text-center">
                             <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass}`}>{statusLabel}</span>
                           </td>
-                          <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
+                          <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
                           <td className="px-6 py-5 align-middle text-center">
                             <div className="flex flex-wrap justify-center gap-2">
                               <button
@@ -4890,6 +5243,45 @@ function CustomerDashboard() {
             )}
           </>
         )}
+
+        <footer className="relative left-1/2 -mb-6 mt-10 w-screen -translate-x-1/2 border-t border-white/10 bg-black/70">
+          <div className="mx-auto max-w-7xl px-6 py-14">
+            <div className="grid gap-14 lg:grid-cols-3">
+              <div>
+                <div className="flex items-center gap-4">
+                  <img src={logo} alt="logo" className="h-14 w-20 object-contain" />
+                  <div>
+                    <h3 className="text-xl font-bold text-white">ACGC Aluminum Services</h3>
+                    <p className="text-sm text-gray-300">Premium Glass &amp; Aluminum Solutions</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="mb-6 font-bold text-white">Quick Links</h4>
+                <div className="space-y-4 text-gray-300">
+                  <p>Home</p>
+                  <p>Browse Products</p>
+                  <p>Track Order</p>
+                  <p>About Us</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="mb-6 font-bold text-white">Contact</h4>
+                <div className="space-y-4 text-gray-300">
+                  <p>Email: acgc.services00@email.com</p>
+                  <p>Phone: +63 900 000 0000</p>
+                  <p>Philippines</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-12 border-t border-white/40 pt-8 text-center text-sm text-white">
+              © 2026 ACGC Aluminum Services — All Rights Reserved.
+            </div>
+          </div>
+        </footer>
 
         <ContractModal
           isOpen={showContractModal}

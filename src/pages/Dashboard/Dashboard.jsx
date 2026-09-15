@@ -128,6 +128,22 @@ const getOrderItemTotal = (item) => {
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import ProgressViewModal from "../../components/ProgressViewModal";
+
+const toProgressProject = (order) => ({
+  id: order?._id || order?.id,
+  client:
+    order?.customer_name ||
+    `${order?.customer?.first_name || ""} ${order?.customer?.last_name || ""}`.trim() ||
+    order?.customer?.email ||
+    "Unknown",
+  product:
+    order?.items?.[0]?.name ||
+    order?.items?.[0]?.category ||
+    order?.items?.[0]?.product_id?.name ||
+    "Project",
+  rawOrder: order,
+});
 
 function Dashboard() {
   const { user } = useAuth();
@@ -140,6 +156,7 @@ function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [selectedProject, setSelectedProject] = useState(null);
   const [selectedOrderLoading, setSelectedOrderLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
@@ -194,6 +211,23 @@ function Dashboard() {
     } finally {
       setSelectedOrderLoading(false);
     }
+  };
+
+  const handleViewProject = (order) => {
+    setSelectedProject(toProgressProject(order));
+  };
+
+  const handleTimelineOrderChange = (savedOrder) => {
+    if (!savedOrder) return;
+
+    setOrders((currentOrders) =>
+      currentOrders.map((order) =>
+        (order._id || order.id) === (savedOrder._id || savedOrder.id)
+          ? savedOrder
+          : order
+      )
+    );
+    setSelectedProject(toProgressProject(savedOrder));
   };
 
   const closeConfirmModal = () => {
@@ -788,7 +822,7 @@ function Dashboard() {
                     <button
                       type="button"
                       key={order._id || order.id}
-                      onClick={() => setSelectedOrder(order)}
+                      onClick={() => handleViewProject(order)}
                       className="flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-100 p-4 text-left transition hover:border-blue-200 hover:bg-blue-50/40"
                     >
                       <div className="min-w-0">
@@ -1013,6 +1047,14 @@ function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {selectedProject && (
+        <ProgressViewModal
+          project={selectedProject}
+          onClose={() => setSelectedProject(null)}
+          onOrderChange={handleTimelineOrderChange}
+        />
       )}
 
       {confirmModal.open && (
