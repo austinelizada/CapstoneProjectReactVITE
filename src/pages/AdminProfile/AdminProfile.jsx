@@ -6,13 +6,22 @@ import {
   Camera,
   Save,
   ShieldCheck,
+  Activity,
+  Clock3,
+  ChevronLeft,
+  ChevronRight,
+  LogIn,
+  LogOut,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { getActivityStorageKey, readActivityLog } from "@/lib/activityLog";
+import { getAdminOrder } from "@/api/orders";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 
 function AdminProfile() {
+  const activityPageSize = 5;
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("sidebarOpen");
@@ -24,6 +33,11 @@ function AdminProfile() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [activeTab, setActiveTab] = useState("profile");
+  const [activityLog, setActivityLog] = useState([]);
+  const [activityPage, setActivityPage] = useState(1);
+  const [activityDateFilter, setActivityDateFilter] = useState("");
+  const [activityCategoryFilter, setActivityCategoryFilter] = useState("all");
+  const [activitySearch, setActivitySearch] = useState("");
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
 
@@ -51,6 +65,175 @@ function AdminProfile() {
       });
     }
   }, [loading, user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    let cancelled = false;
+    const loadActivityLog = async () => {
+      const storedActivityLog = readActivityLog(user).filter(
+        (activity) =>
+          !activity.description.startsWith("Updated profile information") &&
+          !activity.description.startsWith("Visited "),
+      );
+      const orderActivityPrefixes = /^(Approved order|Rejected order|Cancelled site inspection|Restored site inspection|Updated site inspection|Generated contract for order|Created warranty for order|Approved transaction|Cancelled transaction|Updated progress for project|Cancelled project) /;
+      const legacyEntries = storedActivityLog.filter((activity) =>
+        orderActivityPrefixes.test(activity.description) &&
+        /[a-f0-9]{24}/i.test(activity.description),
+      );
+      const orderIds = [
+        ...new Set(
+          legacyEntries
+            .map((activity) => activity.description.match(/[a-f0-9]{24}/i)?.[0])
+            .filter(Boolean),
+        ),
+      ];
+      const orderResults = await Promise.all(
+        orderIds.map(async (orderId) => {
+          try {
+            const response = await getAdminOrder(orderId);
+            return [orderId, response.order || response];
+          } catch {
+            return [orderId, null];
+          }
+        }),
+      );
+      const ordersById = new Map(orderResults);
+      const resolvedActivityLog = storedActivityLog.map((activity) => {
+        const orderId = activity.description.match(/[a-f0-9]{24}/i)?.[0];
+        const order = orderId ? ordersById.get(orderId) : null;
+        if (!order) return activity;
+
+        const customerName = order.customer
+          ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
+          : order.customer_name || "Customer";
+        if (activity.description.startsWith("Approved order")) {
+          return {
+            ...activity,
+            description: `Approved order for ${customerName} and moved it to site inspection.`,
+            page: "Dashboard",
+          };
+        }
+        if (activity.description.startsWith("Rejected order")) {
+          return {
+            ...activity,
+            description: `Rejected order for ${customerName}.`,
+            page: "Dashboard",
+          };
+        }
+        if (activity.description.startsWith("Cancelled site inspection")) {
+          return {
+            ...activity,
+            description: `Cancelled site inspection for ${customerName}.`,
+            page: "Site Inspection",
+          };
+        }
+        if (activity.description.startsWith("Restored site inspection")) {
+          return {
+            ...activity,
+            description: `Restored site inspection for ${customerName}.`,
+            page: "Site Inspection",
+          };
+        }
+        if (activity.description.startsWith("Updated site inspection")) {
+          return {
+            ...activity,
+            description: `Updated site inspection for ${customerName}.`,
+            page: "Site Inspection",
+          };
+        }
+        if (activity.description.startsWith("Generated contract for order")) {
+          return {
+            ...activity,
+            description: `Generated contract for ${customerName}.`,
+            page: "Site Inspection",
+          };
+        }
+        if (activity.description.startsWith("Created warranty for order")) {
+          return {
+            ...activity,
+            description: `Created warranty for ${customerName}.`,
+            page: "Transactions",
+          };
+        }
+        if (activity.description.startsWith("Approved transaction")) {
+          return {
+            ...activity,
+            description: `Approved transaction for ${customerName}.`,
+            page: "Transactions",
+          };
+        }
+        if (activity.description.startsWith("Cancelled transaction")) {
+          return {
+            ...activity,
+            description: `Cancelled transaction for ${customerName}.`,
+            page: "Transactions",
+          };
+        }
+        if (activity.description.startsWith("Updated progress for project")) {
+          return {
+            ...activity,
+            description: `Updated progress for ${customerName}.`,
+            page: "Progress Monitor",
+          };
+        }
+        if (activity.description.startsWith("Cancelled project")) {
+          return {
+            ...activity,
+            description: `Cancelled project for ${customerName}.`,
+            page: "Progress Monitor",
+          };
+        }
+        return activity;
+      });
+
+      localStorage.setItem(getActivityStorageKey(user), JSON.stringify(resolvedActivityLog));
+      if (!cancelled) {
+        setActivityLog(resolvedActivityLog);
+      }
+    };
+
+    loadActivityLog();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const filteredActivityLog = activityLog.filter((activity) => {
+    const activityCategory =
+      activity.description === "Logged in" || activity.description === "Logged out"
+        ? "security"
+        : activity.page === "Products"
+          ? "system"
+          : "project";
+    const matchesCategory =
+      activityCategoryFilter === "all" ||
+      activityCategoryFilter === activityCategory;
+    const searchValue = activitySearch.trim().toLowerCase();
+    const matchesSearch =
+      !searchValue ||
+      `${activity.description} ${activity.page || "Admin"}`
+        .toLowerCase()
+        .includes(searchValue);
+    if (!matchesCategory || !matchesSearch) return false;
+    if (!activityDateFilter) return true;
+    const activityDate = new Date(activity.createdAt);
+    const localDate = [
+      activityDate.getFullYear(),
+      String(activityDate.getMonth() + 1).padStart(2, "0"),
+      String(activityDate.getDate()).padStart(2, "0"),
+    ].join("-");
+    return localDate === activityDateFilter;
+  });
+  const activityPageCount = Math.max(
+    1,
+    Math.ceil(filteredActivityLog.length / activityPageSize),
+  );
+  const currentActivityPage = Math.min(activityPage, activityPageCount);
+  const visibleActivity = filteredActivityLog.slice(
+    (currentActivityPage - 1) * activityPageSize,
+    currentActivityPage * activityPageSize,
+  );
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -235,6 +418,12 @@ function AdminProfile() {
                 </div>
               )}
 
+              {success && (
+                <div className="mb-4 rounded-2xl border border-green-200 bg-green-50 p-4 text-green-700">
+                  {success}
+                </div>
+              )}
+
               <div className="mt-8">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="rounded-3xl bg-gray-100 border border-gray-200 p-2 flex overflow-hidden">
@@ -259,6 +448,17 @@ function AdminProfile() {
                       }`}
                     >
                       Security
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("activity")}
+                      className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
+                        activeTab === "activity"
+                          ? "bg-white text-red-600 shadow-sm"
+                          : "text-gray-600 hover:text-red-600"
+                      }`}
+                    >
+                      Activity Log
                     </button>
                   </div>
                 </div>
@@ -380,7 +580,7 @@ function AdminProfile() {
                         />
                       </div>
                     </div>
-                  ) : (
+                  ) : activeTab === "security" ? (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div className="md:col-span-3">
                         <label className="text-sm font-medium text-gray-600">Current Password</label>
@@ -418,20 +618,211 @@ function AdminProfile() {
                         />
                       </div>
                     </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3 rounded-2xl border border-red-100 bg-red-50 p-4">
+                        <Activity className="text-red-600" size={20} />
+                        <div>
+                          <p className="font-semibold text-gray-800">Recent admin activity</p>
+                          <p className="text-sm text-gray-600">
+                            Successful admin actions from this device appear here.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <div className="md:col-span-1">
+                          <label
+                            htmlFor="activity-search"
+                            className="text-sm font-medium text-gray-600"
+                          >
+                            Search activity
+                          </label>
+                          <input
+                            id="activity-search"
+                            type="search"
+                            value={activitySearch}
+                            onChange={(event) => {
+                              setActivitySearch(event.target.value);
+                              setActivityPage(1);
+                            }}
+                            placeholder="Search activities..."
+                            className="mt-2 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor="activity-category-filter"
+                            className="text-sm font-medium text-gray-600"
+                          >
+                            Filter by category
+                          </label>
+                          <select
+                            id="activity-category-filter"
+                            value={activityCategoryFilter}
+                            onChange={(event) => {
+                              setActivityCategoryFilter(event.target.value);
+                              setActivityPage(1);
+                            }}
+                            className="mt-2 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                          >
+                            <option value="all">All</option>
+                            <option value="system">System</option>
+                            <option value="security">Security</option>
+                            <option value="project">Project</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label
+                            htmlFor="activity-date-filter"
+                            className="text-sm font-medium text-gray-600"
+                          >
+                            Filter by date
+                          </label>
+                          <div className="mt-2 flex items-center gap-2">
+                          <input
+                            id="activity-date-filter"
+                            type="date"
+                            value={activityDateFilter}
+                            onChange={(event) => {
+                              setActivityDateFilter(event.target.value);
+                              setActivityPage(1);
+                            }}
+                            className="rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                          />
+                          {activityDateFilter && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActivityDateFilter("");
+                                setActivityPage(1);
+                              }}
+                              className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
+                            >
+                              Clear
+                            </button>
+                          )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {filteredActivityLog.length > 0 ? (
+                        <div className="space-y-3">
+                          {visibleActivity.map((activity) => (
+                            <div
+                              key={activity.id}
+                              className={`group flex items-start gap-4 rounded-2xl border border-gray-200 border-l-4 p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${
+                                activity.description === "Logged in"
+                                  ? "border-l-green-500 bg-green-50/60 hover:border-green-300"
+                                  : activity.description === "Logged out"
+                                    ? "border-l-red-500 bg-red-50/60 hover:border-red-300"
+                                    : activity.page === "Products"
+                                      ? "border-l-gray-300 bg-gray-50 hover:border-gray-400"
+                                      : "border-l-blue-500 bg-blue-50/60 hover:border-blue-300"
+                              }`}
+                            >
+                              {activity.description === "Logged in" ? (
+                                <LogIn className="mt-0.5 shrink-0 text-green-600" size={18} />
+                              ) : activity.description === "Logged out" ? (
+                                <LogOut className="mt-0.5 shrink-0 text-red-600" size={18} />
+                              ) : (
+                                <Clock3 className="mt-0.5 shrink-0 text-gray-500" size={18} />
+                              )}
+                              <div>
+                                <p
+                                  className={`font-medium ${
+                                    activity.description === "Logged in"
+                                      ? "text-green-800"
+                                      : activity.description === "Logged out"
+                                        ? "text-red-800"
+                                        : activity.page === "Products"
+                                          ? "text-gray-700"
+                                          : "text-blue-800"
+                                  }`}
+                                >
+                                  {activity.description}
+                                </p>
+                                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                                  <span
+                                    className={`rounded-full border px-2.5 py-1 font-semibold uppercase tracking-wide ${
+                                      activity.description === "Logged in" ||
+                                      activity.description === "Logged out"
+                                        ? "border-red-200 bg-red-50 text-red-600"
+                                        : activity.page === "Products"
+                                          ? "border-gray-200 bg-gray-100 text-gray-500"
+                                          : "border-blue-200 bg-blue-50 text-blue-600"
+                                    }`}
+                                  >
+                                    {activity.description === "Logged in" ||
+                                    activity.description === "Logged out"
+                                      ? "Security"
+                                      : activity.page === "Products"
+                                        ? "System"
+                                        : "Project"}
+                                  </span>
+                                  <span className="text-gray-500">
+                                    {new Date(activity.createdAt).toLocaleString()}
+                                  </span>
+                                  <span className="font-semibold uppercase tracking-wide text-gray-400">
+                                    Page: {activity.page || "Admin"}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-gray-200 p-8 text-center text-gray-500">
+                          {activityDateFilter
+                            ? "No activity recorded on this date."
+                            : "No activity recorded yet."}
+                        </div>
+                      )}
+
+                      {filteredActivityLog.length > 0 && (
+                        <div className="flex items-center justify-end gap-4 pt-2">
+                          <span className="text-sm text-gray-500">
+                            Page {currentActivityPage} of {activityPageCount}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setActivityPage(currentActivityPage - 1)}
+                              disabled={currentActivityPage === 1}
+                              className="inline-flex items-center gap-1 rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <ChevronLeft size={16} />
+                              Previous
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActivityPage(currentActivityPage + 1)}
+                              disabled={currentActivityPage === activityPageCount}
+                              className="inline-flex items-center gap-1 rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Next
+                              <ChevronRight size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
 
-              <div className="mt-8 flex justify-end">
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="bg-red-600 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <Save size={18} />
-                  {saving ? "Saving..." : "Save Changes"}
-                </button>
-              </div>
+              {activeTab !== "activity" && (
+                <div className="mt-8 flex justify-end">
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="bg-red-600 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Save size={18} />
+                    {saving ? "Saving..." : "Save Changes"}
+                  </button>
+                </div>
+              )}
 
               {showPasswordModal && (
                 <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">

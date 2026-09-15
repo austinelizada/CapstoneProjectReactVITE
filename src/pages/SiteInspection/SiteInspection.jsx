@@ -19,6 +19,8 @@ import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import ContractModal from "../../components/ContractModal";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
+import { useAuth } from "@/contexts/AuthContext";
+import { recordActivity } from "@/lib/activityLog";
 
 const getDefaultInspection = () => ({
   customerId: null,
@@ -82,6 +84,7 @@ const isSiteInspectionVisible = (order) => {
 };
 
 function SiteInspection() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -776,6 +779,7 @@ function SiteInspection() {
     try {
       const payload = await buildInspectionPayload(newInspection);
       const createResp = await createInspection(payload);
+      recordActivity(user, `Created site inspection for ${newInspection.customerName || "customer"}.`, "Site Inspection");
       toast.success("Inspection created");
       
       // Send approval email for walk-in customers
@@ -786,6 +790,7 @@ function SiteInspection() {
             customerEmail: newInspection.customerEmail,
             contractUrl: newInspection.signed_contract_file,
           });
+          recordActivity(user, `Sent walk-in approval email for ${newInspection.customerName || "customer"}.`, "Site Inspection");
           toast.success("Approval email sent to customer");
         } catch (emailError) {
           console.error("Failed to send approval email:", emailError);
@@ -952,6 +957,7 @@ function SiteInspection() {
         contract_terms: order.contract_terms || contract.contractTerms,
         contract_amount: order.contract_amount || contract.totalProjectCost,
       });
+      recordActivity(user, `Generated contract for order ${orderId}.`, "Site Inspection");
 
       const savedOrder = contractResponse?.order || {};
       const generatedOrder = {
@@ -1031,6 +1037,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
     try {
       setCancellingId(orderId);
       const res = await updateOrderStatus(orderId, { status: "cancelled" });
+      recordActivity(user, `Cancelled site inspection ${orderId}.`, "Site Inspection");
       if (res && res.order) {
         setInspections((prev) => prev.filter((i) => (i._id || i.id) !== orderId));
         setCancelledInspections((prev) => [res.order, ...prev]);
@@ -1107,6 +1114,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
     try {
       setRestoringId(orderId);
       const res = await updateOrderStatus(orderId, { status: "site_inspection" });
+      recordActivity(user, `Restored site inspection ${orderId}.`, "Site Inspection");
       if (res && res.order) {
         setCancelledInspections((prev) => prev.filter((i) => (i._id || i.id) !== orderId));
         if (isSiteInspectionVisible(res.order)) {
@@ -1188,6 +1196,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
       }
 
       const res = await updateOrderInspection(editInspection.id, payload);
+      recordActivity(user, `Updated site inspection ${editInspection.id}.`, "Site Inspection");
       toast.success("Inspection saved");
       // update local inspections list with returned order
       if (res && res.order) {

@@ -9,6 +9,7 @@ import {
   updateProfile as updateProfileApi,
 } from "@/api/auth";
 import { normalizeUserProfile } from "@/lib/userProfile";
+import { recordActivity } from "@/lib/activityLog";
 
 let authInitializationStarted = false;
 const AuthContext = createContext(null);
@@ -16,7 +17,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     const storedUser = localStorage.getItem("user");
-    return storedUser ? JSON.parse(storedUser) : null;
+    return storedUser ? normalizeUserProfile(JSON.parse(storedUser)) : null;
   });
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState("");
@@ -160,6 +161,9 @@ export function AuthProvider({ children }) {
       const response = await loginApi({ identifier, password });
       setToken(response.token);
       const userProfile = normalizeAndPersistUser(response.user);
+      if (userProfile.role === "admin") {
+        recordActivity(userProfile, "Logged in", "Authentication");
+      }
       return { ...response, user: userProfile };
     } finally {
       setLoginLoading(false);
@@ -191,6 +195,7 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
+    recordActivity(user, "Logged out", "Authentication");
     clearAuth();
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/login");

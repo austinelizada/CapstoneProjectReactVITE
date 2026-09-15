@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { getOrders, getAdminOrders, getAdminOrder, updateOrderStatus } from "@/api/orders";
 import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
+import { recordActivity } from "@/lib/activityLog";
+import { useAuth } from "@/contexts/AuthContext";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -128,6 +130,7 @@ import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 
 function Dashboard() {
+  const { user } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("sidebarOpen");
@@ -216,8 +219,6 @@ function Dashboard() {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
 
-  
-
   useEffect(() => {
     const fetchOrders = async () => {
       setOrdersLoading(true);
@@ -272,6 +273,10 @@ function Dashboard() {
 
     try {
       await updateOrderStatus(order._id, { status: "site_inspection" });
+      const orderName = order.customer
+        ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
+        : "Customer";
+      recordActivity(user, `Approved order for ${orderName} and moved it to site inspection.`, "Dashboard");
 
       setOrders((prev) =>
         prev.map((item) =>
@@ -302,6 +307,10 @@ function Dashboard() {
 
     try {
       await updateOrderStatus(order._id, { status: "cancelled" });
+      const orderName = order.customer
+        ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
+        : "Customer";
+      recordActivity(user, `Rejected order for ${orderName}.`, "Dashboard");
 
       setOrders((prev) =>
         prev.map((item) =>
@@ -336,6 +345,44 @@ function Dashboard() {
   const currentOrders = orderRequests.slice(firstIndex, lastIndex);
 
   const totalPages = Math.max(1, Math.ceil(orderRequests.length / ordersPerPage));
+  const activeProjectStatuses = new Set([
+    "approved",
+    "site_inspection",
+    "contract_sent",
+    "contract_accepted",
+    "in_transaction",
+    "processing",
+    "cutting",
+    "fabrication",
+    "installation_scheduling",
+    "installation",
+  ]);
+  const isActiveProject = (order) => {
+    const status = String(order.status || "").toLowerCase();
+    const progress = Number(order.progress);
+    const stages = order.progress_stages || order.stages || [];
+    const finalStage = Array.isArray(stages) ? stages[stages.length - 1] : null;
+    const isCompleted =
+      status === "completed" ||
+      status === "cancelled" ||
+      progress >= 100 ||
+      finalStage?.completed === true;
+
+    return activeProjectStatuses.has(status) && !isCompleted;
+  };
+  const activeProjectsCount = orders.filter(isActiveProject).length;
+  const activeWarrantiesCount = orders.filter(
+    (order) => String(order.warranty_status || "").toLowerCase() === "active",
+  ).length;
+  const pendingInspectionCount = orders.filter(
+    (order) => String(order.status || "").toLowerCase() === "site_inspection",
+  ).length;
+  const activeProjects = orders
+    .filter(isActiveProject)
+    .slice(0, 5);
+  const activeWarranties = orders
+    .filter((order) => String(order.warranty_status || "").toLowerCase() === "active")
+    .slice(0, 5);
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
@@ -363,50 +410,135 @@ function Dashboard() {
             </div>
           )}
 
-          {/* Welcome */}
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            {/* Welcome */}
+            <div className="h-fit self-start rounded-3xl bg-gradient-to-r from-red-700 via-red-600 to-orange-500 p-6 text-white shadow-lg">
+              <h1 className="text-2xl font-bold">Dashboard</h1>
+              <p className="mt-2 text-red-100">
+                Manage inspections, projects, warranties and products.
+              </p>
+              <div className="mt-6 grid grid-cols-3 gap-2 border-t border-white/25 pt-4">
+                <div className="rounded-2xl bg-white/10 p-3">
+                  <p className="text-xs text-red-100">Projects</p>
+                  <p className="mt-1 text-xl font-bold">{activeProjectsCount}</p>
+                </div>
+                <div className="rounded-2xl bg-white/10 p-3">
+                  <p className="text-xs text-red-100">Warranties</p>
+                  <p className="mt-1 text-xl font-bold">{activeWarrantiesCount}</p>
+                </div>
+                <div className="rounded-2xl bg-white/10 p-3">
+                  <p className="text-xs text-red-100">Inspections</p>
+                  <p className="mt-1 text-xl font-bold">{pendingInspectionCount}</p>
+                </div>
+              </div>
+            </div>
 
-          <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
-            <h1 className="text-3xl font-bold">
-              Dashboard
-            </h1>
+            {/* Quick Actions */}
+            <div className="rounded-3xl bg-white p-6 shadow-lg">
+              <h2 className="text-lg font-bold text-gray-900">Quick Actions</h2>
+              <p className="mb-4 mt-1 text-sm text-gray-500">Shortcuts</p>
 
-            <p className="mt-2 text-red-100">
-              Manage inspections, projects,
-              warranties and products.
-            </p>
+              <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+                <button
+                  type="button"
+                  onClick={() => navigate("/site-inspection")}
+                  className="rounded-2xl border border-red-500 bg-red-50/50 p-3 text-left transition hover:bg-red-100"
+                >
+                  <ClipboardCheck className="mb-2 text-red-600" size={20} />
+                  <h3 className="text-xs font-bold leading-tight">New Inspection</h3>
+                  <p className="mt-1 text-[11px] text-gray-500">Site inspection</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate("/progress-monitor")}
+                  className="rounded-2xl border border-blue-500 bg-blue-50/50 p-3 text-left transition hover:bg-blue-100"
+                >
+                  <FolderOpen className="mb-2 text-blue-600" size={20} />
+                  <h3 className="text-xs font-bold leading-tight">View Projects</h3>
+                  <p className="mt-1 text-[11px] text-gray-500">Progress monitor</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+                  className="rounded-2xl border border-green-500 bg-green-50/50 p-3 text-left transition hover:bg-green-100"
+                >
+                  <ShieldCheck className="mb-2 text-green-600" size={20} />
+                  <h3 className="text-xs font-bold leading-tight">View Warranty</h3>
+                  <p className="mt-1 text-[11px] text-gray-500">Warranties</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigate("/product")}
+                  className="rounded-2xl border border-purple-500 bg-purple-50 p-3 text-left transition hover:bg-purple-100"
+                >
+                  <Package className="mb-2 text-purple-600" size={20} />
+                  <h3 className="text-xs font-bold leading-tight">Add Product</h3>
+                  <p className="mt-1 text-[11px] text-gray-500">Inventory</p>
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Statistics */}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6">
+          <div className="grid grid-cols-1 gap-5 mt-6 md:grid-cols-3">
 
-            <div className="bg-white rounded-3xl p-6 shadow">
+            <button
+              type="button"
+              onClick={() => navigate("/progress-monitor")}
+              className="group rounded-3xl bg-white p-6 text-left shadow transition duration-200 hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
               <p className="text-gray-500">
                 Active Projects
               </p>
 
-              <h2 className="text-4xl font-bold mt-2">
-                0
+              <h2 className="mt-2 text-4xl font-bold text-gray-900">
+                {activeProjectsCount}
               </h2>
 
-              <p className="text-green-600 text-sm mt-2">
-                ↑ this month
+              <p className="mt-2 text-sm text-blue-600 transition group-hover:text-blue-700">
+                View projects →
               </p>
-            </div>
+            </button>
 
-            <div className="bg-white rounded-3xl p-6 shadow">
+            <button
+              type="button"
+              onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+              className="group rounded-3xl bg-white p-6 text-left shadow transition duration-200 hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
               <p className="text-gray-500">
                 Active Warranties
               </p>
 
-              <h2 className="text-4xl font-bold mt-2">
-                1
+              <h2 className="mt-2 text-4xl font-bold text-gray-900">
+                {activeWarrantiesCount}
               </h2>
 
-              <p className="text-blue-600 text-sm mt-2">
-                1 currently active
+              <p className="mt-2 text-sm text-green-600 transition group-hover:text-green-700">
+                View warranties →
               </p>
-            </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/site-inspection")}
+              className="group rounded-3xl bg-white p-6 text-left shadow transition duration-200 hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+            >
+              <p className="text-gray-500">
+                Pending Inspection
+              </p>
+
+              <h2 className="mt-2 text-4xl font-bold text-gray-900">
+                {pendingInspectionCount}
+              </h2>
+
+              <p className="mt-2 text-sm text-red-600 transition group-hover:text-red-700">
+                View inspections →
+              </p>
+            </button>
 
           </div>
 
@@ -627,100 +759,101 @@ function Dashboard() {
 
           </div>
 
-          {/* Quick Actions */}
+          <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">Active Projects</h2>
+                  <p className="mt-1 text-sm text-gray-400">
+                    {activeProjectsCount} projects currently in progress
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate("/progress-monitor")}
+                  className="text-sm font-semibold text-red-600 hover:text-red-700"
+                >
+                  View all
+                </button>
+              </div>
 
-          <div className="bg-white rounded-3xl shadow mt-6 p-4">
+              <div className="mt-5 space-y-3">
+                {activeProjects.length > 0 ? activeProjects.map((order) => {
+                  const customerName = order.customer
+                    ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
+                    : "Customer";
+                  const productName = order.items?.[0]?.name || order.items?.[0]?.product_id?.name || "Project";
+                  const status = titleCase(order.status);
+                  return (
+                    <button
+                      type="button"
+                      key={order._id || order.id}
+                      onClick={() => setSelectedOrder(order)}
+                      className="flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-100 p-4 text-left transition hover:border-blue-200 hover:bg-blue-50/40"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-gray-800">{productName}</p>
+                        <p className="mt-1 truncate text-sm text-gray-400">{customerName}</p>
+                      </div>
+                      <span className="shrink-0 rounded-lg bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white">
+                        {status}
+                      </span>
+                    </button>
+                  );
+                }) : (
+                  <p className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
+                    No active projects.
+                  </p>
+                )}
+              </div>
+            </section>
 
-            <h2 className="text-lg font-bold mb-4">
-              Quick Actions
-            </h2>
+            <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">Active Warranties</h2>
+                  <p className="mt-1 text-sm text-gray-400">
+                    {activeWarrantiesCount} warranties currently active
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+                  className="text-sm font-semibold text-red-600 hover:text-red-700"
+                >
+                  View all
+                </button>
+              </div>
 
-            <p className="text-gray-500 mb-4">
-              Shortcuts
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-
-              <button
-                onClick={() =>
-                  navigate("/site-inspection")
-                }
-                className="bg-red-50/50 border border-red-500 rounded-2xl p-4 text-left hover:bg-red-100 transition"
-              >
-                <ClipboardCheck
-                  className="text-red-600 mb-2"
-                  size={28}
-                />
-
-                <h3 className="font-bold text-sm leading-tight">
-                  New Inspection
-                </h3>
-
-                <p className="text-gray-500 text-xs mt-1">
-                  Site inspection
-                </p>
-              </button>
-
-              <button
-                onClick={() =>
-                  navigate("/progress-monitor")
-                }
-                className="bg-blue-50/50 border border-blue-500 rounded-2xl p-4 text-left hover:bg-blue-100 transition"
-              >
-                <FolderOpen
-                  className="text-blue-600 mb-2"
-                  size={28}
-                />
-
-                <h3 className="font-bold text-sm leading-tight">
-                  View Projects
-                </h3>
-
-                <p className="text-gray-500 text-xs mt-1">
-                  Progress monitor
-                </p>
-              </button>
-
-              <button
-                onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
-                className="bg-green-50/50 border border-green-500 rounded-2xl p-4 text-left hover:bg-green-100 transition"
-              >
-                <ShieldCheck
-                  className="text-green-600 mb-2"
-                  size={28}
-                />
-
-                <h3 className="font-bold text-sm leading-tight">
-                  View Warranty
-                </h3>
-
-                <p className="text-gray-500 text-xs mt-1">
-                  Warranties
-                </p>
-              </button>
-
-              <button
-                onClick={() =>
-                  navigate("/product")
-                }
-                className="bg-purple-50 border border-purple-500 rounded-2xl p-4 text-left hover:bg-purple-100 transition"
-              >
-                <Package
-                  className="text-purple-600 mb-2"
-                  size={28}
-                />
-
-                <h3 className="font-bold text-sm leading-tight">
-                  Add Product
-                </h3>
-
-                <p className="text-gray-500 text-xs mt-1">
-                  Inventory
-                </p>
-              </button>
-
-            </div>
-
+              <div className="mt-5 space-y-3">
+                {activeWarranties.length > 0 ? activeWarranties.map((order) => {
+                  const customerName = order.customer
+                    ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
+                    : "Customer";
+                  const productName = order.items?.[0]?.name || order.items?.[0]?.product_id?.name || "Warranty";
+                  return (
+                    <button
+                      type="button"
+                      key={order._id || order.id}
+                      onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+                      className="flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-100 p-4 text-left transition hover:border-green-200 hover:bg-green-50/40"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-gray-800">{productName}</p>
+                        <p className="mt-1 truncate text-sm text-gray-400">{customerName}</p>
+                      </div>
+                      <span className="shrink-0 rounded-lg bg-green-500 px-3 py-1.5 text-xs font-semibold text-white">
+                        Active
+                      </span>
+                    </button>
+                  );
+                }) : (
+                  <p className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
+                    No active warranties.
+                  </p>
+                )}
+              </div>
+            </section>
           </div>
 
         </main>
@@ -738,7 +871,9 @@ function Dashboard() {
               ×
             </button>
 
-            <h2 className="text-2xl font-bold text-slate-950 mb-6">Order Details</h2>
+            <h2 className="text-2xl font-bold text-slate-950 mb-6">
+              {selectedOrder.status === "order_submitted" ? "Order Details" : "Project Details"}
+            </h2>
 
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div>
@@ -857,20 +992,24 @@ function Dashboard() {
               >
                 Close
               </button>
-              <button
-                onClick={() => openConfirmModal(selectedOrder, "approve")}
-                disabled={actionLoading}
-                className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-              >
-                {actionLoading ? "Processing..." : "Approve"}
-              </button>
-              <button
-                onClick={() => openConfirmModal(selectedOrder, "reject")}
-                disabled={actionLoading}
-                className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-              >
-                {actionLoading ? "Processing..." : "Reject"}
-              </button>
+              {selectedOrder.status === "order_submitted" && (
+                <>
+                  <button
+                    onClick={() => openConfirmModal(selectedOrder, "approve")}
+                    disabled={actionLoading}
+                    className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  >
+                    {actionLoading ? "Processing..." : "Approve"}
+                  </button>
+                  <button
+                    onClick={() => openConfirmModal(selectedOrder, "reject")}
+                    disabled={actionLoading}
+                    className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  >
+                    {actionLoading ? "Processing..." : "Reject"}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

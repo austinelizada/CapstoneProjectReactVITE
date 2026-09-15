@@ -15,8 +15,11 @@ import {
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import { useAuth } from "../../contexts/AuthContext";
+import { recordActivity } from "@/lib/activityLog";
 
 function Settings() {
+  const { user } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
       if (typeof window === "undefined") return true;
@@ -59,11 +62,16 @@ function Settings() {
 
   const toggleUserStatus = (index) => {
     const updatedUsers = [...users];
+    const nextStatus = !updatedUsers[index].active;
 
-    updatedUsers[index].active =
-      !updatedUsers[index].active;
+    updatedUsers[index].active = nextStatus;
 
     setUsers(updatedUsers);
+    recordActivity(
+      user,
+      `${nextStatus ? "Enabled" : "Disabled"} user ${updatedUsers[index].name}.`,
+      "Settings",
+    );
   };
 
   return (
@@ -150,11 +158,15 @@ function Settings() {
                   </div>
 
                   <button
-                    onClick={() =>
-                      setBackupEnabled(
-                        !backupEnabled
-                      )
-                    }
+                    onClick={() => {
+                      const nextValue = !backupEnabled;
+                      setBackupEnabled(nextValue);
+                      recordActivity(
+                        user,
+                        `${nextValue ? "Enabled" : "Disabled"} automatic backups.`,
+                        "Settings",
+                      );
+                    }}
                   >
                     {backupEnabled ? (
                       <ToggleRight
@@ -251,11 +263,15 @@ function Settings() {
                   </div>
 
                   <button
-                    onClick={() =>
-                      setMaintenanceMode(
-                        !maintenanceMode
-                      )
-                    }
+                    onClick={() => {
+                      const nextValue = !maintenanceMode;
+                      setMaintenanceMode(nextValue);
+                      recordActivity(
+                        user,
+                        `${nextValue ? "Enabled" : "Disabled"} maintenance mode.`,
+                        "Settings",
+                      );
+                    }}
                   >
                     {maintenanceMode ? (
                       <ToggleRight

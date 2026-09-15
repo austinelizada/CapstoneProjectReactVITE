@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import logo from "../../assets/images/ACGCLOGO1.png";
+import { useAuth } from "../../contexts/AuthContext";
 
 import {
   LayoutDashboard,
@@ -16,12 +17,11 @@ import {
 function Sidebar({ isOpen }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  const navigate = useNavigate();
   const location = useLocation();
+  const { logout } = useAuth();
 
   const handleLogout = () => {
-    localStorage.clear();
-    navigate("/");
+    logout();
   };
 
   return (

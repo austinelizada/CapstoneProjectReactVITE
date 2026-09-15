@@ -5,7 +5,7 @@ export const normalizeUserProfile = (user = {}) => {
     username: user.username || "",
     first_name: user.first_name || "",
     last_name: user.last_name || "",
-    role: user.role || "customer",
+    role: String(user.role || "customer").trim().toLowerCase(),
     phone: user.phone || "",
     street_address: user.street_address || "",
     city: user.city || "",

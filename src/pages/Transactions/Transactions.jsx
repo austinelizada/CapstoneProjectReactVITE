@@ -17,8 +17,11 @@ import Navbar from "../../components/layout/Navbar";
 import ContractModal from "../../components/ContractModal";
 import { getAdminOrders, acceptContract, declineContract, updateOrderStatus } from "@/api/orders";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, getTodayIso, isTodayOrFuture, isSameOrAfter } from "@/lib/dateUtils";
+import { useAuth } from "@/contexts/AuthContext";
+import { recordActivity } from "@/lib/activityLog";
 
 function Transactions() {
+  const { user } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
       if (typeof window === "undefined") return true;
@@ -255,6 +258,7 @@ function Transactions() {
       };
 
       const response = await updateOrderStatus(orderId, payload);
+      recordActivity(user, `Created warranty for order ${orderId}.`, "Transactions");
       const updated = response?.order || {};
       updateOrderLocally(orderId, {
         ...updated,
@@ -303,6 +307,7 @@ function Transactions() {
       // Use admin endpoint to change order status (admin has permission)
       // contract_status must match schema enums (pending, sent, accepted, declined)
       const response = await updateOrderStatus(orderId, { status: "approved", contract_status: "accepted" });
+      recordActivity(user, `Approved transaction ${orderId}.`, "Transactions");
       const updated = response?.order || {};
       const now = new Date().toISOString();
       updateOrderLocally(orderId, {
@@ -328,6 +333,7 @@ function Transactions() {
     try {
       // Use admin endpoint to mark contract as declined/cancelled
       const response = await updateOrderStatus(orderId, { contract_status: "declined", status: "cancelled" });
+      recordActivity(user, `Cancelled transaction ${orderId}.`, "Transactions");
       const updated = response?.order || {};
       const now = new Date().toISOString();
       updateOrderLocally(orderId, {

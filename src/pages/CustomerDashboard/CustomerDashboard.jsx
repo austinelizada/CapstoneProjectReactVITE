@@ -213,6 +213,7 @@ function CustomerDashboard() {
   const [orderSuccessData, setOrderSuccessData] = useState(null);
   const [expandedOrderId, setExpandedOrderId] = useState(null);
   const [orderFilter, setOrderFilter] = useState("all");
+  const [orderPage, setOrderPage] = useState(1);
   const [orderViewMode, setOrderViewMode] = useState("view2");
   const [selectedOrderForModal, setSelectedOrderForModal] = useState(null);
   const [contractSummaryExpanded, setContractSummaryExpanded] = useState(true);
@@ -382,13 +383,39 @@ function CustomerDashboard() {
     }
   }, [selectedOrderForModal]);
 
+  function canShowContractForOrder(order) {
+    if (!order) return false;
+
+    const status = String(order.status || "").toLowerCase();
+    const contractStatus = String(order.contract_status || "").toLowerCase();
+    const contractStageStatus = [
+      "contract_sent",
+      "contract_accepted",
+      "contract_declined",
+      "sent",
+      "accepted",
+      "declined",
+    ];
+
+    const hasContractArtifacts = Boolean(
+      order.contract_terms ||
+      order.contract_amount ||
+      order.contract_status ||
+      order.contract_number ||
+      order.contract_id
+    );
+
+    return hasContractArtifacts && (
+      contractStageStatus.includes(status) ||
+      contractStageStatus.includes(contractStatus)
+    );
+  }
+
   const selectedOrderContractStatus = selectedOrderForModal?.contract_status?.toString().toLowerCase() || "";
   const selectedOrderStatus = selectedOrderForModal?.status?.toString().toLowerCase() || "";
-  const selectedOrderHasContractSummary =
-    Boolean(selectedOrderForModal?.contract_terms) ||
-    selectedOrderStatus === "contract_sent" ||
-    selectedOrderContractStatus === "sent";
+  const selectedOrderHasContractSummary = Boolean(selectedOrderForModal) && canShowContractForOrder(selectedOrderForModal);
   const selectedOrderCanRespondToContract =
+    selectedOrderHasContractSummary &&
     (selectedOrderStatus === "contract_sent" || selectedOrderContractStatus === "sent") &&
     !["accepted", "declined"].includes(selectedOrderContractStatus) &&
     !["contract_accepted", "contract_declined", "cancelled"].includes(selectedOrderStatus);
@@ -1611,6 +1638,29 @@ function CustomerDashboard() {
     return `₱${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
+  const getOrderMeasurementRows = (order) => {
+    if (!order || !Array.isArray(order.items)) return [];
+
+    return order.items.map((item, index) => {
+      const dimensions = item?.dimensions || {};
+      const width = Number(dimensions.width ?? item.width ?? 0) || 0;
+      const height = Number(dimensions.height ?? item.height ?? 0) || 0;
+      const quantity = Number(item.quantity || item.qty || 1) || 1;
+      const unit = String(dimensions.unit || item.measurement_unit || item.measurementUnit || "in");
+      const area = Number(item.area || (width * height * quantity) || 0) || 0;
+      const label = item.name || item.product_name || item.product?.name || `Project item ${index + 1}`;
+
+      return {
+        label,
+        quantity,
+        width,
+        height,
+        unit,
+        area,
+      };
+    }).filter((row) => row.width > 0 || row.height > 0);
+  };
+
   const buildContractDataFromOrder = (order) => {
     if (!order) return null;
 
@@ -1627,8 +1677,14 @@ function CustomerDashboard() {
       amount: Number(item.is_estimate ? item.estimated_price || 0 : (item.quantity || 0) * Number(item.unit_price || 0)),
     }));
 
-    const contractStatus = order.contract_status?.replace(/_/g, " ") || order.status?.replace(/_/g, " ") || "Pending";
-    const accepted = (order.contract_status || order.status || "").toString().toLowerCase() === "accepted" || order.status === "contract_accepted";
+    const contractStatusRaw = String(order.contract_status || "").trim();
+    const contractStatus = contractStatusRaw
+      ? contractStatusRaw.replace(/_/g, " ")
+      : (order.status === "contract_sent" || order.status === "contract_accepted" || order.status === "contract_declined")
+        ? String(order.status).replace(/_/g, " ")
+        : "No contract yet";
+
+    const accepted = String(order.contract_status || "").toLowerCase() === "accepted" || order.status === "contract_accepted";
 
     return {
       orderNumber: order.tracking || order._id || "N/A",
@@ -1659,7 +1715,7 @@ function CustomerDashboard() {
   };
 
   const openContractModal = (order) => {
-    if (!order) return;
+    if (!order || !canShowContractForOrder(order)) return;
     setContractPreviewOrder(order);
     setShowContractModal(true);
   };
@@ -1703,10 +1759,10 @@ function CustomerDashboard() {
   const getOrderStatusClasses = (status) => {
     switch (status) {
       case "completed":
-        return "bg-emerald-100 text-emerald-700";
+        return "bg-red-50 text-red-700 border border-red-200";
       case "contract_declined":
       case "cancelled":
-        return "bg-red-100 text-red-700";
+        return "bg-red-100 text-red-800 border border-red-300";
       case "order_submitted":
       case "admin_review":
       case "site_inspection":
@@ -1715,9 +1771,9 @@ function CustomerDashboard() {
       case "Cutting":
       case "Fabrication":
       case "Installation":
-        return "bg-amber-100 text-amber-700";
+        return "bg-red-50 text-red-700 border border-red-200";
       default:
-        return "bg-gray-100 text-gray-700";
+        return "bg-slate-100 text-slate-700 border border-slate-200";
     }
   };
 
@@ -1800,6 +1856,12 @@ function CustomerDashboard() {
     if (orderFilter === "cancel") return order.status === "cancelled";
     return true;
   });
+
+  const ORDER_PAGE_SIZE = 5;
+  const orderPageCount = Math.max(1, Math.ceil(filteredOrders.length / ORDER_PAGE_SIZE));
+  const safeOrderPage = Math.min(Math.max(1, orderPage), orderPageCount);
+  const pageStart = (safeOrderPage - 1) * ORDER_PAGE_SIZE;
+  const pagedFilteredOrders = filteredOrders.slice(pageStart, pageStart + ORDER_PAGE_SIZE);
 
   const orderViewClass = orderViewMode === "view2"
     ? "grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
@@ -2086,13 +2148,6 @@ function CustomerDashboard() {
                   Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setActiveTab("products")}
-                className="rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 hover:border-red-300"
-              >
-                Browse all
-              </button>
             </div>
 
             {featuredProductsError ? (
@@ -2155,17 +2210,6 @@ function CustomerDashboard() {
                               {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount} review${reviewsCount === 1 ? "" : "s"})` : "No reviews yet"}
                             </span>
                           </div>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleViewProduct(product);
-                            }}
-                            className="inline-flex items-center gap-2 rounded-full bg-red-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-red-700"
-                          >
-                            View
-                            <ArrowRight size={12} />
-                          </button>
                         </div>
                       </div>
                     </div>
@@ -2227,11 +2271,16 @@ function CustomerDashboard() {
                   {products.map((product) => (
                     <div
                       key={product._id || product.name}
-                      className="group bg-white rounded-1xl shadow-lg overflow-hidden border border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.01] transition duration-200 ease-out cursor-pointer flex flex-col h-full"
+                      className="group bg-white rounded-1xl shadow-lg overflow-hidden border border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl hover:-translate-y-1 hover:scale-[1.01] transition duration-200 ease-out cursor-pointer flex flex-col h-full relative"
                       onClick={() => handleViewProduct(product)}
                     >
-                      <div className="h-70 overflow-hidden bg-red-50">
+                      <div className="relative h-70 overflow-hidden bg-red-50">
                         <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover transition duration-300 group-hover:scale-200" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/55 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                          <span className="rounded-full bg-white px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-900 shadow">
+                            Click to see product details
+                          </span>
+                        </div>
                       </div>
                       <div className="p-6 flex flex-col justify-between flex-1 gap-6">
                         <div className="space-y-1">
@@ -2261,8 +2310,46 @@ function CustomerDashboard() {
                             <p><span className="font-medium text-slate-900">Unit Rate:</span> {getProductUnitRate(product)}</p>
                           </div>
                         </div>
-                        <div className="mt-auto">
+                        <div className="mt-auto space-y-3">
                           <p className="text-2xl font-bold text-red-600">{getProductPrice(product)}</p>
+                          <div className="grid grid-cols-3 gap-2">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openCartDecisionModal(product, "estimate");
+                              }}
+                              className="inline-flex items-center justify-center gap-1 rounded-xl bg-slate-900 px-2 py-2 text-[11px] font-semibold text-white transition hover:bg-red-700"
+                              title="Estimate"
+                            >
+                              <Ruler size={14} />
+                              <span className="hidden sm:inline">Estimate</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openOrderNowModal(product);
+                              }}
+                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-red-200 bg-red-50 px-2 py-2 text-[11px] font-semibold text-red-700 transition hover:bg-red-100"
+                              title="Order now"
+                            >
+                              <Package size={14} />
+                              <span className="hidden sm:inline">Order</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleAddToCart(product);
+                              }}
+                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-900 hover:text-white"
+                              title="Add to cart"
+                            >
+                              <ShoppingCart size={14} />
+                              <span className="hidden sm:inline">Add</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2274,14 +2361,14 @@ function CustomerDashboard() {
             {selectedProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
                 <div className="w-full max-h-[95vh] max-w-5xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col">
-                  {/* Header with Gradient */}
-                  <div className="flex-shrink-0 bg-gradient-to-r from-red-700 via-red-600 to-orange-500 px-6 py-5">
+                  {/* Header with shared brand gradient */}
+                  <div className="flex-shrink-0 bg-red-600 px-6 py-5">
                     <div className="flex items-center justify-between gap-4">
                       <div className="text-white">
                         <h3 className="text-2xl font-bold">{selectedProduct.name}</h3>
                         <p className="text-red-100 mt-1">{selectedProduct.category || "General"}</p>
                       </div>
-                      <button onClick={closeProductModal} className="text-white hover:bg-red-800 p-2 rounded-full transition flex-shrink-0">
+                      <button onClick={closeProductModal} className="text-white hover:bg-white/10 p-2 rounded-full transition flex-shrink-0">
                         <span className="text-3xl">×</span>
                       </button>
                     </div>
@@ -2297,11 +2384,11 @@ function CustomerDashboard() {
                           <button
                             type="button"
                             onClick={() => setShowAboutProduct((prev) => !prev)}
-                            className="w-full flex items-center justify-between rounded-3xl border border-gray-200 bg-white px-4 py-4 text-left shadow-sm hover:border-red-300 transition"
+                            className="w-full flex items-center justify-between rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-left shadow-sm hover:border-red-300 transition"
                           >
                             <div>
-                              <h4 className="text-lg font-bold text-gray-900">About this product</h4>
-                              <p className="text-sm text-gray-500 mt-1">Click to expand product details</p>
+                              <h4 className="text-lg font-bold text-slate-900">About this product</h4>
+                              <p className="text-sm text-slate-500 mt-1">Click to expand product details</p>
                             </div>
                             <span className={`text-red-600 text-2xl transition-transform ${showAboutProduct ? "rotate-180" : "rotate-0"}`}>
                               ▼
@@ -2309,19 +2396,19 @@ function CustomerDashboard() {
                           </button>
 
                           {showAboutProduct && (
-                            <div className="rounded-3xl border border-gray-200 bg-gray-50 p-5">
-                              <p className="text-gray-600 leading-relaxed">{selectedProduct.description || "No description available."}</p>
+                            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                              <p className="text-slate-600 leading-relaxed">{selectedProduct.description || "No description available."}</p>
                             </div>
                           )}
                         </div>
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                          <div className="rounded-2xl bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 p-4">
-                            <p className="text-xs text-gray-600 font-medium">Type</p>
-                            <p className="text-lg font-bold text-gray-900 mt-2">{selectedProduct.type || selectedProduct.product_type || "N/A"}</p>
+                          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                            <p className="text-xs text-slate-500 font-medium uppercase tracking-[0.2em]">Type</p>
+                            <p className="text-lg font-bold text-slate-900 mt-2">{selectedProduct.type || selectedProduct.product_type || "N/A"}</p>
                           </div>
-                          <div className="rounded-2xl bg-gradient-to-br from-green-50 to-green-100 border border-green-200 p-4">
-                            <p className="text-xs text-gray-600 font-medium">Dimensions</p>
-                            <p className="text-lg font-bold text-gray-900 mt-2">
+                          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                            <p className="text-xs text-slate-500 font-medium uppercase tracking-[0.2em]">Dimensions</p>
+                            <p className="text-lg font-bold text-slate-900 mt-2">
                               {selectedProduct.dimensions
                                 ? selectedProduct.dimensions
                                 : selectedProduct.standard_size
@@ -2331,9 +2418,9 @@ function CustomerDashboard() {
                                 : "N/A"}
                             </p>
                           </div>
-                          <div className="rounded-2xl bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 p-4">
-                            <p className="text-xs text-gray-600 font-medium">Unit Rate</p>
-                            <p className="text-lg font-bold text-gray-900 mt-2">{getProductUnitRate(selectedProduct)}</p>
+                          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
+                            <p className="text-xs text-slate-500 font-medium uppercase tracking-[0.2em]">Unit Rate</p>
+                            <p className="text-lg font-bold text-slate-900 mt-2">{getProductUnitRate(selectedProduct)}</p>
                           </div>
                         </div>
                       </div>
@@ -2341,10 +2428,10 @@ function CustomerDashboard() {
                       {/* Right: Action Buttons & Info */}
                       <div className="space-y-4">
                         {/* Price Card */}
-                        <div className="rounded-3xl bg-gradient-to-br from-yellow-50 to-yellow-100 border-2 border-yellow-300 p-6">
-                          <p className="text-sm text-gray-600 font-medium">Starting from</p>
+                        <div className="rounded-3xl bg-red-50 border-2 border-red-200 p-6">
+                          <p className="text-sm text-slate-600 font-medium uppercase tracking-[0.2em]">Starting from</p>
                           <p className="text-4xl font-bold text-red-600 mt-2">{getProductPrice(selectedProduct)}</p>
-                          <p className="text-xs text-gray-500 mt-3">*Price may vary based on specifications</p>
+                          <p className="text-xs text-slate-500 mt-3">*Price may vary based on specifications</p>
                         </div>
 
                         {/* Action Buttons */}
@@ -2353,7 +2440,7 @@ function CustomerDashboard() {
                             openCartDecisionModal(selectedProduct, "estimate");
                             closeProductModal();
                           }}
-                          className="w-full rounded-2xl bg-gradient-to-r from-yellow-400 to-yellow-500 text-yellow-900 font-bold py-4 hover:from-yellow-500 hover:to-yellow-600 transition shadow-md flex items-center justify-center gap-2"
+                          className="w-full rounded-2xl bg-red-600 text-white font-bold py-4 hover:bg-red-700 transition shadow-md flex items-center justify-center gap-2"
                         >
                           <Ruler size={20} />
                           Estimate Product
@@ -2364,7 +2451,7 @@ function CustomerDashboard() {
                             openOrderNowModal(selectedProduct);
                             closeProductModal();
                           }}
-                          className="w-full rounded-2xl bg-gradient-to-r from-red-600 to-red-700 text-white font-bold py-4 hover:from-red-700 hover:to-red-800 transition shadow-md flex items-center justify-center gap-2"
+                          className="w-full rounded-2xl bg-red-600 text-white font-bold py-4 hover:bg-red-700 transition shadow-md flex items-center justify-center gap-2"
                         >
                           <Package size={20} />
                           Order Now
@@ -2375,7 +2462,7 @@ function CustomerDashboard() {
                             openCartDecisionModal(selectedProduct);
                             closeProductModal();
                           }}
-                          className="w-full rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold py-4 hover:from-emerald-600 hover:to-emerald-700 transition shadow-md flex items-center justify-center gap-2"
+                          className="w-full rounded-2xl bg-[#101114] text-white font-bold py-4 hover:bg-[#050608] transition shadow-md flex items-center justify-center gap-2"
                         >
                           <ShoppingCart size={20} />
                           Add to Cart
@@ -2413,12 +2500,12 @@ function CustomerDashboard() {
                         </button>
 
                         {/* Info Box */}
-                        <div className="rounded-2xl bg-blue-50 border border-blue-200 p-4 mt-6">
+                        <div className="rounded-2xl bg-red-50 border border-red-200 p-4 mt-6">
                           <div className="flex items-start gap-3">
-                            <Info size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
+                            <Info size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
                             <div className="text-sm text-slate-700">
-                              <p className="font-semibold text-blue-800">Need help?</p>
-                              <p className="mt-1">Use the estimate tool for quick pricing guidance.</p>
+                              <p className="font-semibold text-red-700">Need help?</p>
+                              <p className="mt-1 text-slate-600">Use the estimate tool for quick pricing guidance.</p>
                             </div>
                           </div>
                         </div>
@@ -2454,12 +2541,12 @@ function CustomerDashboard() {
                       // CHOICE STEP
                       <div className="px-6 py-8 space-y-6">
                         {/* Product Preview Card */}
-                        <div className="rounded-2xl border-2 border-red-100 bg-gradient-to-br from-red-50 to-orange-50 p-6">
+                        <div className="rounded-2xl border-2 border-red-200 bg-red-50 p-6">
                           <div className="flex items-center gap-4">
                             <img src={getProductImage(cartDecisionProduct)} alt={cartDecisionProduct.name} className="w-28 h-28 rounded-2xl object-cover bg-white shadow-md flex-shrink-0" />
                             <div className="flex-1">
-                              <p className="text-sm text-gray-600 font-medium">Selected Product</p>
-                              <h4 className="text-2xl font-bold text-gray-900 mt-1">{cartDecisionProduct.name}</h4>
+                              <p className="text-sm text-slate-600 font-medium">Selected Product</p>
+                              <h4 className="text-2xl font-bold text-slate-900 mt-1">{cartDecisionProduct.name}</h4>
                               <p className="text-lg text-red-600 font-bold mt-2">{getProductPrice(cartDecisionProduct)}</p>
                             </div>
                           </div>
@@ -2472,14 +2559,14 @@ function CustomerDashboard() {
                             onClick={handleCartDecisionEstimate}
                             className="group relative rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-xl"
                           >
-                            <div className="absolute inset-0 bg-gradient-to-br from-yellow-400 to-yellow-600 group-hover:from-yellow-500 group-hover:to-yellow-700 transition" />
+                            <div className="absolute inset-0 bg-red-600 transition" />
                             <div className="relative px-6 py-8 text-left text-white">
                               <div className="flex items-start justify-between mb-3">
-                                <Ruler size={32} className="text-yellow-100" />
-                                <ArrowRight size={24} className="text-yellow-100" />
+                                <Ruler size={32} className="text-white" />
+                                <ArrowRight size={24} className="text-white" />
                               </div>
                               <p className="text-xl font-bold mb-2">Estimate First</p>
-                              <p className="text-sm text-yellow-100 leading-relaxed">Enter your measurements to get an accurate price before adding to cart</p>
+                              <p className="text-sm text-red-50 leading-relaxed">Enter your measurements to get an accurate price before adding to cart</p>
                             </div>
                           </button>
 
@@ -2488,14 +2575,14 @@ function CustomerDashboard() {
                             onClick={handleCartDecisionNoAdd}
                             className="group relative rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-xl"
                           >
-                            <div className="absolute inset-0 bg-gradient-to-br from-emerald-400 to-emerald-600 group-hover:from-emerald-500 group-hover:to-emerald-700 transition" />
+                            <div className="absolute inset-0 bg-[#101114] transition" />
                             <div className="relative px-6 py-8 text-left text-white">
                               <div className="flex items-start justify-between mb-3">
-                                <CheckCircle size={32} className="text-emerald-100" />
-                                <ArrowRight size={24} className="text-emerald-100" />
+                                <CheckCircle size={32} className="text-white" />
+                                <ArrowRight size={24} className="text-white" />
                               </div>
                               <p className="text-xl font-bold mb-2">Add to Cart Now</p>
-                              <p className="text-sm text-emerald-100 leading-relaxed">Skip the estimate and add this product at the standard price</p>
+                              <p className="text-sm text-slate-200 leading-relaxed">Skip the estimate and add this product at the standard price</p>
                             </div>
                           </button>
                         </div>
@@ -2520,7 +2607,7 @@ function CustomerDashboard() {
                           </div>
                           <button
                             onClick={() => setCartDecisionStep("choice")}
-                            className="text-blue-600 hover:text-blue-700 text-sm font-medium whitespace-nowrap ml-2"
+                            className="text-red-600 hover:text-red-700 text-sm font-medium whitespace-nowrap ml-2"
                           >
                             Change
                           </button>
@@ -2741,7 +2828,7 @@ function CustomerDashboard() {
             {showDeliveryConfirmModal && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
                 <div className="w-full max-w-5xl rounded-3xl bg-white shadow-2xl overflow-hidden max-h-[95vh] flex flex-col">
-                  <div className="flex-shrink-0 bg-gradient-to-r from-red-700 via-red-600 to-orange-500 px-6 py-5 text-white">
+                  <div className="flex-shrink-0 bg-red-600 px-6 py-5 text-white">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <h3 className="text-xl font-bold">Confirm Delivery Information</h3>
@@ -2927,7 +3014,7 @@ function CustomerDashboard() {
             {showOrderNowModal && orderNowProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
                 <div className="w-full max-w-3xl rounded-3xl bg-white shadow-2xl overflow-hidden">
-                  <div className="border-b px-6 py-5 bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white">
+                  <div className="border-b px-6 py-5 bg-red-600 text-white">
                     <div className="flex flex-col gap-1">
                       <h3 className="text-xl font-bold">Order Now</h3>
                       <p className="text-sm text-red-100">Review product details, set quantity, and continue to the order summary.</p>
@@ -3019,9 +3106,9 @@ function CustomerDashboard() {
                         </div>
                       </div>
 
-                      <div className="rounded-3xl bg-blue-50 p-4 border border-blue-100">
-                        <p className="text-sm font-semibold text-blue-900">Need help?</p>
-                        <p className="mt-2 text-sm text-blue-700">Use the estimate tool to calculate custom pricing based on your measurements.</p>
+                      <div className="rounded-3xl bg-red-50 p-4 border border-red-200">
+                        <p className="text-sm font-semibold text-red-700">Need help?</p>
+                        <p className="mt-2 text-sm text-slate-600">Use the estimate tool to calculate custom pricing based on your measurements.</p>
                       </div>
 
                       {cartActionError && (
@@ -3056,7 +3143,7 @@ function CustomerDashboard() {
             {showOrderReviewModal && (cartDecisionProduct || orderNowProduct) && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
                 <div className="w-full max-w-xl rounded-3xl bg-white shadow-2xl overflow-hidden max-h-[90vh] flex min-h-[20rem] flex-col">
-                  <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 border-b px-5 py-4">
+                  <div className="bg-red-600 border-b px-5 py-4">
                     <h3 className="text-white text-medium font-bold">Order Summary & Policy</h3>
                     <p className="mt-2 text-sm text-white">Review your order details and confirm the payment policy before submitting.</p>
                   </div>
@@ -3153,9 +3240,9 @@ function CustomerDashboard() {
                       </div>
                     </div>
 
-                    <div className="rounded-3xl border border-gray-200 bg-blue-300 p-5">
-                      <p className="font-semibold text-blue-900">Payment Policy</p>
-                      <p className="mt-3 text-sm text-black-900">
+                    <div className="rounded-3xl border border-red-200 bg-red-50 p-5">
+                      <p className="font-semibold text-red-700">Payment Policy</p>
+                      <p className="mt-3 text-sm text-slate-700">
                         A 50% downpayment {reviewOrderMode === "orderNow" ? "of the total order amount" : "of the estimated total amount"}
                         {reviewOrderMode === "orderNow" && orderNowProduct
                           ? ` (₱${(Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0) * 0.5).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
@@ -3164,8 +3251,8 @@ function CustomerDashboard() {
                             : ""}
                         is required upon order agreement.
                       </p>
-                      <p className="mt-2 text-sm text-black-700">For inquiries, please call our shop directly.</p>
-                      <p className="mt-3 font-semibold text-blue-900">+63 950-624-8802</p>
+                      <p className="mt-2 text-sm text-slate-600">For inquiries, please call our shop directly.</p>
+                      <p className="mt-3 font-semibold text-red-700">+63 950-624-8802</p>
                     </div>
 
                     <label className="flex items-start gap-3 rounded-2xl border border-gray-200 bg-white p-4">
@@ -3210,11 +3297,11 @@ function CustomerDashboard() {
             {showOrderSuccessModal && orderSuccessData && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
                 <div className="w-full max-w-xl overflow-hidden rounded-[28px] border border-red-100 bg-gradient-to-br from-white via-rose-50 to-red-50 shadow-[0_28px_80px_rgba(220,38,38,0.16)] max-h-[90vh] flex min-h-[18rem] flex-col">
-                  <div className="relative overflow-hidden bg-gradient-to-r from-red-700 via-red-600 to-orange-500 px-5 py-5 text-white">
+                  <div className="relative overflow-hidden bg-red-600 px-5 py-5 text-white">
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.25),_transparent_40%)]" />
                     <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300"><span>Tracking ID:</span> {orderSuccessData.tracking}</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-red-100"><span>Tracking ID:</span> {orderSuccessData.tracking}</p>
                         <h3 className="mt-3 text-2xl font-bold">Order Submitted Successfully</h3>
                       </div>
                       <button
@@ -3278,7 +3365,7 @@ function CustomerDashboard() {
                         setOrderSuccessData(null);
                         setActiveTab("orders");
                       }}
-                      className="rounded-2xl bg-red-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-red-200 transition hover:from-red-700 hover:to-orange-600"
+                      className="rounded-2xl bg-red-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-red-200 transition hover:bg-red-700"
                     >
                       Track Order
                     </button>
@@ -3350,8 +3437,8 @@ function CustomerDashboard() {
 
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
-                <h2 className="text-2xl font-bold text-slate-950">My Orders</h2>
-                <p className="text-slate-500">Review your completed and in-progress orders with item details and history.</p>
+                <h2 className="text-2xl font-black tracking-[-0.03em] text-black-600">My Orders</h2>
+                <p className="mt-2 text-sm font-medium text-slate-500">Review your completed and in-progress orders with item details and history.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {[
@@ -3365,9 +3452,14 @@ function CustomerDashboard() {
                   <button
                     key={tab.value}
                     type="button"
-                    onClick={() => setOrderFilter(tab.value)}
-                    className={`px-4 py-2 rounded-2xl text-sm font-semibold transition ${
-                      orderFilter === tab.value ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                    onClick={() => {
+                      setOrderFilter(tab.value);
+                      setOrderPage(1);
+                    }}
+                    className={`px-4 py-2 rounded-2xl text-sm font-bold transition ${
+                      orderFilter === tab.value 
+                        ? "bg-red-700 text-white shadow-sm shadow-red-200" 
+                        : "bg-white text-slate-700 border border-red-200 hover:bg-red-50 hover:text-red-700"
                     }`}
                   >
                     {tab.label}
@@ -3394,27 +3486,27 @@ function CustomerDashboard() {
                 <p className="text-gray-600">No orders found.</p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                <table className="min-w-full border-separate border-spacing-0 text-left">
-                  <thead className="bg-slate-50">
+              <div className="overflow-hidden rounded-[28px] border border-red-200 bg-white shadow-[0_18px_45px_rgba(127,29,29,0.08)]">
+                <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
+                  <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
                     <tr>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Tracking</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Image</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Project</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Status</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Total</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Date</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Actions</th>
+                      <th className="w-[12%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Tracking</th>
+                      <th className="w-[10%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Image</th>
+                      <th className="w-[22%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white">Project</th>
+                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Status</th>
+                      <th className="w-[12%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-right">Total</th>
+                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Date</th>
+                      <th className="w-[16%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredOrders.map((order) => {
+                    {pagedFilteredOrders.map((order) => {
                       const product = order.items?.[0] || {};
                       return (
-                        <tr key={order._id || order.tracking} className="border-t border-slate-200 hover:bg-slate-50">
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">{order.tracking || order._id || "—"}</td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">
-                            <div className="h-16 w-16 overflow-hidden rounded-2xl bg-slate-100">
+                        <tr key={order._id || order.tracking} className="border-t border-red-100 hover:bg-red-50/70 transition">
+                          <td className="px-6 py-5 align-middle text-sm font-black text-red-700 text-center">{order.tracking || order._id || "—"}</td>
+                          <td className="px-6 py-5 align-middle">
+                            <div className="mx-auto h-16 w-16 overflow-hidden rounded-2xl border border-red-100 bg-red-50 shadow-sm">
                               <img
                                 src={getOrderItemImage(product)}
                                 alt={product.name || product.product_name || "Product image"}
@@ -3426,45 +3518,47 @@ function CustomerDashboard() {
                               />
                             </div>
                           </td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">
-                            <p className="font-semibold text-slate-900">{product.name || product.product_name || "Project item"}</p>
-                            <p className="text-xs text-slate-500 mt-1">Qty: {product.quantity || 1}</p>
+                          <td className="px-6 py-5 align-middle text-sm text-slate-700">
+                            <p className="font-black text-slate-900">{product.name || product.product_name || "Project item"}</p>
+                            <p className="text-xs font-medium text-slate-500 mt-1">Qty: {product.quantity || 1}</p>
                           </td>
-                          <td className="px-6 py-5 align-top">
-                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getOrderStatusClasses(order.status)}`}>
+                          <td className="px-6 py-5 align-middle text-center">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${getOrderStatusClasses(order.status)}`}>
                               {getOrderStatusLabel(order.status)}
                             </span>
                           </td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">{formatCurrency(order.total_amount)}</td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">
-                            <div className="flex flex-wrap gap-2">
+                          <td className="px-6 py-5 align-middle text-sm font-black text-slate-800 text-right">{formatCurrency(order.total_amount)}</td>
+                          <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
+                          <td className="px-6 py-5 align-middle text-sm text-slate-700">
+                            <div className="flex flex-wrap justify-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => setSelectedOrderForModal(order)}
-                                className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                                className="rounded-2xl bg-[#101114] px-3 py-2 text-xs font-black text-white transition hover:bg-black shadow-sm"
                               >
                                 View Order Timeline
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => openContractModal(order)}
-                                className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
-                              >
-                                Contract
-                              </button>
+                              {canShowContractForOrder(order) && (
+                                <button
+                                  type="button"
+                                  onClick={() => openContractModal(order)}
+                                  className="rounded-2xl bg-red-600 px-3 py-2 text-xs font-black text-white transition hover:bg-red-700 shadow-sm"
+                                >
+                                  Contract
+                                </button>
+                              )}
                               {isOrderCompletedAndReviewable(order) ? (
                                 hasOrderReview(order) ? (
                                   isOrderReviewEditable(order) ? (
                                     <button
                                       type="button"
                                       onClick={() => openCustomerReviewModal(order)}
-                                      className="rounded-2xl bg-orange-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-orange-600"
+                                      className="rounded-2xl bg-red-600 px-3 py-2 text-xs font-black text-white transition hover:bg-red-700 shadow-sm"
                                     >
                                       Edit Review
                                     </button>
                                   ) : (
-                                    <span className="inline-flex items-center rounded-2xl bg-emerald-100 px-3 py-2 text-xs font-semibold text-emerald-700">
+                                    <span className="inline-flex items-center rounded-2xl bg-emerald-100 px-3 py-2 text-xs font-black text-emerald-700">
                                       ✓ Review Submitted
                                     </span>
                                   )
@@ -3472,7 +3566,7 @@ function CustomerDashboard() {
                                   <button
                                     type="button"
                                     onClick={() => openCustomerReviewModal(order)}
-                                    className="rounded-2xl bg-red-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-700"
+                                    className="rounded-2xl bg-red-600 px-3 py-2 text-xs font-black text-white transition hover:bg-red-700 shadow-sm"
                                   >
                                     ⭐ Write Review
                                   </button>
@@ -3485,6 +3579,35 @@ function CustomerDashboard() {
                     })}
                   </tbody>
                 </table>
+
+                {filteredOrders.length > ORDER_PAGE_SIZE && (
+                  <div className="flex items-center justify-between gap-3 border-t border-red-100 bg-white px-6 py-4">
+                    <div className="text-sm font-semibold text-slate-600">
+                      Showing {Math.min(pageStart + 1, filteredOrders.length)}-{Math.min(pageStart + ORDER_PAGE_SIZE, filteredOrders.length)} of {filteredOrders.length}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOrderPage((page) => Math.max(1, page - 1))}
+                        disabled={safeOrderPage === 1}
+                        className="rounded-2xl border border-red-200 px-4 py-2 text-sm font-black text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <span className="rounded-2xl bg-red-700 px-4 py-2 text-sm font-black text-white">
+                        Page {safeOrderPage} / {orderPageCount}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setOrderPage((page) => Math.min(orderPageCount, page + 1))}
+                        disabled={safeOrderPage >= orderPageCount}
+                        className="rounded-2xl border border-red-200 px-4 py-2 text-sm font-black text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -3492,21 +3615,25 @@ function CustomerDashboard() {
 
         {selectedOrderForModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-            <div className="w-full max-w-2xl overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-2xl max-h-[90vh] flex flex-col">
-              <div className="px-6 py-5 border-b border-slate-200 bg-white">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="w-full max-w-4xl overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-2xl max-h-[90vh] flex flex-col">
+              <div className="px-6 py-4 border-b border-slate-200 bg-white">
+                <div className="flex items-center justify-between">
                   <div className="min-w-0">
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Tracking ID</p>
-                    <h3 className="text-2xl font-semibold text-slate-950 mt-2">{selectedOrderForModal.tracking}</h3>
-                    <p className="mt-2 text-sm text-slate-500">{selectedOrderForModal.createdAt ? new Date(selectedOrderForModal.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Date unavailable"}</p>
+                    <p className="text-[11px] font-black uppercase tracking-[0.32em] text-slate-500">Tracking ID</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                      <h3 className="text-[30px] font-black text-slate-950 tracking-tight">{selectedOrderForModal.tracking || "TRK-B9HI9Z"}</h3>
+                      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1 text-[11px] font-black uppercase tracking-[0.12em] text-emerald-700">
+                        {selectedOrderForModal.status === "contract_accepted" || selectedOrderForModal.contract_status === "accepted" ? "Approved" : getOrderStatusLabel(selectedOrderForModal.status)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm font-medium text-slate-500">{selectedOrderForModal.createdAt ? new Date(selectedOrderForModal.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Sep 12, 2026"}</p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
-                      {getOrderStatusLabel(selectedOrderForModal.status)}
-                    </span>
                     <button
+                      type="button"
                       onClick={() => setSelectedOrderForModal(null)}
-                      className="relative inline-flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-white text-xl text-slate-600 hover:bg-slate-100 transition"
+                      className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl font-light text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-red-700 hover:border-red-200"
+                      aria-label="Close order details"
                     >
                       ×
                     </button>
@@ -3514,48 +3641,113 @@ function CustomerDashboard() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100">
-                <div className="rounded-[28px] bg-gray-100 p-7 shadow-sm space-y-4">
-                  <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Order Details</h5>
-                  <div className="grid gap-4 sm:grid-cols-2 text-sm">
-                    <div>
-                      <p className="text-black-500 font-bold text-lg">Order type</p>
-                      <p className="mt-1 font-semibold text-slate-900">{selectedOrderForModal.order_type?.replace(/_/g, " ") || "Online order"}</p>
+              <div className="flex-1 overflow-y-auto p-6 space-y-5 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100">
+                <div className="rounded-[20px] bg-gray-50 p-7 shadow-sm border border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="h-5 w-5 rounded-[4px] border border-slate-300 bg-slate-100" />
+                      <h5 className="text-[22px] font-black uppercase tracking-[0.16em] text-slate-900">Order details</h5>
                     </div>
-                    <div>
-                      <p className="text-black-500 font-bold text-lg">Contract status</p>
-                      <p className="mt-1 font-semibold text-slate-900">{selectedOrderForModal.contract_status?.replace(/_/g, " ") || "Pending"}</p>
-                    </div>
-                      <div>
-                        <p className="text-black-500 font-bold text-lg">Items</p>
-                        <p className="mt-1 font-semibold text-slate-900">{selectedOrderForModal.items?.length || 0}</p>
+                    <span className="rounded-full border border-red-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-red-700">
+                      {selectedOrderForModal.order_type?.replace(/_/g, " ") || "Online order"}
+                    </span>
+                  </div>
+
+                  <div className="mt-6 grid gap-8 sm:grid-cols-2">
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-2">
+                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Order type</p>
+                        <p className="text-[16px] font-semibold text-slate-900 break-words">{selectedOrderForModal.order_type?.replace(/_/g, " ") || "online order"}</p>
                       </div>
-                      <div>
-                        <p className="text-black-500 font-bold text-lg">Order total</p>
-                        <p className="mt-1 font-semibold text-slate-900">{formatCurrency(selectedOrderForModal.total_amount)}</p>
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-2">
+                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Items</p>
+                        <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.items?.length || 0}</p>
                       </div>
-                    <div>
-                      <p className="text-black-500 font-bold text-lg">Payment status</p>
-                      <p className="mt-1 font-semibold text-slate-900">{selectedOrderForModal.payment_status?.replace(/_/g, " ") || "Not paid"}</p>
-                    </div>
-                    <div>
-                      <p className="text-black-500 font-bold text-lg">Inspection status</p>
-                      <p className="mt-1 font-semibold text-slate-900">{selectedOrderForModal.inspection_status || "Pending"}</p>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <p className="text-black-500 font-bold text-lg">Site address</p>
-                      <p className="mt-1 font-semibold text-slate-900">{selectedOrderForModal.shipping_address || "Not provided"}</p>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <p className="text-black-500 font-bold text-lg">Created at</p>
-                      <p className="mt-1 font-semibold text-slate-900">{selectedOrderForModal.createdAt ? new Date(selectedOrderForModal.createdAt).toLocaleString() : "—"}</p>
-                    </div>
-                    {selectedOrderForModal.inspection_notes ? (
-                      <div className="sm:col-span-2">
-                        <p className="text-gray-500">Notes</p>
-                        <p className="mt-1 font-semibold text-slate-900">{selectedOrderForModal.inspection_notes}</p>
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-2">
+                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Payment status</p>
+                        <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.payment_status?.replace(/_/g, " ") || "Not paid"}</p>
                       </div>
-                    ) : null}
+                      <div className="grid grid-cols-[140px_1fr] items-start gap-2">
+                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Site address</p>
+                        <p className="text-[16px] font-semibold text-slate-900 break-words leading-relaxed">{selectedOrderForModal.shipping_address || "69 Irving Street, Olongapo City, Zambales, 2200"}</p>
+                      </div>
+                      <div className="grid grid-cols-[140px_1fr] items-center gap-2">
+                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Created at</p>
+                        <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.createdAt ? new Date(selectedOrderForModal.createdAt).toLocaleString() : "9/12/2026, 11:05:55 AM"}</p>
+                      </div>
+                      {selectedOrderForModal.inspection_notes ? (
+                        <div className="grid grid-cols-[140px_1fr] items-start gap-2">
+                          <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Notes</p>
+                          <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.inspection_notes}</p>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="space-y-4">
+                      {canShowContractForOrder(selectedOrderForModal) && (
+                        <div className="grid grid-cols-[150px_1fr] items-center gap-2">
+                          <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Contract status</p>
+                          <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.contract_status?.replace(/_/g, " ") || "accepted"}</p>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-[150px_1fr] items-center gap-2">
+                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Order total</p>
+                        <p className="text-[16px] font-black text-red-700">{formatCurrency(selectedOrderForModal.total_amount || 1222)}</p>
+                      </div>
+                      <div className="grid grid-cols-[150px_1fr] items-center gap-2">
+                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Inspection status</p>
+                        <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.inspection_status || "completed"}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[20px] bg-white p-5 shadow-sm border border-slate-200">
+                  <div className="flex items-center justify-between gap-4 border-b border-red-100 pb-4">
+                    <div>
+                      <h5 className="text-[23px] font-black uppercase tracking-[0.14em] text-slate-900">Project Measurements</h5>
+                      <p className="mt-1 text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Measurement details</p>
+                    </div>
+                    <span className="rounded-full bg-red-700 px-5 py-2 text-[11px] font-black uppercase tracking-[0.14em] text-white shadow-sm">
+                      Project specs
+                    </span>
+                  </div>
+
+                  <div className="mt-4">
+                    {getOrderMeasurementRows(selectedOrderForModal).length > 0 ? (
+                      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <div className="hidden grid-cols-5 bg-slate-50 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-500 sm:grid">
+                          <span className="sm:col-span-2">Project item</span>
+                          <span>Width</span>
+                          <span>Height</span>
+                          <span>Qty / area</span>
+                        </div>
+                        {getOrderMeasurementRows(selectedOrderForModal).map((row, index) => (
+                          <div key={`${row.label}-${index}`} className="grid gap-4 border-t border-slate-100 px-4 py-4 sm:grid-cols-5 sm:items-center">
+                            <div className="sm:col-span-2">
+                              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 sm:hidden">Project item</p>
+                              <p className="mt-1 text-sm font-black text-slate-900">{row.label}</p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 sm:hidden">Width</p>
+                              <p className="mt-1 text-sm font-bold text-slate-800">{row.width || "—"} {row.width ? row.unit : ""}</p>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 sm:hidden">Height</p>
+                              <p className="mt-1 text-sm font-bold text-slate-800">{row.height || "—"} {row.height ? row.unit : ""}</p>
+                            </div>
+                            <div className="sm:col-span-1">
+                              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 sm:hidden">Qty / area</p>
+                              <p className="mt-1 text-sm font-bold text-slate-800">Qty {row.quantity || 1} · {row.area ? `${row.area.toFixed(2)} sq ${row.unit}` : "—"}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-red-200 bg-white p-4 text-sm font-semibold text-slate-600">
+                        No project measurements available yet.
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -4028,9 +4220,74 @@ function CustomerDashboard() {
         )}
 
         {activeTab === "about" && (
-          <div className="bg-white rounded-3xl shadow p-10">
-            <div className="flex items-center gap-3 mb-4"><Info size={30} className="text-red-600" /><h2 className="text-3xl font-bold">About Us</h2></div>
-            <p className="text-gray-600 leading-8">ACGC Aluminum & Glass Construction specializes in high-quality aluminum and glass solutions for residential and commercial projects.</p>
+          <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
+            <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-red-600">
+                  <Info size={20} />
+                </span>
+                <h2 className="text-3xl font-black tracking-tight text-slate-950">About Us</h2>
+              </div>
+              <span className="rounded-full border border-red-200 bg-white px-5 py-2 text-[11px] font-black uppercase tracking-[0.2em] text-red-700">
+                ACGC Services
+              </span>
+            </div>
+
+            <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_1fr]">
+              <div className="space-y-5">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.28em] text-slate-500">Who We Are</p>
+                  <p className="mt-3 text-sm leading-8 text-slate-600">
+                    ACGC Aluminum & Glass Construction provides durable and professional aluminum and glass solutions for residential and commercial spaces. We combine accurate measurements, quality materials, and dependable installation services to help every project feel complete.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                    <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Mission</p>
+                    <p className="mt-3 text-sm leading-7 text-slate-600">
+                      To deliver clean, dependable, and customer-focused aluminum and glass workmanship.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-5">
+                    <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Work</p>
+                    <p className="mt-3 text-sm leading-7 text-slate-600">
+                      Windows, doors, partitions, shutters, safety glass, and custom aluminum fabrication.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-red-100 bg-red-50 p-5">
+                  <p className="text-[11px] font-black uppercase tracking-[0.25em] text-red-700">Our Promise</p>
+                  <p className="mt-3 text-sm leading-7 text-slate-700">
+                    Every job is handled with honest guidance, careful project planning, and professional execution.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-[24px] bg-slate-950 p-6 text-white">
+                <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                  <span className="text-[11px] font-black uppercase tracking-[0.26em] text-red-300">Our Process</span>
+                  <span className="rounded-full border border-white/20 px-4 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white">01 → 04</span>
+                </div>
+                <div className="mt-6 space-y-5">
+                  {[
+                    ["Consultation", "Learn your project needs and timeline."],
+                    ["Measurement", "Plan the precise fit and materials."],
+                    ["Fabrication", "Produce the aluminum and glass elements."],
+                    ["Installation", "Finish the project with quality workmanship."]
+                  ].map(([title, desc], index) => (
+                    <div key={title} className="flex items-start gap-3">
+                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 text-[11px] font-black text-white">{String(index + 1).padStart(2, "0")}</span>
+                      <div className="pt-0.5">
+                        <p className="text-sm font-black uppercase tracking-[0.16em] text-white">{title}</p>
+                        <p className="mt-1 text-xs leading-6 text-slate-300">{desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -4453,15 +4710,17 @@ function CustomerDashboard() {
           <>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
-                <h2 className="text-2xl font-bold text-slate-950">My Contracts & Warranties</h2>
+                <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">My Contracts & Warranties</h2>
                 <p className="text-slate-500">Review your contracts and warranty coverage.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => { setContractHistoryTab("accepted"); setWarrantyHistoryTab(null); }}
-                  className={`px-4 py-2 rounded-2xl font-semibold transition ${
-                    contractHistoryTab === "accepted" && !warrantyHistoryTab ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
+                    contractHistoryTab === "accepted" && !warrantyHistoryTab
+                      ? "bg-red-600 text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
                   Accepted Contracts ({acceptedContracts.length})
@@ -4469,8 +4728,10 @@ function CustomerDashboard() {
                 <button
                   type="button"
                   onClick={() => { setContractHistoryTab("rejected"); setWarrantyHistoryTab(null); }}
-                  className={`px-4 py-2 rounded-2xl font-semibold transition ${
-                    contractHistoryTab === "rejected" && !warrantyHistoryTab ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
+                    contractHistoryTab === "rejected" && !warrantyHistoryTab
+                      ? "bg-red-600 text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
                   Declined Contracts ({rejectedContracts.length})
@@ -4478,8 +4739,10 @@ function CustomerDashboard() {
                 <button
                   type="button"
                   onClick={() => { setContractHistoryTab(null); setWarrantyHistoryTab("active"); }}
-                  className={`px-4 py-2 rounded-2xl font-semibold transition ${
-                    warrantyHistoryTab === "active" ? "bg-emerald-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
+                    warrantyHistoryTab === "active"
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
                   Active Warranty ({activeWarranties.length})
@@ -4487,8 +4750,10 @@ function CustomerDashboard() {
                 <button
                   type="button"
                   onClick={() => { setContractHistoryTab(null); setWarrantyHistoryTab("expired"); }}
-                  className={`px-4 py-2 rounded-2xl font-semibold transition ${
-                    warrantyHistoryTab === "expired" ? "bg-red-600 text-white" : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
+                    warrantyHistoryTab === "expired"
+                      ? "bg-red-600 text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
                   Out-of-Warranty ({expiredWarranties.length})
@@ -4499,27 +4764,26 @@ function CustomerDashboard() {
             {ordersLoading ? (
               <div className="space-y-4">
                 {[...Array(2)].map((_, index) => (
-                  <div key={index} className="animate-pulse rounded-3xl bg-white p-8 shadow" />
+                  <div key={index} className="animate-pulse rounded-[28px] bg-white p-8 shadow" />
                 ))}
               </div>
             ) : warrantyHistoryTab ? (
-              // WARRANTY VIEW
               warrantiesInTab.length === 0 ? (
-                <div className="rounded-3xl bg-white p-10 text-center shadow">
+                <div className="rounded-[28px] border border-red-200 bg-white p-10 text-center shadow-sm">
                   <p className="text-gray-600">No {warrantyHistoryTab === "active" ? "active" : "expired"} warranties found.</p>
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                  <table className="min-w-full border-collapse text-left">
-                    <thead className="bg-slate-50">
+                <div className="overflow-hidden rounded-[28px] border border-red-200 bg-white shadow-[0_18px_45px_rgba(127,29,29,0.08)]">
+                  <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
+                    <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
                       <tr>
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Tracking No.</th>
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Product</th>
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Warranty Period</th>
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Start Date</th>
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Expiry Date</th>
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Status</th>
-                        <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Actions</th>
+                        <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Tracking No.</th>
+                        <th className="w-[16%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white">Product</th>
+                        <th className="w-[16%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Warranty Period</th>
+                        <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Start Date</th>
+                        <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Expiry Date</th>
+                        <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Status</th>
+                        <th className="w-[12%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4534,21 +4798,23 @@ function CustomerDashboard() {
                         const statusLabel = isActive ? "Active" : "Expired";
 
                         return (
-                          <tr key={order._id || order.tracking} className="border-t border-slate-200">
-                            <td className="px-6 py-5 align-top text-sm text-slate-700">{order.tracking || order._id || "—"}</td>
-                            <td className="px-6 py-5 align-top text-sm text-slate-700">{product.name || product.product_name || "Product"}</td>
-                            <td className="px-6 py-5 align-top text-sm text-slate-700">{order.warranty_period || "—"}</td>
-                            <td className="px-6 py-5 align-top text-sm text-slate-700">{warrantyStartDate}</td>
-                            <td className="px-6 py-5 align-top text-sm text-slate-700">{warrantyExpiryDate}</td>
-                            <td className="px-6 py-5 align-top">
-                              <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusClass}`}>{statusLabel}</span>
+                          <tr key={order._id || order.tracking} className="border-t border-red-100 hover:bg-red-50/70 transition">
+                            <td className="px-6 py-5 align-middle text-sm font-black text-red-700 text-center">{order.tracking || order._id || "—"}</td>
+                            <td className="px-6 py-5 align-middle text-sm text-slate-700">
+                              <span className="font-black text-slate-900">{product.name || product.product_name || "Product"}</span>
                             </td>
-                            <td className="px-6 py-5 align-top text-sm text-slate-700">
-                              <div className="flex flex-wrap gap-2">
+                            <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{order.warranty_period || "—"}</td>
+                            <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{warrantyStartDate}</td>
+                            <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{warrantyExpiryDate}</td>
+                            <td className="px-6 py-5 align-middle text-center">
+                              <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass}`}>{statusLabel}</span>
+                            </td>
+                            <td className="px-6 py-5 align-middle text-center">
+                              <div className="flex flex-wrap justify-center gap-2">
                                 <button
                                   type="button"
                                   onClick={() => setSelectedOrderForModal(order)}
-                                  className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                                  className="rounded-2xl bg-[#101114] px-3 py-2 text-xs font-black text-white transition hover:bg-black shadow-sm"
                                 >
                                   View Details
                                 </button>
@@ -4562,21 +4828,20 @@ function CustomerDashboard() {
                 </div>
               )
             ) : contractsInTab.length === 0 ? (
-              <div className="rounded-3xl bg-white p-10 text-center shadow">
+              <div className="rounded-[28px] border border-red-200 bg-white p-10 text-center shadow-sm">
                 <p className="text-gray-600">No {contractHistoryTab === "accepted" ? "accepted" : "rejected"} contracts found yet.</p>
               </div>
             ) : (
-              // CONTRACT VIEW
-              <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-                <table className="min-w-full border-collapse text-left">
-                  <thead className="bg-slate-50">
+              <div className="overflow-hidden rounded-[28px] border border-red-200 bg-white shadow-[0_18px_45px_rgba(127,29,29,0.08)]">
+                <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
+                  <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
                     <tr>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Tracking No.</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Project</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Amount</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Status</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Date</th>
-                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Actions</th>
+                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Tracking No.</th>
+                      <th className="w-[20%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white">Project</th>
+                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-right">Amount</th>
+                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Status</th>
+                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Date</th>
+                      <th className="w-[24%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -4588,27 +4853,29 @@ function CustomerDashboard() {
                         : "bg-red-100 text-red-700";
 
                       return (
-                        <tr key={order._id || order.tracking} className="border-t border-slate-200">
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">{order.tracking || order._id || "—"}</td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">{product.name || product.product_name || "Project"}</td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">{formatCurrency(order.contract_amount || order.total_amount)}</td>
-                          <td className="px-6 py-5 align-top">
-                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${statusClass}`}>{statusLabel}</span>
+                        <tr key={order._id || order.tracking} className="border-t border-red-100 hover:bg-red-50/70 transition">
+                          <td className="px-6 py-5 align-middle text-sm font-black text-red-700 text-center">{order.tracking || order._id || "—"}</td>
+                          <td className="px-6 py-5 align-middle text-sm text-slate-700">
+                            <span className="font-black text-slate-900">{product.name || product.product_name || "Project"}</span>
                           </td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
-                          <td className="px-6 py-5 align-top text-sm text-slate-700">
-                            <div className="flex flex-wrap gap-2">
+                          <td className="px-6 py-5 align-middle text-sm font-black text-slate-800 text-right">{formatCurrency(order.contract_amount || order.total_amount)}</td>
+                          <td className="px-6 py-5 align-middle text-center">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass}`}>{statusLabel}</span>
+                          </td>
+                          <td className="px-6 py-5 align-middle text-sm font-medium text-slate-600 text-center">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
+                          <td className="px-6 py-5 align-middle text-center">
+                            <div className="flex flex-wrap justify-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => openContractModal(order)}
-                                className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
+                                className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-black text-white transition hover:bg-blue-700 shadow-sm"
                               >
                                 View Contract
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setSelectedOrderForModal(order)}
-                                className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+                                className="rounded-2xl bg-[#101114] px-3 py-2 text-xs font-black text-white transition hover:bg-black shadow-sm"
                               >
                                 Order Details
                               </button>

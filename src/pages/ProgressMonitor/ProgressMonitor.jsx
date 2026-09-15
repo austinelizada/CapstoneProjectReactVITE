@@ -16,6 +16,8 @@ import ProgressEditModal from "../../components/ProgressEditModal";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import { useAuth } from "@/contexts/AuthContext";
+import { recordActivity } from "@/lib/activityLog";
 
 const hasDelayedStage = (stages = []) =>
   Array.isArray(stages) &&
@@ -101,6 +103,7 @@ const canCancelProject = (project) => {
 };
 
 function ProgressMonitor() {
+  const { user } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
       if (typeof window === "undefined") return true;
@@ -268,6 +271,7 @@ function ProgressMonitor() {
           stages: updatedProject.stages,
           proof_images: [],
         });
+        recordActivity(user, `Updated progress for project ${updatedProject.id}.`, "Progress Monitor");
 
         if (response?.order) {
           const savedOrder = response.order;
@@ -357,6 +361,7 @@ function ProgressMonitor() {
     try {
       setCancellingId(orderId);
       const res = await updateOrderStatus(orderId, { status: "cancelled" });
+      recordActivity(user, `Cancelled project ${orderId}.`, "Progress Monitor");
       if (res && res.order) {
         const saved = res.order;
         setProjectList((prevList) =>
