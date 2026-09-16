@@ -1996,7 +1996,10 @@ function CustomerDashboard() {
   }
 
   return (
-    <div className={`min-h-screen overflow-x-clip ${darkMode ? "bg-slate-900 text-slate-100" : "bg-gray-100 text-slate-900"}`}>
+    <div className={`min-h-screen overflow-x-clip bg-[size:42px_42px] ${darkMode
+      ? "bg-slate-950 text-slate-100 [background-image:linear-gradient(rgba(148,163,184,0.07)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.07)_1px,transparent_1px),radial-gradient(circle_at_top_right,rgba(127,29,29,0.24),transparent_34%)]"
+      : "bg-gray-100 text-slate-900 [background-image:linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(135deg,rgba(255,255,255,0.9),transparent_58%)]"
+    }`}>
       <Toaster position="bottom-right" />
       <div className={`${darkMode ? "bg-slate-900/90 border-b border-slate-700 shadow-lg shadow-slate-950/20" : "bg-white/95 border-b border-slate-200 shadow-sm"} sticky top-0 z-50`}>
         <div className="w-full px-6 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -2081,7 +2084,7 @@ function CustomerDashboard() {
                     : "text-slate-700 hover:bg-slate-100"
               }`}
             >
-              Products
+              Browse Products
             </button>
             <button
               onClick={() => setActiveTab("orders")}
@@ -2479,7 +2482,7 @@ function CustomerDashboard() {
         </div>
       )}
 
-      <div className={`max-w-7xl mx-auto p-6 ${darkMode ? "bg-slate-900" : "bg-gray-100"}`}>
+      <div className="mx-auto max-w-7xl p-6">
         {activeTab === "products" && (
           <>
             <div>
@@ -2526,33 +2529,33 @@ function CustomerDashboard() {
                 <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800 text-slate-200" : "bg-white text-gray-600"}`}><p className={darkMode ? "text-slate-300" : "text-gray-600"}>No products matched your search.</p></div>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
                     {paginatedProducts.items.map((product) => (
                       <div
                         key={product._id || product.name}
-                        className={`group rounded-1xl shadow-lg overflow-hidden border transition duration-200 ease-out cursor-pointer flex flex-col h-full relative ${
+                        className={`group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition duration-300 ease-out hover:-translate-y-1 ${
                           darkMode
-                            ? "bg-slate-800 border-slate-700 hover:border-slate-500 hover:shadow-[0_18px_30px_rgba(15,23,42,0.5)]"
-                            : "bg-white border-transparent hover:border-red-200 hover:ring-1 hover:ring-red-100 hover:shadow-2xl"
+                            ? "border-slate-700 bg-slate-800/95 hover:border-red-400/60 hover:shadow-[0_22px_45px_rgba(15,23,42,0.55)]"
+                            : "border-slate-200 bg-white hover:border-red-200 hover:shadow-[0_22px_45px_rgba(127,29,29,0.16)]"
                         }`}
                         onClick={() => handleViewProduct(product)}
                       >
-                      <div className="relative h-70 overflow-hidden bg-red-50">
-                        <img src={getProductImage(product)} alt={product.name} className="w-full h-full object-cover transition duration-300 group-hover:scale-200" />
-                        <div className="absolute inset-0 flex items-center justify-center bg-slate-900/55 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                          <span className="rounded-full bg-white px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-900 shadow">
+                      <div className="relative h-64 overflow-hidden bg-slate-100">
+                        <img src={getProductImage(product)} alt={product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/45 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+                          <span className="rounded-full border border-white/40 bg-white/95 px-4 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-slate-900 shadow-lg">
                             Click to see product details
                           </span>
                         </div>
                       </div>
-                      <div className="p-6 flex flex-col justify-between flex-1 gap-6">
-                        <div className="space-y-1">
-                          <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-3 py-1 text-xs font-semibold tracking-wide">
+                      <div className="flex flex-1 flex-col justify-between gap-5 p-5">
+                        <div className="space-y-3">
+                          <span className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] ${darkMode ? "bg-red-950/70 text-red-300" : "bg-red-50 text-red-700"}`}>
                             {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
                           </span>
                           <div>
-                            <h3 className={`text-2xl font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name}</h3>
-                            <p className={`mt-2 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{product.product_type || product.category || "General"}</p>
+                            <h3 className={`text-xl font-black leading-tight ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name}</h3>
+                            <p className={`mt-1.5 text-xs font-medium uppercase tracking-[0.12em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{product.product_type || product.category || "General"}</p>
                           </div>
                           <div className={`flex items-center gap-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                             {renderRatingStars(productReviewStats[product._id || product.id]?.averageRating || 0, 16)}
@@ -2574,7 +2577,9 @@ function CustomerDashboard() {
                           </div>
                         </div>
                         <div className="mt-auto space-y-3">
-                          <p className="text-2xl font-bold text-red-500">{getProductPrice(product)}</p>
+                          <div className={`border-t pt-4 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+                            <p className="text-2xl font-black text-red-500">{getProductPrice(product)}</p>
+                          </div>
                           <div className="grid grid-cols-3 gap-2">
                             <button
                               type="button"
@@ -2582,7 +2587,7 @@ function CustomerDashboard() {
                                 event.stopPropagation();
                                 openCartDecisionModal(product, "estimate");
                               }}
-                              className="inline-flex items-center justify-center gap-1 rounded-xl bg-slate-900 px-2 py-2 text-[11px] font-semibold text-white transition hover:bg-red-700"
+                              className="inline-flex items-center justify-center gap-1 rounded-xl bg-slate-950 px-2 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-red-700"
                               title="Estimate"
                             >
                               <Ruler size={14} />
@@ -2594,7 +2599,7 @@ function CustomerDashboard() {
                                 event.stopPropagation();
                                 openOrderNowModal(product);
                               }}
-                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-red-200 bg-red-50 px-2 py-2 text-[11px] font-semibold text-red-700 transition hover:bg-red-100"
+                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-red-200 bg-red-50 px-2 py-2 text-[11px] font-bold text-red-700 shadow-sm transition hover:bg-red-100"
                               title="Order now"
                             >
                               <Package size={14} />
@@ -2606,7 +2611,7 @@ function CustomerDashboard() {
                                 event.stopPropagation();
                                 handleAddToCart(product);
                               }}
-                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-white px-2 py-2 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-900 hover:text-white"
+                              className={`inline-flex items-center justify-center gap-1 rounded-xl border px-2 py-2 text-[11px] font-bold shadow-sm transition hover:bg-slate-950 hover:text-white ${darkMode ? "border-slate-600 bg-slate-700 text-slate-100" : "border-slate-200 bg-white text-slate-700"}`}
                               title="Add to cart"
                             >
                               <ShoppingCart size={14} />

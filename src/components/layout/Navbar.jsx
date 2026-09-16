@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Menu, Bell, Moon, Sun } from "lucide-react";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 
@@ -30,12 +30,24 @@ function Navbar({ toggleSidebar }) {
         <button
           type="button"
           onClick={toggleDarkMode}
-          className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition ${darkMode ? "bg-slate-800 text-amber-300 hover:bg-slate-700" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
-          aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+          className={`relative inline-flex h-10 w-[128px] shrink-0 items-center rounded-full border p-1 transition-all duration-500 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500/40 ${
+            darkMode
+              ? "border-black bg-black text-white hover:bg-slate-950"
+              : "border-slate-300 bg-slate-200 text-slate-950 hover:bg-slate-300"
+          }`}
+          aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
           aria-pressed={darkMode}
         >
-          {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-          <span>{darkMode ? "Light Mode" : "Dark Mode"}</span>
+          <span className={`absolute inset-y-1 flex w-[84px] items-center justify-center gap-1 text-[8px] font-black uppercase tracking-[0.06em] transition-all duration-500 ease-in-out ${
+            darkMode ? "left-[40px] text-white" : "left-1 text-slate-950"
+          }`}>
+            {darkMode ? "Night Mode" : "Day Mode"}
+          </span>
+          <span className={`relative z-10 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-white text-black shadow-sm transition-all duration-500 ease-in-out ${
+            darkMode ? "translate-x-0 border-slate-300" : "translate-x-[86px] border-slate-200"
+          }`}>
+            {darkMode ? <Moon size={18} strokeWidth={1.8} /> : <Sun size={18} strokeWidth={1.8} />}
+          </span>
         </button>
         <NotificationMenu />
       </div>
@@ -48,16 +60,12 @@ export default Navbar;
 
 function NotificationMenu() {
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-
-  useEffect(() => {
-    // Mock notifications; replace with real API call when available
-    setNotifications([
-      { id: 1, title: "New Order", message: "Order #1023 submitted", time: "2h", read: false },
-      { id: 2, title: "Contract Response", message: "Customer accepted the contract", time: "1d", read: false },
-      { id: 3, title: "Inspection Scheduled", message: "Site inspection set for 06/08", time: "3d", read: true },
-    ]);
-  }, []);
+  const [notifications] = useState([
+    { id: 1, title: "New Order", message: "Order #1023 submitted", time: "2h", read: false },
+    { id: 2, title: "Contract Response", message: "Customer accepted the contract", time: "1d", read: false },
+    { id: 3, title: "Inspection Scheduled", message: "Site inspection set for 06/08", time: "3d", read: true },
+  ]);
+  const { darkMode } = useAdminTheme();
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -65,7 +73,7 @@ function NotificationMenu() {
     <div className="relative">
       <button
         onClick={() => setOpen((s) => !s)}
-        className={`px-4 py-2 rounded-xl flex items-center gap-2 ${open ? "bg-gray-100 text-red" : "hover:bg-gray-100"}`}
+        className={`px-4 py-2 rounded-xl flex items-center gap-2 ${open ? (darkMode ? "bg-slate-800 text-red-300" : "bg-gray-100 text-red-600") : (darkMode ? "hover:bg-slate-800" : "hover:bg-gray-100")}`}
         aria-haspopup="menu"
         aria-expanded={open}
       >
@@ -79,9 +87,9 @@ function NotificationMenu() {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-80 bg-white border rounded shadow-lg z-20 max-h-96 overflow-y-auto">
+        <div className={`absolute right-0 mt-2 w-80 border rounded shadow-lg z-20 max-h-96 overflow-y-auto ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white"}`}>
           {notifications.length === 0 ? (
-            <div className="px-4 py-6 text-center text-gray-600">
+            <div className={`px-4 py-6 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
               <p>No notifications yet</p>
             </div>
           ) : (
@@ -90,15 +98,15 @@ function NotificationMenu() {
                 <button
                   key={n.id}
                   onClick={() => setOpen(false)}
-                  className="w-full text-left px-4 py-3 hover:bg-gray-50 transition"
+                  className={`w-full text-left px-4 py-3 transition ${darkMode ? "hover:bg-slate-700" : "hover:bg-gray-50"}`}
                 >
                   <div className="flex gap-3">
                     <div className="flex-shrink-0">
                       <Bell size={16} className={n.read ? "text-slate-400" : "text-amber-600"} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-slate-950 truncate">{n.title}</p>
-                      <p className="text-xs text-slate-600 mt-0.5">{n.message}</p>
+                      <p className={`text-sm font-semibold truncate ${darkMode ? "text-white" : "text-slate-950"}`}>{n.title}</p>
+                      <p className={`text-xs mt-0.5 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{n.message}</p>
                       <p className="text-xs text-slate-400 mt-1">{n.time}</p>
                     </div>
                   </div>

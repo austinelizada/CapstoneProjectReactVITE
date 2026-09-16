@@ -350,6 +350,13 @@
   min-height: 100vh;
   background-color: #0f172a;
   color: #e2e8f0;
+  color-scheme: dark;
+}
+
+.admin-theme-dark main,
+.admin-theme-dark section,
+.admin-theme-dark article {
+  color: #e2e8f0;
 }
 
 .admin-theme-dark .bg-gray-100,
@@ -393,25 +400,36 @@
   background-color: #1e293be6 !important;
 }
 
+.admin-theme-dark .bg-white\/10,
+.admin-theme-dark .bg-white\/15,
+.admin-theme-dark .bg-white\/20 {
+  background-color: rgb(255 255 255 / 0.12) !important;
+}
+
 .admin-theme-dark .text-gray-900,
 .admin-theme-dark .text-gray-800,
 .admin-theme-dark .text-slate-950,
 .admin-theme-dark .text-slate-900,
-.admin-theme-dark .text-slate-800 {
+.admin-theme-dark .text-slate-800,
+.admin-theme-dark .text-black,
+.admin-theme-dark .text-black-900 {
   color: #f8fafc !important;
 }
 
 .admin-theme-dark .text-gray-700,
 .admin-theme-dark .text-gray-600,
 .admin-theme-dark .text-slate-700,
-.admin-theme-dark .text-slate-600 {
+.admin-theme-dark .text-slate-600,
+.admin-theme-dark .text-black-700,
+.admin-theme-dark .text-black-600 {
   color: #cbd5e1 !important;
 }
 
 .admin-theme-dark .text-gray-500,
 .admin-theme-dark .text-gray-400,
 .admin-theme-dark .text-slate-500,
-.admin-theme-dark .text-slate-400 {
+.admin-theme-dark .text-slate-400,
+.admin-theme-dark .text-black-500 {
   color: #94a3b8 !important;
 }
 
@@ -420,7 +438,8 @@
 .admin-theme-dark .border-gray-300,
 .admin-theme-dark .border-slate-100,
 .admin-theme-dark .border-slate-200,
-.admin-theme-dark .border-slate-300 {
+.admin-theme-dark .border-slate-300,
+.admin-theme-dark .border-white {
   border-color: #475569 !important;
 }
 
@@ -450,6 +469,22 @@
 .admin-theme-dark input::placeholder,
 .admin-theme-dark textarea::placeholder {
   color: #94a3b8;
+}
+
+.admin-theme-dark input:disabled,
+.admin-theme-dark select:disabled,
+.admin-theme-dark textarea:disabled,
+.admin-theme-dark button:disabled {
+  color: #94a3b8 !important;
+  opacity: 0.65;
+}
+
+.admin-theme-dark table tbody tr {
+  border-color: #475569;
+}
+
+.admin-theme-dark .divide-y > :not(:last-child) {
+  border-color: #475569;
 }
 
 .admin-theme-dark .hover\:bg-gray-50:hover,

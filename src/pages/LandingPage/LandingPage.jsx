@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Menu,
@@ -8,6 +8,9 @@ import {
   ShoppingBag,
   Search,
   BriefcaseBusiness,
+  ShieldCheck,
+  Clock3,
+  Wrench,
   Star,
   StarHalf,
 } from "lucide-react";
@@ -26,18 +29,10 @@ function LandingPage() {
   const [heroImageIndex, setHeroImageIndex] = useState(0);
   const [isLoadingFeatured, setIsLoadingFeatured] = useState(false);
   const [featuredError, setFeaturedError] = useState("");
-  const location = useLocation();
-
-  useEffect(() => {
-    if (location.pathname === "/products") {
-      setTimeout(() => {
-        document.getElementById("products")?.scrollIntoView({
-          behavior: "smooth",
-        });
-      }, 100);
-      setActive("products");
-    }
-  }, [location.pathname]);
+  const scrollToSection = (sectionId) => {
+    setActive(sectionId);
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
+  };
 
   useEffect(() => {
     const loadFeaturedProducts = async () => {
@@ -45,13 +40,8 @@ function LandingPage() {
       setFeaturedError("");
 
       try {
-        let response = await getProducts({ featured: true });
+        const response = await getProducts();
         let allProducts = response.products || [];
-
-        if (!allProducts.length) {
-          const fallbackResponse = await getProducts();
-          allProducts = fallbackResponse.products || [];
-        }
 
         const activeProducts = allProducts.filter((product) => product.is_active !== false);
 
@@ -89,8 +79,7 @@ function LandingPage() {
           .map(({ product, averageRating, ratingsCount }) => {
             stats[product._id || product.id] = { averageRating, ratingsCount };
             return product;
-          })
-          .slice(0, 3);
+          });
 
         const productImages = allProducts
           .filter((product) => product.is_active !== false)
@@ -212,11 +201,19 @@ function LandingPage() {
         className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-white/95 backdrop-blur-2xl shadow-sm"
       >
 
-        <div className="max-w-7xl mx-auto px-6 py-5 flex justify-between items-center">
+        <div className="w-full px-6 py-5 flex justify-between items-center">
 
           {/* LOGO */}
 
-          <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => {
+              setActive("home");
+              document.getElementById("home")?.scrollIntoView({ behavior: "smooth" });
+            }}
+            className="flex items-center gap-4 text-left"
+            aria-label="Go to ACGC Services home"
+          >
             <motion.img
               animate={{
                 rotate:[0,3,-3,0]
@@ -238,7 +235,7 @@ function LandingPage() {
                 Aluminum & Glass Services
               </p>
             </div>
-          </div>
+          </button>
 
           {featuredError && (
             <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
@@ -252,7 +249,6 @@ function LandingPage() {
         <nav className="hidden lg:flex items-center gap-10">
 
         {[
-            { name: "Home", id: "home" },
             { name: "Browse Products", id: "products" },
             { name: "About Us", id: "about" },
             { name: "Track Order", id: "track-order", path: "/track-order" },
@@ -358,21 +354,10 @@ function LandingPage() {
             <div className="px-6 py-6 flex flex-col gap-5">
 
               <button
+                type="button"
                 onClick={() => {
-                  setActive("home");
                   setMobileMenu(false);
-                  document.getElementById("home")?.scrollIntoView({ behavior: "smooth" });
-                }}
-                className="text-left text-white hover:text-red-400"
-              >
-                Home
-              </button>
-
-              <button
-                onClick={() => {
-                  setActive("products");
-                  setMobileMenu(false);
-                  document.getElementById("products")?.scrollIntoView({ behavior: "smooth" });
+                  scrollToSection("products");
                 }}
                 className="text-left text-white hover:text-red-400"
               >
@@ -420,121 +405,37 @@ function LandingPage() {
 
       {/* HERO */}
 
-      <section
-        id="home"
-        className="relative max-w-7xl mx-auto px-6 pt-32 pb-20"
-      >
-
-        <div className="grid lg:grid-cols-2 gap-20 items-center">
-
-          {/* LEFT */}
-
-          <div>
-
-
-
-            <motion.h1
-              initial={{opacity:0,y:50}}
-              animate={{opacity:1,y:0}}
-              transition={{delay:.3,duration:1}}
-              className="mt-8 text-[3rem] sm:text-[4rem] lg:text-[5.2rem] font-black tracking-[-0.06em] leading-[0.9] text-slate-900"
-            >
-              <span className="block">Modern</span>
-              <span className="block bg-gradient-to-r from-red-600 via-red-500 to-slate-500 bg-clip-text text-transparent">
-                Aluminum & Glass
-              </span>
-              <span className="block">Management Platform</span>
-            </motion.h1>
-
-            <motion.p
-              initial={{opacity:0,y:40}}
-              animate={{opacity:1,y:0}}
-              transition={{delay:.5,duration:1}}
-              className="mt-8 max-w-[620px] text-base sm:text-lg leading-8 text-slate-600/90 tracking-[0.01em]"
-            >
-              Premium aluminum fabrication, storefront systems, tempered glass installation,
-              project tracking, and ordering solutions for residential and commercial clients.
+      <section id="home" className="relative overflow-hidden bg-[#941d24] text-white pt-32">
+        <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] [background-size:42px_42px]" />
+        <div className="relative mx-auto flex min-h-[470px] max-w-7xl items-center justify-center px-6 py-20 text-center">
+          <div className="max-w-3xl">
+            <motion.p initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-sm font-semibold uppercase tracking-[0.28em] text-red-100">
+              ACGC Services
             </motion.p>
-
-            {/* CTA */}
-
-            <motion.div
-              initial={{opacity:0,y:40}}
-              animate={{opacity:1,y:0}}
-              transition={{delay:.7,duration:1}}
-              className="mt-12 flex flex-wrap gap-5"
-            >
-
-              <Link
-                to="/products"
-                className="bg-red-600 text-white px-8 py-4 rounded-2xl font-semibold shadow-2xl shadow-red-600/30 flex items-center gap-3 hover:scale-105 transition"
-              >
-
-                <ShoppingBag size={20}/>
-
-                Browse Products
-
-                <ArrowRight
-                  size={18}
-                  className="group-hover:translate-x-2 transition"
-                />
-
+            <motion.h1 initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mt-5 text-4xl font-black leading-tight sm:text-6xl">
+              Custom Glass &amp; Aluminum Solutions
+            </motion.h1>
+            <motion.p initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="mx-auto mt-6 max-w-2xl text-base leading-7 text-red-100 sm:text-lg">
+              Professional fabrication and installation of glass windows, doors, partitions, and aluminum works for your space.
+            </motion.p>
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }} className="mt-9 flex flex-wrap justify-center gap-3">
+              <button type="button" onClick={() => scrollToSection("products")} className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-red-700 shadow-lg transition hover:bg-red-50">
+                <ShoppingBag size={18} /> Browse Products <ArrowRight size={16} />
+              </button>
+              <Link to="/track-order" className="inline-flex items-center gap-2 rounded-xl border border-white/70 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10">
+                <Search size={18} /> Track Order
               </Link>
-
-              <Link
-                to="/track-order"
-                className="border border-white/20 bg-white backdrop-blur-xl px-8 py-4 rounded-2xl flex items-center gap-3 hover:border-gray-500 hover:scale-105 transition"
-              >
-
-                <Search size={20}/>
-
-                Track Order
-
-              </Link>
-
             </motion.div>
-
           </div>
-
-          {/* RIGHT SIDE VISUAL */}
-          <motion.div
-            initial={{ opacity: 0, x: 60 }}
-            animate={{ opacity: 1, x: 0, y: [0, -8, 0] }}
-            transition={{ delay: 0.6, duration: 1.2, ease: "easeOut" }}
-            className="relative hidden lg:flex items-center justify-center"
-          >
-            <div className="relative w-full max-w-[700px]">
-              <div className="absolute -top-10 -right-8 h-36 w-36 rounded-full bg-red-500/15 blur-3xl" />
-              <div className="absolute -bottom-12 -left-10 h-40 w-40 rounded-full bg-slate-300/60 blur-3xl" />
-
-              <div className="relative -rotate-[1.5deg] rounded-[42px] border border-slate-200 bg-white/90 p-4 shadow-[0_38px_90px_rgba(15,23,42,0.16)] backdrop-blur-sm">
-                <div className="overflow-hidden rounded-[28px] bg-slate-100">
-                  <motion.img
-                    key={heroImages[heroImageIndex] || heroVisual}
-                    src={heroImages[heroImageIndex] || heroVisual}
-                    alt="Modern aluminum and glass installation"
-                    initial={{ opacity: 0, scale: 1.02 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.7, ease: "easeInOut" }}
-                    className="h-[560px] w-full object-cover object-center"
-                  />
-                </div>
-              </div>
-
-              <div className="absolute -left-6 bottom-12 rounded-2xl border border-red-100 bg-white/95 px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.12)] backdrop-blur-sm">
-                <p className="text-[9px] font-black uppercase tracking-[0.22em] text-red-600">Since 2014</p>
-                <p className="mt-1 text-lg font-black text-slate-900">Custom Solutions</p>
-              </div>
-
-              <div className="absolute -right-4 top-10 rounded-full border border-slate-200 bg-white/90 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-700 shadow-md">
-                Premium Build
-              </div>
-            </div>
-          </motion.div>
-
         </div>
+      </section>
 
+      <section className="relative z-10 mx-auto -mt-8 max-w-5xl px-6">
+        <div className="grid gap-6 rounded-3xl bg-white px-6 py-8 text-center shadow-xl sm:grid-cols-3 sm:px-10">
+          <div><ShieldCheck className="mx-auto h-11 w-11 text-slate-900" strokeWidth={1.7} /><h2 className="mt-4 text-lg font-black">Quality Guaranteed</h2><p className="mt-2 text-sm text-slate-600">Premium materials and careful workmanship.</p></div>
+          <div><Clock3 className="mx-auto h-11 w-11 text-slate-900" strokeWidth={1.7} /><h2 className="mt-4 text-lg font-black">Fast Turnaround</h2><p className="mt-2 text-sm text-slate-600">Efficient production for your project timeline.</p></div>
+          <div><Wrench className="mx-auto h-11 w-11 text-slate-900" strokeWidth={1.7} /><h2 className="mt-4 text-lg font-black">Expert Installation</h2><p className="mt-2 text-sm text-slate-600">Professional site inspection and installation.</p></div>
+        </div>
       </section>
 {/* PRODUCTS SECTION */}
 
@@ -553,7 +454,7 @@ function LandingPage() {
 
     <h2 className="text-5xl font-black">
 
-      Featured
+      Browse
 
       <span className="text-red-500">
         {" "}Products
@@ -563,8 +464,8 @@ function LandingPage() {
 
     <p className="text-gray-400 mt-6 max-w-2xl mx-auto">
 
-      Discover premium aluminum and glass solutions
-      crafted for modern residential and commercial projects.
+      Explore all available aluminum and glass solutions
+      created for modern residential and commercial projects.
 
     </p>
 
@@ -573,11 +474,11 @@ function LandingPage() {
   <div className="mt-16 grid grid-cols-1 gap-6 md:grid-cols-3">
     {isLoadingFeatured ? (
       <div className="col-span-full rounded-[24px] border border-slate-200 bg-white p-10 text-center text-slate-600 shadow-sm">
-        Loading featured products...
+        Loading products...
       </div>
     ) : featuredProducts.length === 0 ? (
       <div className="col-span-full rounded-[24px] border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-slate-600">
-        No featured products are available right now.
+        No products are available right now.
       </div>
     ) : (
       featuredProducts.map((product, index) => {
@@ -632,13 +533,14 @@ function LandingPage() {
                   </span>
                 </div>
 
-                <Link
-                  to="/products"
+                <button
+                  type="button"
+                  onClick={() => scrollToSection("products")}
                   className="inline-flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
                 >
                   View
                   <ArrowRight size={14} />
-                </Link>
+                </button>
               </div>
             </div>
           </motion.div>
@@ -656,111 +558,112 @@ function LandingPage() {
 
 <section
   id="about"
-  className="max-w-7xl mx-auto px-6 py-32"
+  className="max-w-7xl mx-auto px-6 py-28"
 >
 
-  <div className="grid lg:grid-cols-2 gap-20 items-center">
-
+  <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
     <motion.div
-      initial={{opacity:0,x:-80}}
-      whileInView={{opacity:1,x:0}}
-      viewport={{once:true}}
-      transition={{duration:1}}
+      initial={{ opacity: 0, y: -18 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.55 }}
+      className="flex items-center justify-between gap-4 border-b border-slate-100 pb-4"
     >
-
-      <h2 className="text-5xl font-black">
-
-        About
-
-        <span className="text-red-500">
-          {" "}ACGC
-        </span>
-
-      </h2>
-
-      <p className="text-gray-400 mt-8 leading-9">
-
-        ACGC Aluminum Services specializes in
-        aluminum fabrication, glass installation,
-        storefront systems, and complete project
-        management solutions for residential and
-        commercial developments.
-
-      </p>
-
-      <p className="text-gray-500 mt-8 leading-9">
-
-        Combining innovation, precision,
-        and premium craftsmanship,
-        we deliver high-performance
-        aluminum and glass systems.
-
-      </p>
-
-    </motion.div>
-
-    <motion.div
-      initial={{opacity:0,x:80}}
-      whileInView={{opacity:1,x:0}}
-      viewport={{once:true}}
-      transition={{duration:1}}
-      className="bg-white/5 border border-white/10 rounded-[40px] backdrop-blur-2xl p-12"
-    >
-
-      <div className="space-y-8">
-
-        <div>
-
-          <h4 className="text-2xl font-bold text-red-500">
-
-            10+ Years Experience
-
-          </h4>
-
-          <p className="text-gray-400 mt-3">
-
-            Delivering trusted aluminum and glass solutions.
-
-          </p>
-
-        </div>
-
-        <div>
-
-          <h4 className="text-2xl font-bold text-red-500">
-
-            Premium Materials
-
-          </h4>
-
-          <p className="text-gray-400 mt-3">
-
-            High-grade aluminum and tempered glass systems.
-
-          </p>
-
-        </div>
-
-        <div>
-
-          <h4 className="text-2xl font-bold text-red-500">
-
-            Professional Service
-
-          </h4>
-
-          <p className="text-gray-400 mt-3">
-
-            Precision workmanship and customer satisfaction.
-
-          </p>
-
-        </div>
-
+      <div className="flex items-center gap-3">
+        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-red-600"><BriefcaseBusiness size={17} /></span>
+        <h2 className="text-3xl font-black tracking-tight text-slate-950">About Us</h2>
       </div>
-
+      <span className="rounded-full border border-red-200 bg-white px-5 py-2 text-[11px] font-black uppercase tracking-[0.2em] text-red-700">
+        ACGC Services
+      </span>
     </motion.div>
 
+    <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_1fr]">
+      <motion.div
+        initial={{ opacity: 0, x: -40 }}
+        whileInView={{ opacity: 1, x: 0 }}
+        viewport={{ once: true }}
+        transition={{ duration: 0.7 }}
+        className="space-y-5"
+      >
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.28em] text-slate-500">Who We Are</p>
+          <p className="mt-3 text-sm leading-8 text-slate-600">
+            ACGC Aluminum &amp; Glass Construction provides durable and professional aluminum and glass solutions for residential and commercial spaces. We combine accurate measurements, quality materials, and dependable installation services to help every project feel complete.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.15, duration: 0.5 }}
+            className="rounded-2xl border border-slate-100 bg-slate-50 p-5"
+          >
+            <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Mission</p>
+            <p className="mt-3 text-sm leading-7 text-slate-600">To deliver clean, dependable, and customer-focused aluminum and glass workmanship.</p>
+          </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 18 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.25, duration: 0.5 }}
+            className="rounded-2xl border border-slate-100 bg-slate-50 p-5"
+          >
+            <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Work</p>
+            <p className="mt-3 text-sm leading-7 text-slate-600">Windows, doors, partitions, shutters, safety glass, and custom aluminum fabrication.</p>
+          </motion.div>
+        </div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 18 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.35, duration: 0.5 }}
+          className="rounded-2xl border border-red-100 bg-red-50 p-5"
+        >
+          <p className="text-[11px] font-black uppercase tracking-[0.25em] text-red-700">Our Promise</p>
+          <p className="mt-3 text-sm leading-7 text-slate-700">Every job is handled with honest guidance, careful project planning, and professional execution.</p>
+        </motion.div>
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, x: 40 }}
+        whileInView={{ opacity: 1, x: 0 }}
+        viewport={{ once: true }}
+        transition={{ duration: 0.7 }}
+        className="rounded-[24px] bg-slate-950 p-6 text-white"
+      >
+        <div className="flex items-center justify-between border-b border-white/10 pb-4">
+          <span className="text-[11px] font-black uppercase tracking-[0.26em] text-red-300">Our Process</span>
+          <span className="rounded-full border border-white/20 px-4 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white">01 → 04</span>
+        </div>
+        <div className="mt-6 space-y-5">
+          {[
+            ["Consultation", "Learn your project needs and timeline."],
+            ["Measurement", "Plan the precise fit and materials."],
+            ["Fabrication", "Produce the aluminum and glass elements."],
+            ["Installation", "Finish the project with quality workmanship."],
+          ].map(([title, description], index) => (
+            <motion.div
+              key={title}
+              initial={{ opacity: 0, x: 18 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.15 + index * 0.12, duration: 0.5 }}
+              className="flex items-start gap-3"
+            >
+              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 text-[11px] font-black text-white">{String(index + 1).padStart(2, "0")}</span>
+              <div className="pt-0.5">
+                <p className="text-sm font-black uppercase tracking-[0.16em] text-white">{title}</p>
+                <p className="mt-1 text-xs leading-6 text-slate-300">{description}</p>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </motion.div>
+    </div>
   </div>
 
 </section>

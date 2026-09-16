@@ -12,6 +12,7 @@ import { getOrders, getAdminOrders, getAdminOrder, updateOrderStatus } from "@/a
 import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
 import { recordActivity } from "@/lib/activityLog";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminTheme } from "@/contexts/AdminThemeContext";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -147,6 +148,7 @@ const toProgressProject = (order) => ({
 
 function Dashboard() {
   const { user } = useAuth();
+  const { darkMode } = useAdminTheme();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("sidebarOpen");
@@ -177,6 +179,15 @@ function Dashboard() {
   const [contractNotificationsLoading, setContractNotificationsLoading] = useState(false);
   const [contractPage, setContractPage] = useState(1);
   const contractsPerPage = 5;
+  const [currentDateTime, setCurrentDateTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const clock = window.setInterval(() => {
+      setCurrentDateTime(new Date());
+    }, 1000);
+
+    return () => window.clearInterval(clock);
+  }, []);
 
   const showToast = (message, type = "success") => {
     setToast({ open: true, message, type });
@@ -417,6 +428,19 @@ function Dashboard() {
   const activeWarranties = orders
     .filter((order) => String(order.warranty_status || "").toLowerCase() === "active")
     .slice(0, 5);
+  const dashboardDate = currentDateTime.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const dashboardTime = currentDateTime.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const dashboardDay = currentDateTime.toLocaleDateString(undefined, {
+    weekday: "long",
+  });
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
@@ -453,64 +477,64 @@ function Dashboard() {
               </p>
               <div className="mt-6 grid grid-cols-3 gap-2 border-t border-white/25 pt-4">
                 <div className="rounded-2xl bg-white/10 p-3">
-                  <p className="text-xs text-red-100">Projects</p>
-                  <p className="mt-1 text-xl font-bold">{activeProjectsCount}</p>
+                  <p className="text-xs text-red-100">Date</p>
+                  <p className="mt-1 text-lg font-bold">{dashboardDate}</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-3">
-                  <p className="text-xs text-red-100">Warranties</p>
-                  <p className="mt-1 text-xl font-bold">{activeWarrantiesCount}</p>
+                  <p className="text-xs text-red-100">Time</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums">{dashboardTime}</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-3">
-                  <p className="text-xs text-red-100">Inspections</p>
-                  <p className="mt-1 text-xl font-bold">{pendingInspectionCount}</p>
+                  <p className="text-xs text-red-100">Day</p>
+                  <p className="mt-1 text-lg font-bold">{dashboardDay}</p>
                 </div>
               </div>
             </div>
 
             {/* Quick Actions */}
-            <div className="rounded-3xl bg-white p-6 shadow-lg">
-              <h2 className="text-lg font-bold text-gray-900">Quick Actions</h2>
-              <p className="mb-4 mt-1 text-sm text-gray-500">Shortcuts</p>
+            <div className={`rounded-3xl p-6 shadow-lg ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-gray-900"}`}>
+              <h2 className="text-lg font-bold">Quick Actions</h2>
+              <p className={`mb-4 mt-1 text-sm ${darkMode ? "text-slate-300" : "text-gray-500"}`}>Shortcuts</p>
 
               <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
                 <button
                   type="button"
                   onClick={() => navigate("/site-inspection")}
-                  className="rounded-2xl border border-red-500 bg-red-50/50 p-3 text-left transition hover:bg-red-100"
+                  className={`rounded-2xl border p-3 text-left transition ${darkMode ? "border-red-400/80 bg-red-950/50 hover:bg-red-900/70" : "border-red-500 bg-red-50/50 hover:bg-red-100"}`}
                 >
                   <ClipboardCheck className="mb-2 text-red-600" size={20} />
                   <h3 className="text-xs font-bold leading-tight">New Inspection</h3>
-                  <p className="mt-1 text-[11px] text-gray-500">Site inspection</p>
+                  <p className={`mt-1 text-[11px] ${darkMode ? "text-slate-300" : "text-gray-500"}`}>Site inspection</p>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => navigate("/progress-monitor")}
-                  className="rounded-2xl border border-blue-500 bg-blue-50/50 p-3 text-left transition hover:bg-blue-100"
+                  className={`rounded-2xl border p-3 text-left transition ${darkMode ? "border-blue-400/80 bg-blue-950/50 hover:bg-blue-900/70" : "border-blue-500 bg-blue-50/50 hover:bg-blue-100"}`}
                 >
                   <FolderOpen className="mb-2 text-blue-600" size={20} />
                   <h3 className="text-xs font-bold leading-tight">View Projects</h3>
-                  <p className="mt-1 text-[11px] text-gray-500">Progress monitor</p>
+                  <p className={`mt-1 text-[11px] ${darkMode ? "text-slate-300" : "text-gray-500"}`}>Progress monitor</p>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
-                  className="rounded-2xl border border-green-500 bg-green-50/50 p-3 text-left transition hover:bg-green-100"
+                  className={`rounded-2xl border p-3 text-left transition ${darkMode ? "border-green-400/80 bg-green-950/50 hover:bg-green-900/70" : "border-green-500 bg-green-50/50 hover:bg-green-100"}`}
                 >
                   <ShieldCheck className="mb-2 text-green-600" size={20} />
                   <h3 className="text-xs font-bold leading-tight">View Warranty</h3>
-                  <p className="mt-1 text-[11px] text-gray-500">Warranties</p>
+                  <p className={`mt-1 text-[11px] ${darkMode ? "text-slate-300" : "text-gray-500"}`}>Warranties</p>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => navigate("/product")}
-                  className="rounded-2xl border border-purple-500 bg-purple-50 p-3 text-left transition hover:bg-purple-100"
+                  className={`rounded-2xl border p-3 text-left transition ${darkMode ? "border-fuchsia-400/80 bg-fuchsia-950/50 hover:bg-fuchsia-900/70" : "border-purple-500 bg-purple-50 hover:bg-purple-100"}`}
                 >
                   <Package className="mb-2 text-purple-600" size={20} />
                   <h3 className="text-xs font-bold leading-tight">Add Product</h3>
-                  <p className="mt-1 text-[11px] text-gray-500">Inventory</p>
+                  <p className={`mt-1 text-[11px] ${darkMode ? "text-slate-300" : "text-gray-500"}`}>Inventory</p>
                 </button>
               </div>
             </div>
@@ -533,7 +557,7 @@ function Dashboard() {
                 {activeProjectsCount}
               </h2>
 
-              <p className="mt-2 text-sm text-blue-600 transition group-hover:text-blue-700">
+              <p className="mt-2 text-sm text-blue-500 transition group-hover:text-blue-700">
                 View projects →
               </p>
             </button>
@@ -551,7 +575,7 @@ function Dashboard() {
                 {activeWarrantiesCount}
               </h2>
 
-              <p className="mt-2 text-sm text-green-600 transition group-hover:text-green-700">
+              <p className="mt-2 text-sm text-green-500 transition group-hover:text-green-700">
                 View warranties →
               </p>
             </button>
@@ -569,7 +593,7 @@ function Dashboard() {
                 {pendingInspectionCount}
               </h2>
 
-              <p className="mt-2 text-sm text-red-600 transition group-hover:text-red-700">
+              <p className="mt-2 text-sm text-red-500 transition group-hover:text-red-700">
                 View inspections →
               </p>
             </button>
@@ -689,7 +713,7 @@ function Dashboard() {
 
                           <td className="p-4">{date}</td>
 
-                          <td className="p-4 font-semibold text-green-600">{estimation}</td>
+                          <td className="p-4 font-semibold text-green-500">{estimation}</td>
 
                           <td className="p-4">
                             <div className="flex justify-center gap-2">

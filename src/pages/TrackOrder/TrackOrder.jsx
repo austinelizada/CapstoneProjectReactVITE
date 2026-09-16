@@ -1,10 +1,42 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import logo from "../../assets/images/ACGCLOGO1.png";
+import { LoaderCircle, Truck } from "lucide-react";
+import { trackOrder } from "../../api/orders";
 
 function TrackOrder() {
+  const [trackingNumber, setTrackingNumber] = useState("");
+  const [trackingResult, setTrackingResult] = useState(null);
+  const [trackingError, setTrackingError] = useState("");
+  const [trackingLoading, setTrackingLoading] = useState(false);
+
+  const handleTrackOrder = async (event) => {
+    event.preventDefault();
+    const tracking = trackingNumber.trim();
+    if (!tracking) {
+      setTrackingError("Please enter your tracking number.");
+      setTrackingResult(null);
+      return;
+    }
+
+    setTrackingLoading(true);
+    setTrackingError("");
+    setTrackingResult(null);
+    try {
+      const response = await trackOrder(tracking);
+      setTrackingResult(response.order || response);
+    } catch (error) {
+      setTrackingError(error.data?.message || error.message || "No order found with that tracking number.");
+    } finally {
+      setTrackingLoading(false);
+    }
+  };
+
+  const statusLabel = (status) => String(status || "Unknown").replace(/_/g, " ");
+
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen overflow-x-hidden bg-gradient-to-r from-white via-gray-100 to-white text-gray-900 flex flex-col">
 
       {/* NAVBAR */}
 
@@ -15,43 +47,36 @@ function TrackOrder() {
         className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-white/95 backdrop-blur-2xl shadow-sm"
       >
 
-        <div className="max-w-7xl mx-auto px-6 py-5 flex justify-between items-center">
+        <div className="w-full px-6 py-5 flex justify-between items-center">
 
-          <div className="flex items-center gap-4">
+          <Link to="/" className="flex items-center gap-4 text-left" aria-label="Go to ACGC Services home">
 
             <motion.img
               animate={{ rotate: [0, 3, -3, 0] }}
               transition={{ duration: 6, repeat: Infinity }}
               src={logo}
               alt="logo"
-              className="w-14 h-14 object-contain"
+              className="w-16 h-16 object-contain sm:w-20 sm:h-20"
             />
 
             <div>
 
-              <h1 className="font-bold text-xl text-red-600">
-                ACGC Aluminum Services
+              <h1 className="font-black text-2xl text-red-600 tracking-tight">
+                ACGC Services
               </h1>
 
-              <p className="text-xs text-gray-600 font-medium">
-                Aluminum & Glass Management System
+              <p className="text-2xl text-gray-700 font-bold tracking-tight sm:text-2xl">
+                Aluminum & Glass Services
               </p>
 
             </div>
 
-          </div>
+          </Link>
 
           <nav className="hidden lg:flex items-center gap-10">
 
             <Link
               to="/"
-              className="relative transition duration-300 font-medium text-gray-800 hover:text-red-600"
-            >
-              Home
-            </Link>
-
-            <Link
-              to="/products"
               className="relative transition duration-300 font-medium text-gray-800 hover:text-red-600"
             >
               Browse Products
@@ -95,72 +120,59 @@ function TrackOrder() {
 
       </motion.header>
 
-      {/* HERO */}
-
-      <section className="bg-white-700 text-black py-8 mt-32">
-
-        <div className="max-w-5xl mx-auto text-center px-6">
-
-          <h1 className="text-5xl font-bold">
-            Track Your Order
-          </h1>
-
-          <p className="mt-5 text-lg text-red-500 font-bold">
-            Check your aluminum & glass order status anytime.
-          </p>
-
-        </div>
-
-      </section>
-
       {/* TRACK FORM */}
 
-      <main className="flex-grow py-4 px-6">
+      <main className="flex-grow px-6 pb-16 pt-36">
 
-        <div className="max-w-3xl mx-auto">
+        <div className="mx-auto max-w-7xl">
 
-          <div className="bg-white rounded-3xl shadow-xl p-10">
+          <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
 
-            <h2 className="text-3xl font-bold text-center text-red-700">
+            <div className="mb-6 flex items-center gap-3">
+              <Truck size={30} className="text-red-600" />
+              <div>
+                <h2 className="text-2xl font-bold text-slate-950">Track an Order</h2>
+                <p className="text-slate-500">Enter your tracking number to see current order status.</p>
+              </div>
+            </div>
 
-              Order Tracking
-
-            </h2>
-
-            <p className="text-center text-gray-500 mt-3 mb-10">
-
-              Enter your Order ID below.
-
-            </p>
-
-            <form className="space-y-6">
+            <form className="grid gap-4 sm:grid-cols-[1fr_auto]" onSubmit={handleTrackOrder}>
 
               <input
                 type="text"
-                placeholder="Enter Order ID"
-                className="w-full border border-gray-300 rounded-xl p-5 focus:outline-none focus:ring-2 focus:ring-red-500"
+                value={trackingNumber}
+                onChange={(event) => setTrackingNumber(event.target.value)}
+                placeholder="Enter tracking ID"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500"
               />
 
               <button
                 type="submit"
-                className="w-full bg-red-600 hover:bg-red-700 text-white py-4 rounded-xl text-lg font-semibold transition"
+                disabled={trackingLoading}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-6 py-3 font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Track Order
+                {trackingLoading && <LoaderCircle size={20} className="animate-spin" />}
+                {trackingLoading ? "Searching..." : "Track"}
               </button>
 
             </form>
 
-            {/* SAMPLE RESULT */}
+            {trackingError && (
+              <div className="mt-8 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+                {trackingError}
+              </div>
+            )}
 
-            <div className="mt-10 border-t pt-8">
+            {trackingResult && (
+            <div className="mt-10 border-t border-slate-100 pt-8">
 
-              <h3 className="font-bold text-xl text-gray-800 mb-5">
+              <h3 className="font-black text-xl text-slate-950 mb-5">
 
                 Order Status
 
               </h3>
 
-              <div className="bg-gray-100 rounded-xl p-6">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
 
                 <div className="flex justify-between mb-4">
 
@@ -169,7 +181,7 @@ function TrackOrder() {
                   </span>
 
                   <span>
-                    ORD-2026-001
+                    {trackingResult.tracking || trackingResult._id || "—"}
                   </span>
 
                 </div>
@@ -181,7 +193,7 @@ function TrackOrder() {
                   </span>
 
                   <span>
-                    Juan Dela Cruz
+                    {trackingResult.customer_name || `${trackingResult.customer?.first_name || ""} ${trackingResult.customer?.last_name || ""}`.trim() || "—"}
                   </span>
 
                 </div>
@@ -193,7 +205,7 @@ function TrackOrder() {
                   </span>
 
                   <span>
-                    Sliding Window System
+                    {trackingResult.items?.[0]?.name || trackingResult.items?.[0]?.product_name || "—"}
                   </span>
 
                 </div>
@@ -204,9 +216,8 @@ function TrackOrder() {
                     Status:
                   </span>
 
-                  <span className="bg-green-100 text-green-700 px-4 py-1 rounded-full font-semibold">
-
-                    In Progress
+                    <span className="rounded-full bg-red-100 px-4 py-1 font-semibold capitalize text-red-700">
+                    {statusLabel(trackingResult.status)}
 
                   </span>
 
@@ -215,6 +226,7 @@ function TrackOrder() {
               </div>
 
             </div>
+            )}
 
           </div>
 

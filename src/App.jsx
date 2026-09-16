@@ -81,11 +81,7 @@ function AppRoutes() {
           />
           <Route
             path="/track-order"
-            element={
-              <ProtectedRoute>
-                <TrackOrder />
-              </ProtectedRoute>
-            }
+            element={<TrackOrder />}
           />
           <Route
             path="/site-inspection"

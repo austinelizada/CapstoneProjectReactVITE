@@ -586,7 +586,10 @@ function ProgressMonitor() {
                   <tr>
                     <th className="w-16 p-4 text-center">No.</th>
                     <th className="p-4 text-left">Client</th>
-            <th className="p-4 text-left">Client Type</th>
+                    <th className="p-4 text-left">Client Type</th>
+                    <th className="p-4 text-left">Product</th>
+                    <th className="p-4 text-left">Inspection</th>
+                    <th className="p-4 text-left">Installation</th>
                     <th className="p-4 text-left">Progress</th>
                     <th className="p-4 text-left">Status</th>
                     <th className="p-4 text-center">Actions</th>
@@ -597,7 +600,7 @@ function ProgressMonitor() {
                 <tbody>
                   {projectLoading && (
                     <tr>
-                      <td className="p-6 text-center text-gray-500" colSpan={8}>
+                      <td className="p-6 text-center text-gray-500" colSpan={9}>
                         Loading projects...
                       </td>
                     </tr>
@@ -708,7 +711,7 @@ function ProgressMonitor() {
 
                   {!projectLoading && currentProjects.length === 0 && (
                     <tr>
-                      <td className="p-6 text-center text-gray-500" colSpan={8}>
+                      <td className="p-6 text-center text-gray-500" colSpan={9}>
                         No projects found.
                       </td>
                     </tr>

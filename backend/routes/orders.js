@@ -22,7 +22,7 @@ const router = express.Router();
 
 router.get("/", authMiddleware, listOrders);
 router.post("/", authMiddleware, roleMiddleware("customer"), createOrder);
-router.get("/track/:tracking", authMiddleware, trackOrder);
+router.get("/track/:tracking", trackOrder);
 router.put("/:orderId/contract", authMiddleware, roleMiddleware("customer"), respondToContract);
 router.put("/:orderId/installation-schedule", authMiddleware, respondToInstallationSchedule);
 router.put("/:orderId/review", authMiddleware, roleMiddleware("customer"), submitOrderReview);

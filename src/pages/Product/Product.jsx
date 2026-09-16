@@ -1110,7 +1110,7 @@ function Products() {
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.category || "—"}</td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.variant || "—"}</td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{getProductPriceLabel(product)}</td>
+                              <td className="px-6 py-4 whitespace-nowrap text-m text-green-500">{getProductPriceLabel(product)}</td>
                               <td className="px-6 py-4 whitespace-nowrap">
                                 <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${product.is_active ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-700"}`}>
                                   {product.is_active ? "Active" : "Inactive"}

@@ -1460,7 +1460,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                               {statusLabel}
                             </span>
                           </td>
-                          <td className="p-4 font-semibold text-green-600">{estimatedCost}</td>
+                          <td className="p-4 font-semibold text-green-500">{estimatedCost}</td>
                           <td className="p-4">
                             <div className="flex justify-center gap-3">
                               <button
