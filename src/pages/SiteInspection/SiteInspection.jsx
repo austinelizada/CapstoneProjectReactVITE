@@ -17,6 +17,7 @@ import { searchCustomers } from "@/api/users";
 import { uploadFiles } from "@/api/uploads";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1247,23 +1248,10 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
-          {/* HEADER */}
-
-          <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-
-              <div>
-                <h1 className="text-3xl font-bold">
-                  Site Inspection Management
-                </h1>
-
-                <p className="mt-2 text-red-100">
-                  Manage all site inspections and estimations.
-                </p>
-              </div>
-
-            </div>
-          </div>
+          <AdminPageHeader
+            title="Site Inspection Management"
+            description="Manage all site inspections and estimations."
+          />
 
 
 

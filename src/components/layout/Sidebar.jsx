@@ -32,7 +32,7 @@ function Sidebar({ isOpen }) {
   return (
     <>
       <aside
-        className={`admin-sidebar ${darkMode ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300"} border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${
+        className={`admin-sidebar shrink-0 ${darkMode ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300"} border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${
           isOpen ? "w-72" : "w-20"
         }`}
       >

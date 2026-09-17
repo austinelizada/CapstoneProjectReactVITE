@@ -17,6 +17,7 @@ import { getProductReviews } from "@/api/orders";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { calculateEstimate } from "../../lib/estimator";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -931,27 +932,10 @@ function Products() {
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
-          {/* HEADER */}
-
-          <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
-
-            <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-
-              <div>
-
-                <h1 className="text-3xl font-bold">
-                  Products
-                </h1>
-
-                <p className="mt-2 text-red-100">
-                  Manage product listings, pricing, and availability from one unified dashboard.
-                </p>
-
-              </div>
-
-            </div>
-
-          </div>
+          <AdminPageHeader
+            title="Products"
+            description="Manage product listings, pricing, and availability from one unified dashboard."
+          />
 
           {/* FILTERS */}
           {activeProductPageTab === "products" && (

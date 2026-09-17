@@ -3,6 +3,7 @@ import { getAdminOrders } from "@/api/orders";
 import { Bell } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState([]);
@@ -34,7 +35,11 @@ export default function Notifications() {
 
   return (
     <div className="p-6">
-      <div className="bg-white rounded-3xl p-6 shadow">
+      <AdminPageHeader
+        title="Notifications"
+        description="Review customer responses and administrative actions that need attention."
+      />
+      <div className="mt-6 bg-white rounded-3xl p-6 shadow">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">Notifications</h2>
         </div>

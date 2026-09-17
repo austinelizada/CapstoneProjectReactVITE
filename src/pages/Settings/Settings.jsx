@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  Settings as SettingsIcon,
   Database,
   ShieldCheck,
   Users,
@@ -15,6 +14,7 @@ import {
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useAuth } from "../../contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 
@@ -87,30 +87,15 @@ function Settings() {
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
-          {/* HEADER */}
-
-          <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
-
-            <div className="flex items-center gap-4">
-
-              <SettingsIcon size={40} />
-
-              <div>
-
-                <h1 className="text-3xl font-bold">
-                  System Settings
-                </h1>
-
-                <p className="text-red-100 mt-1">
-                  Manage RBAC, backups,
-                  security and user access.
-                </p>
-
-              </div>
-
-            </div>
-
-          </div>
+          <AdminPageHeader
+            title="System Settings"
+            description="Manage RBAC, backups, security and user access."
+            stats={[
+              { label: "Users", value: users.length },
+              { label: "Active", value: users.filter((account) => account.active).length, color: "text-emerald-300" },
+              { label: "Admins", value: users.filter((account) => account.role.toLowerCase().includes("admin")).length, color: "text-red-300" },
+            ]}
+          />
 
           {/* SETTINGS GRID */}
 

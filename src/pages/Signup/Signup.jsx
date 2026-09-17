@@ -6,13 +6,6 @@ import logo from "../../assets/images/ACGCLOGO1.png";
 function Signup() {
   const navigate = useNavigate();
   const { register, authError, setAuthError, adminExists, adminLoading } = useAuth();
-
-  useEffect(() => {
-    if (!adminLoading && adminExists === false) {
-      navigate("/", { replace: true });
-    }
-  }, [adminExists, adminLoading, navigate]);
-
   const [formData, setFormData] = useState({
     first_name: "",
     last_name: "",
@@ -28,29 +21,21 @@ function Signup() {
   });
   const [error, setError] = useState("");
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
+  useEffect(() => {
+    if (!adminLoading && adminExists === false) navigate("/", { replace: true });
+  }, [adminExists, adminLoading, navigate]);
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
     setFormData((current) => ({ ...current, [name]: value }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setError("");
     setAuthError("");
 
-    if (
-      !formData.first_name ||
-      !formData.last_name ||
-      !formData.email ||
-      !formData.username ||
-      !formData.street_address ||
-      !formData.city ||
-      !formData.province ||
-      !formData.zip_code ||
-      !formData.phone ||
-      !formData.password ||
-      !formData.confirmPassword
-    ) {
+    if (Object.values(formData).some((value) => !value)) {
       setError("Please complete all required fields.");
       return;
     }
@@ -79,261 +64,67 @@ function Signup() {
     }
   };
 
+  const inputClass = "w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none transition focus:border-red-500 focus:ring-4 focus:ring-red-500/10";
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-red-950 via-red-900 to-black flex items-center justify-center p-6">
-
-      <div className="w-full max-w-6xl bg-white rounded-[35px] overflow-hidden shadow-2xl grid lg:grid-cols-5">
-
-        {/* LEFT PANEL */}
-
-        <div className="lg:col-span-2 bg-gradient-to-b from-red-600 via-red-700 to-red-950 text-white flex flex-col justify-center items-center px-10 py-12">
-
-          <p className="uppercase text-lg tracking-wide mb-8">
-            Welcome To
-          </p>
-
-          <img
-            src={logo}
-            alt="ACGC"
-            className="w-72 mb-10"
-          />
-
-          <p className="text-center text-xl leading-10 max-w-sm">
-            Securely manage products, site inspections,
-            and operations from one powerful dashboard.
-          </p>
-
-          <p className="text-center text-lg mt-8 leading-9 max-w-sm text-white/90">
-            Instant account verification
-            Trusted workflow visibility
-            Easy access to inspections,
-            orders, and transactions
-          </p>
-
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-4 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(135deg,#020617,#111827_54%,#450a0a)] [background-size:42px_42px,42px_42px,100%_100%] sm:p-6">
+      <div className="grid w-full max-w-7xl overflow-hidden rounded-[24px] border border-white/10 bg-white shadow-[0_28px_90px_rgba(2,6,23,0.65)] lg:max-h-[calc(100vh-2rem)] lg:grid-cols-5">
+        <div className="relative flex flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] px-6 py-8 text-white sm:px-8 lg:col-span-2 lg:min-h-[620px]">
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(148,163,184,.08),transparent_42%,rgba(127,29,29,.28))]" />
+          <div className="pointer-events-none absolute -right-28 -top-20 h-80 w-80 rounded-full border border-white/10" />
+          <div className="pointer-events-none absolute -right-16 -top-8 h-56 w-56 rounded-full border border-white/10" />
+          <div className="pointer-events-none absolute inset-0 [background-image:linear-gradient(rgba(148,163,184,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] [background-size:42px_42px]" />
+          <div className="relative z-10 text-center">
+            <p className="mb-5 text-xs font-black uppercase tracking-[0.3em] text-red-100">Welcome To</p>
+            <img src={logo} alt="ACGC" className="mx-auto mb-6 w-52 drop-shadow-2xl" />
+            <p className="mx-auto max-w-sm text-sm font-medium leading-6 text-red-50">Securely manage products, site inspections, and operations from one powerful dashboard.</p>
+          </div>
         </div>
 
-        {/* RIGHT PANEL */}
+        <div className="overflow-y-auto bg-white p-5 lg:col-span-3 lg:p-7">
+          <div className="max-w-2xl">
+            <p className="text-xs font-black uppercase tracking-[0.28em] text-red-700">Customer registration</p>
+            <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-900 sm:text-4xl">Create your ACGC account</h1>
+            <p className="mt-2 text-sm leading-5 text-gray-500">Verify your email to activate your profile.</p>
 
-        <div className="lg:col-span-3 p-10">
+            <form className="mt-5" onSubmit={handleSubmit}>
+              {error || authError ? <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">{error || authError}</div> : null}
 
-          <h1 className="text-5xl font-bold text-slate-900">
-            Create your ACGC account
-          </h1>
-
-          <p className="mt-3 text-gray-500">
-            Verify your email to activate your profile.
-          </p>
-
-          <form className="mt-10" onSubmit={handleSubmit}>
-
-            {error || authError ? (
-              <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
-                {error || authError}
-              </div>
-            ) : null}
-
-            <div className="grid md:grid-cols-2 gap-5">
-
-              <div>
-                <label className="block mb-2 font-semibold">
-                  First Name *
-                </label>
-
-                <input
-                  type="text"
-                  name="first_name"
-                  value={formData.first_name}
-                  onChange={handleChange}
-                  placeholder="Enter your first name"
-                  className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-                />
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="First Name *" name="first_name" value={formData.first_name} onChange={handleChange} placeholder="Enter your first name" inputClass={inputClass} />
+                <Field label="Last Name *" name="last_name" value={formData.last_name} onChange={handleChange} placeholder="Enter your last name" inputClass={inputClass} />
+                <Field label="Email *" type="email" name="email" value={formData.email} onChange={handleChange} placeholder="Enter your email" inputClass={inputClass} />
+                <Field label="Username *" name="username" value={formData.username} onChange={handleChange} placeholder="Choose a username" inputClass={inputClass} />
               </div>
 
-              <div>
-                <label className="block mb-2 font-semibold">
-                  Last Name *
-                </label>
-
-                <input
-                  type="text"
-                  name="last_name"
-                  value={formData.last_name}
-                  onChange={handleChange}
-                  placeholder="Enter your last name"
-                  className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-                />
+              <div className="mt-3"><Field label="Address *" name="street_address" value={formData.street_address} onChange={handleChange} placeholder="Enter your street address" inputClass={inputClass} /></div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <Field label="City *" name="city" value={formData.city} onChange={handleChange} placeholder="Enter your city" inputClass={inputClass} />
+                <Field label="Province *" name="province" value={formData.province} onChange={handleChange} placeholder="Enter your province" inputClass={inputClass} />
+                <Field label="Zip Code *" name="zip_code" value={formData.zip_code} onChange={handleChange} placeholder="4000" inputClass={inputClass} />
+                <Field label="Phone Number *" name="phone" value={formData.phone} onChange={handleChange} placeholder="+63" inputClass={inputClass} />
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <Field label="Password *" type="password" name="password" value={formData.password} onChange={handleChange} placeholder="Enter your password" inputClass={inputClass} />
+                <Field label="Confirm Password *" type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleChange} placeholder="Confirm your password" inputClass={inputClass} />
               </div>
 
-              <div>
-                <label className="block mb-2 font-semibold">
-                  Email *
-                </label>
-
-                <input
-                  type="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  placeholder="Enter your email"
-                  className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-                />
-              </div>
-
-              <div>
-                <label className="block mb-2 font-semibold">
-                  Username *
-                </label>
-
-                <input
-                  type="text"
-                  name="username"
-                  value={formData.username}
-                  onChange={handleChange}
-                  placeholder="Choose a username"
-                  className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-                />
-              </div>
-
-            </div>
-
-            <div className="mt-5">
-              <label className="block mb-2 font-semibold">
-                Address *
-              </label>
-
-              <input
-                type="text"
-                name="street_address"
-                value={formData.street_address}
-                onChange={handleChange}
-                placeholder="Enter your street address"
-                className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-              />
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-5 mt-5">
-
-              <div>
-                <label className="block mb-2 font-semibold">
-                  City *
-                </label>
-
-                <input
-                  type="text"
-                  name="city"
-                  value={formData.city}
-                  onChange={handleChange}
-                  placeholder="Enter your city"
-                  className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-                />
-              </div>
-
-              <div>
-                <label className="block mb-2 font-semibold">
-                  Province *
-                </label>
-
-                <input
-                  type="text"
-                  name="province"
-                  value={formData.province}
-                  onChange={handleChange}
-                  placeholder="Enter your province"
-                  className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-                />
-              </div>
-
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-5 mt-5">
-
-              <div>
-                <label className="block mb-2 font-semibold">
-                  Zip Code *
-                </label>
-
-                <input
-                  type="text"
-                  name="zip_code"
-                  value={formData.zip_code}
-                  onChange={handleChange}
-                  placeholder="4000"
-                  className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-                />
-              </div>
-
-              <div>
-                <label className="block mb-2 font-semibold">
-                  Phone Number *
-                </label>
-
-                <input
-                  type="text"
-                  name="phone"
-                  value={formData.phone}
-                  onChange={handleChange}
-                  placeholder="+63"
-                  className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-                />
-              </div>
-
-            </div>
-
-            <div className="mt-5">
-              <label className="block mb-2 font-semibold">
-                Password *
-              </label>
-
-              <input
-                type="password"
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
-                placeholder="Enter your password"
-                className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-              />
-            </div>
-
-            <div className="mt-5">
-              <label className="block mb-2 font-semibold">
-                Confirm Password *
-              </label>
-
-              <input
-                type="password"
-                name="confirmPassword"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                placeholder="Confirm your password"
-                className="w-full px-5 py-4 rounded-2xl border border-gray-300 outline-none focus:border-red-500"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full mt-6 py-4 rounded-2xl font-bold text-white bg-red-600 via-red-800 to-black hover:scale-[1.01] transition"
-            >
-              Verify Email
-            </button>
-
-            <p className="text-center mt-8 text-gray-500">
-              Already have an account?
-
-              <Link
-                to="/login"
-                className="ml-2 text-red-700 font-bold"
-              >
-                Login
-              </Link>
-            </p>
-
-          </form>
-
+              <button type="submit" className="mt-4 w-full rounded-2xl bg-gradient-to-r from-red-600 via-red-700 to-red-950 py-3 text-sm font-bold text-white shadow-lg shadow-red-900/20 transition hover:scale-[1.01] hover:shadow-red-900/30">Verify Email</button>
+              <p className="mt-5 text-center text-xs text-gray-500">Already have an account? <Link to="/login" className="ml-2 font-bold text-red-700">Login</Link></p>
+            </form>
+          </div>
         </div>
-
       </div>
-
     </div>
+  );
+}
+
+function Field({ label, inputClass, ...props }) {
+  return (
+    <label className="block text-xs font-semibold text-slate-700">
+      <span className="mb-2 block">{label}</span>
+      <input {...props} className={inputClass} />
+    </label>
   );
 }
 

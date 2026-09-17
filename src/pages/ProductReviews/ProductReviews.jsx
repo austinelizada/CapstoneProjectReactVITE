@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Star, Search, Loader2 } from "lucide-react";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { getProducts } from "@/api/products";
 import { getProductReviews } from "@/api/orders";
 
@@ -82,12 +83,10 @@ function ProductReviews() {
       <div className="flex-1 min-h-0 flex flex-col">
         <Navbar toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} />
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
-          <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 rounded-3xl p-8 text-white shadow-lg">
-            <h1 className="text-3xl font-bold">Product Reviews</h1>
-            <p className="mt-2 text-red-100 max-w-2xl">
-              Review customer feedback by product and monitor ratings, comments, and submitted photos.
-            </p>
-          </div>
+          <AdminPageHeader
+            title="Product Reviews"
+            description="Review customer feedback by product and monitor ratings, comments, and submitted photos."
+          />
 
           <div className="mt-6 grid gap-6 xl:grid-cols-[320px_1fr]">
             <div className="space-y-4">

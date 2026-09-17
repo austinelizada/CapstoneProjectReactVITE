@@ -129,6 +129,7 @@ const getOrderItemTotal = (item) => {
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ProgressViewModal from "../../components/ProgressViewModal";
 
 const toProgressProject = (order) => ({
@@ -179,6 +180,7 @@ function Dashboard() {
   const [contractNotificationsLoading, setContractNotificationsLoading] = useState(false);
   const [contractPage, setContractPage] = useState(1);
   const contractsPerPage = 5;
+  const [chartProgress, setChartProgress] = useState(0);
   const [currentDateTime, setCurrentDateTime] = useState(() => new Date());
 
   useEffect(() => {
@@ -263,6 +265,27 @@ function Dashboard() {
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
+
+  useEffect(() => {
+    let animationFrame;
+    const animationStart = performance.now();
+    const animationDuration = 1400;
+
+    const animateChart = (timestamp) => {
+      const elapsed = Math.min((timestamp - animationStart) / animationDuration, 1);
+      const easedProgress = 1 - Math.pow(1 - elapsed, 4);
+      setChartProgress(easedProgress);
+
+      if (elapsed < 1) {
+        animationFrame = requestAnimationFrame(animateChart);
+      }
+    };
+
+    setChartProgress(0);
+    animationFrame = requestAnimationFrame(animateChart);
+
+    return () => cancelAnimationFrame(animationFrame);
+  }, [orders.length]);
 
   useEffect(() => {
     const fetchOrders = async () => {
@@ -428,6 +451,47 @@ function Dashboard() {
   const activeWarranties = orders
     .filter((order) => String(order.warranty_status || "").toLowerCase() === "active")
     .slice(0, 5);
+  const orderStatusGroups = [
+    {
+      label: "In progress",
+      value: orders.filter(isActiveProject).length,
+      color: "#2563eb",
+      softColor: "bg-blue-500",
+    },
+    {
+      label: "Pending inspection",
+      value: pendingInspectionCount,
+      color: "#f59e0b",
+      softColor: "bg-amber-500",
+    },
+    {
+      label: "Completed",
+      value: orders.filter((order) => String(order.status || "").toLowerCase() === "completed").length,
+      color: "#10b981",
+      softColor: "bg-emerald-500",
+    },
+    {
+      label: "Cancelled",
+      value: orders.filter((order) => String(order.status || "").toLowerCase() === "cancelled").length,
+      color: "#ef4444",
+      softColor: "bg-red-500",
+    },
+    {
+      label: "Other",
+      value: Math.max(
+        0,
+        orders.length - activeProjectsCount - pendingInspectionCount -
+          orders.filter((order) => String(order.status || "").toLowerCase() === "completed").length -
+          orders.filter((order) => String(order.status || "").toLowerCase() === "cancelled").length,
+      ),
+      color: "#64748b",
+      softColor: "bg-slate-500",
+    },
+  ];
+  const orderStatusTotal = orderStatusGroups.reduce((total, group) => total + group.value, 0);
+  const chartRadius = 78;
+  const chartCircumference = 2 * Math.PI * chartRadius;
+  let chartOffset = 0;
   const dashboardDate = currentDateTime.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -441,7 +505,6 @@ function Dashboard() {
   const dashboardDay = currentDateTime.toLocaleDateString(undefined, {
     weekday: "long",
   });
-
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} />
@@ -468,31 +531,20 @@ function Dashboard() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            {/* Welcome */}
-            <div className="h-fit self-start rounded-3xl bg-gradient-to-r from-red-700 via-red-600 to-orange-500 p-6 text-white shadow-lg">
-              <h1 className="text-2xl font-bold">Dashboard</h1>
-              <p className="mt-2 text-red-100">
-                Manage inspections, projects, warranties and products.
-              </p>
-              <div className="mt-6 grid grid-cols-3 gap-2 border-t border-white/25 pt-4">
-                <div className="rounded-2xl bg-white/10 p-3">
-                  <p className="text-xs text-red-100">Date</p>
-                  <p className="mt-1 text-lg font-bold">{dashboardDate}</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-3">
-                  <p className="text-xs text-red-100">Time</p>
-                  <p className="mt-1 text-lg font-bold tabular-nums">{dashboardTime}</p>
-                </div>
-                <div className="rounded-2xl bg-white/10 p-3">
-                  <p className="text-xs text-red-100">Day</p>
-                  <p className="mt-1 text-lg font-bold">{dashboardDay}</p>
-                </div>
-              </div>
-            </div>
+          <div className="mt-6 grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
+            <AdminPageHeader
+              title="Dashboard"
+              description="Manage inspections, projects, warranties and products from one administrative workspace."
+              className="h-full min-h-[250px]"
+              statsClassName="grid-cols-2 [&>*:last-child]:col-span-2"
+              stats={[
+                { label: "Date", value: dashboardDate, color: "text-blue-100" },
+                { label: "Time", value: dashboardTime, color: "text-emerald-300" },
+                { label: "Day", value: dashboardDay, color: "text-amber-300" },
+              ]}
+            />
 
-            {/* Quick Actions */}
-            <div className={`rounded-3xl p-6 shadow-lg ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-gray-900"}`}>
+            <div className={`h-full rounded-3xl p-6 shadow-lg ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-gray-900"}`}>
               <h2 className="text-lg font-bold">Quick Actions</h2>
               <p className={`mb-4 mt-1 text-sm ${darkMode ? "text-slate-300" : "text-gray-500"}`}>Shortcuts</p>
 
@@ -599,6 +651,97 @@ function Dashboard() {
             </button>
 
           </div>
+
+          <section className="mt-6 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_55px_-28px_rgba(15,23,42,0.45)]">
+            <div className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-6 py-7 text-white lg:px-8">
+              <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full border border-white/10" />
+              <div className="pointer-events-none absolute -right-8 -top-12 h-40 w-40 rounded-full border border-white/10" />
+              <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.24em] text-red-300">Portfolio intelligence</p>
+                <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">Order status overview</h2>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+                  A live view of how orders are moving through your operation.
+                </p>
+              </div>
+              <div className="flex items-center gap-8 rounded-2xl border border-white/10 bg-white/10 px-6 py-4 shadow-xl shadow-black/10 backdrop-blur-sm">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Total orders</p>
+                  <p className="mt-1 text-3xl font-bold tabular-nums">{orderStatusTotal}</p>
+                </div>
+                <div className="h-10 w-px bg-white/15" />
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Live feed</p>
+                  <p className="mt-1 flex items-center gap-2 text-sm font-semibold text-emerald-300">
+                    <span className="animate-pulse h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
+                    Updated now
+                  </p>
+                </div>
+              </div>
+              </div>
+            </div>
+
+            <div className="grid items-center gap-8 border-t border-slate-100 px-6 py-8 md:grid-cols-[minmax(240px,0.8fr)_1fr] lg:px-8">
+              <div className="relative mx-auto h-64 w-64">
+                <div className="absolute inset-5 rounded-full bg-slate-50 shadow-inner" />
+                <svg className="dashboard-pie-chart relative h-full w-full -rotate-90" viewBox="0 0 200 200" role="img" aria-label="Order status distribution">
+                  <defs>
+                    <filter id="pieChartShadow" x="-30%" y="-30%" width="160%" height="160%">
+                      <feDropShadow dx="0" dy="6" stdDeviation="5" floodColor="#0f172a" floodOpacity="0.16" />
+                    </filter>
+                  </defs>
+                  <circle cx="100" cy="100" r={chartRadius} fill="none" stroke="#e2e8f0" strokeWidth="25" />
+                  {orderStatusTotal > 0 && orderStatusGroups.map((group) => {
+                    const targetSegmentLength = (group.value / orderStatusTotal) * chartCircumference;
+                    const segmentLength = targetSegmentLength * chartProgress;
+                    const segment = (
+                      <circle
+                        key={group.label}
+                        className="dashboard-pie-segment"
+                        cx="100"
+                        cy="100"
+                        r={chartRadius}
+                        fill="none"
+                        stroke={group.color}
+                        strokeDasharray={`${segmentLength} ${chartCircumference - segmentLength}`}
+                        strokeDashoffset={-chartOffset * chartProgress}
+                        strokeLinecap="butt"
+                        strokeWidth="25"
+                        filter="url(#pieChartShadow)"
+                      />
+                    );
+                    chartOffset += targetSegmentLength;
+                    return segment;
+                  })}
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-5xl font-bold tracking-tight text-slate-950">{orderStatusTotal}</span>
+                  <span className="mt-1 text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Total orders</span>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                {orderStatusGroups.map((group) => {
+                  const percentage = orderStatusTotal ? Math.round((group.value / orderStatusTotal) * 100) : 0;
+                  return (
+                    <div key={group.label} className="group rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_8px_24px_-20px_rgba(15,23,42,0.5)] transition duration-200 hover:-translate-y-0.5 hover:border-slate-200 hover:shadow-md">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${group.softColor} ring-4 ring-slate-50 transition group-hover:ring-slate-100`} />
+                          <span className="truncate text-sm font-semibold text-slate-600">{group.label}</span>
+                        </div>
+                        <span className="text-xs font-bold text-slate-400">{percentage}%</span>
+                      </div>
+                      <div className="mt-3 flex items-end justify-between">
+                        <p className="text-3xl font-bold tracking-tight text-slate-950">{group.value}</p>
+                        <span className="text-xs font-medium text-slate-400">orders</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
 
           {/* Order Requests */}
 

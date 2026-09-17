@@ -19,6 +19,7 @@ import { getAdminOrder } from "@/api/orders";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 
 function AdminProfile() {
   const activityPageSize = 5;
@@ -355,12 +356,10 @@ function AdminProfile() {
         />
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
-          <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
-            <h1 className="text-3xl font-bold">Admin Profile</h1>
-            <p className="text-red-100 mt-2">
-              Manage your administrator account settings and security.
-            </p>
-          </div>
+          <AdminPageHeader
+            title="Admin Profile"
+            description="Manage your administrator account settings and security."
+          />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
             <div className="bg-white rounded-3xl shadow p-8">

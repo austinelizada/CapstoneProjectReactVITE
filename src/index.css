@@ -798,6 +798,45 @@
   animation: glowPulseRed 2s ease-in-out infinite;
 }
 
+@keyframes pieChartReveal {
+  0% {
+    opacity: 0;
+    filter: drop-shadow(0 0 0 rgba(15, 23, 42, 0));
+  }
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 12px 18px rgba(15, 23, 42, 0.08));
+  }
+}
+
+@keyframes pieSegmentReveal {
+  0% {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.dashboard-pie-chart {
+  animation: pieChartReveal 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.dashboard-pie-segment {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pieSegmentReveal 850ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-pie-chart,
+  .dashboard-pie-segment {
+    animation: none;
+  }
+}
+
 .glow-bar-slate {
   animation: glowPulseSlate 2s ease-in-out infinite;
 }

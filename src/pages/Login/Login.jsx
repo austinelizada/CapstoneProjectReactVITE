@@ -73,7 +73,7 @@ function Login() {
 
   if (loginLoading || redirecting) {
     return (
-      <div className="login-loading-page min-h-screen bg-gradient-to-br from-[#0f0f0f] via-[#1a0000] to-[#0f0f0f] flex items-center justify-center px-4">
+      <div className="login-loading-page min-h-screen bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] flex items-center justify-center px-4">
         <div className="text-center text-white">
           <img
             src={logo}
@@ -84,7 +84,7 @@ function Login() {
             <LoaderCircle
               size={52}
               strokeWidth={2.5}
-              className="login-loading-spinner text-red-500"
+              className="login-loading-spinner text-red-400"
               aria-hidden="true"
             />
           </div>
@@ -101,21 +101,24 @@ function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0f0f0f] via-[#1a0000] to-[#0f0f0f] flex items-center justify-center px-4 py-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] flex items-center justify-center px-4 py-8 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(135deg,#020617,#111827_54%,#450a0a)] [background-size:42px_42px,42px_42px,100%_100%]">
 
-      <div className="w-full max-w-6xl bg-white rounded-[35px] overflow-hidden shadow-[0_20px_80px_rgba(255,0,0,.25)]">
+      <div className="w-full max-w-6xl overflow-hidden rounded-[28px] border border-white/10 bg-slate-900/90 shadow-[0_28px_90px_rgba(2,6,23,0.65)] backdrop-blur-xl">
 
         <div className="grid lg:grid-cols-2">
 
           {/* LEFT SIDE */}
 
-          <div className="relative bg-gradient-to-br from-red-600 via-red-700 to-[#1a0000] flex flex-col justify-center items-center p-12 text-white">
+          <div className="relative flex flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-12 text-white lg:min-h-[680px]">
 
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,.15),transparent_60%)]" />
+            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(148,163,184,.08),transparent_42%,rgba(127,29,29,.28))]" />
+            <div className="pointer-events-none absolute -right-28 -top-20 h-80 w-80 rounded-full border border-white/10" />
+            <div className="pointer-events-none absolute -right-16 -top-8 h-56 w-56 rounded-full border border-white/10" />
+            <div className="pointer-events-none absolute inset-0 [background-image:linear-gradient(rgba(148,163,184,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] [background-size:42px_42px]" />
 
             <div className="relative z-10 text-center">
 
-              <p className="uppercase tracking-widest text-sm mb-10">
+              <p className="mb-10 text-sm font-black uppercase tracking-[0.3em] text-red-100">
                 Welcome To
               </p>
 
@@ -125,7 +128,7 @@ function Login() {
                 className="w-72 mx-auto drop-shadow-2xl"
               />
 
-              <p className="mt-10 text-xl font-medium leading-9 max-w-md mx-auto">
+              <p className="mx-auto mt-10 max-w-md text-lg font-medium leading-8 text-red-50">
                 Securely manage products, site inspections,
                 and operations from one powerful dashboard.
               </p>
@@ -136,28 +139,30 @@ function Login() {
 
           {/* RIGHT SIDE */}
 
-          <div className="bg-white p-10 lg:p-16 flex items-center">
+          <div className="flex items-center bg-white p-7 text-slate-900 lg:p-12">
 
             <div className="w-full">
 
-              <h1 className="text-5xl font-black text-slate-900">
+              <p className="text-xs font-black uppercase tracking-[0.28em] text-red-700">Administration access</p>
+
+              <h1 className="mt-2 text-4xl font-black tracking-tight text-slate-900 sm:text-5xl">
                 Sign in to ACGC
               </h1>
 
-              <p className="mt-4 text-slate-500 text-lg">
+              <p className="mt-2 text-sm leading-5 text-slate-500">
                 Enter your credentials to continue.
               </p>
 
               <form
                 onSubmit={handleSubmit}
-                className="mt-10 space-y-6"
+                className="mt-7 space-y-5"
               >
 
                 {/* USERNAME */}
 
                 <div>
 
-                  <label className="block mb-3 font-semibold text-slate-700">
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">
                     Email or Username
                   </label>
 
@@ -167,7 +172,7 @@ function Login() {
                     value={formData.identifier}
                     onChange={handleChange}
                     placeholder="Email or username"
-                    className="w-full border border-slate-200 bg-slate-50 rounded-2xl px-5 py-4 outline-none focus:border-red-500"
+                    className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-5 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-500 focus:bg-white focus:ring-4 focus:ring-red-500/10"
                   />
 
                 </div>
@@ -176,7 +181,7 @@ function Login() {
 
                 <div>
 
-                  <label className="block mb-3 font-semibold text-slate-700">
+                  <label className="mb-2 block text-sm font-semibold text-slate-700">
                     Password
                   </label>
 
@@ -192,7 +197,7 @@ function Login() {
                       value={formData.password}
                       onChange={handleChange}
                       placeholder="Password"
-                      className="w-full border border-slate-200 bg-slate-50 rounded-2xl px-5 py-4 pr-14 outline-none focus:border-red-500"
+                      className="w-full rounded-2xl border border-slate-300 bg-slate-50 px-5 py-3 pr-14 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-500 focus:bg-white focus:ring-4 focus:ring-red-500/10"
                     />
 
                     <button
@@ -200,7 +205,7 @@ function Login() {
                       onClick={() =>
                         setShowPassword(!showPassword)
                       }
-                      className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-500"
+                      className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-red-600"
                     >
                       {showPassword ? (
                         <EyeOff size={22} />
@@ -222,10 +227,10 @@ function Login() {
                     name="remember"
                     checked={formData.remember}
                     onChange={handleChange}
-                    className="w-5 h-5"
+                    className="h-5 w-5 accent-red-600"
                   />
 
-                  <span className="text-slate-700">
+                  <span className="text-sm text-slate-700">
                     Remember me
                   </span>
 
@@ -242,7 +247,7 @@ function Login() {
                 <button
                   type="submit"
                   disabled={loginLoading}
-                  className={`w-full py-4 rounded-2xl text-white font-bold text-xl bg-gradient-to-r from-red-600 via-red-700 to-slate-800 transition shadow-xl shadow-red-500/20 ${loginLoading ? "opacity-60 cursor-not-allowed hover:scale-100" : "hover:scale-[1.02]"}`}
+                  className={`w-full rounded-2xl bg-gradient-to-r from-red-600 via-red-700 to-red-950 py-3 text-base font-bold text-white shadow-lg shadow-red-900/20 transition ${loginLoading ? "cursor-not-allowed opacity-60 hover:scale-100" : "hover:scale-[1.01] hover:shadow-red-900/30"}`}
                 >
                   {loginLoading ? "Logging in..." : "Login"}
                 </button>
@@ -251,7 +256,7 @@ function Login() {
 
                 <Link
                   to="/"
-                  className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl border border-slate-300 bg-slate-100 text-slate-700 font-bold text-xl hover:bg-slate-200 transition"
+                  className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-300 bg-slate-100 py-3 text-base font-bold text-slate-700 transition hover:border-slate-400 hover:bg-slate-200"
                 >
                   <ChevronLeft size={22} />
                   Back to Browse
@@ -259,11 +264,11 @@ function Login() {
 
                 {/* LINKS */}
 
-                <div className="flex justify-center gap-4 pt-3">
+                <div className="flex justify-center gap-4 pt-1 text-sm">
 
                 <Link
                   to="/forgot-password"
-                  className="text-red-700 font-semibold hover:underline"
+                  className="font-semibold text-red-500 hover:text-red-600"
                 >
                   Forgot Password?
                 </Link>
@@ -272,7 +277,7 @@ function Login() {
 
                   <Link
                     to="/signup"
-                    className="text-red-700 font-bold hover:text-red-500"
+                    className="font-bold text-red-500 hover:text-red-600"
                   >
                     Sign Up
                   </Link>

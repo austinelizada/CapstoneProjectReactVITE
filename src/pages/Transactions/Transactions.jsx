@@ -14,6 +14,7 @@ import toast, { Toaster } from "react-hot-toast";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
 import { getAdminOrders, acceptContract, declineContract, updateOrderStatus } from "@/api/orders";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, getTodayIso, isTodayOrFuture, isSameOrAfter } from "@/lib/dateUtils";
@@ -771,16 +772,10 @@ function Transactions() {
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
-          <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
-            <h1 className="text-3xl font-bold">
-              Transactions
-            </h1>
-
-            <p className="mt-2 text-red-100">
-              Manage receipts, contracts and
-              completed projects.
-            </p>
-          </div>
+          <AdminPageHeader
+            title="Transactions"
+            description="Manage receipts, contracts and completed projects."
+          />
 
           <div className="flex gap-4 mt-6 flex-wrap">
 

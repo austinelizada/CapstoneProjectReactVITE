@@ -2139,42 +2139,59 @@ function CustomerDashboard() {
               </button>
 
               {notificationsOpen && (
-                <div className={`absolute right-0 z-20 mt-2 w-80 overflow-y-auto rounded-xl border shadow-lg max-h-96 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                  {orders.length === 0 ? (
+                <div className={`absolute right-0 z-20 mt-2 w-96 overflow-hidden rounded-2xl border shadow-xl ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                  <div className={`flex items-center justify-between border-b px-4 py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+                    <div>
+                      <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Project updates</p>
+                      <p className="mt-0.5 text-xs text-slate-400">Your latest order activity</p>
+                    </div>
+                    {orders.length > 0 && <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600">{orders.length} updates</span>}
+                  </div>
+
+                  {ordersLoading ? (
+                    <div className={`px-4 py-8 text-center text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Loading your updates...</div>
+                  ) : orders.length === 0 ? (
                     <div className={`px-4 py-6 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
-                      <p>No notifications yet</p>
+                      <Bell size={22} className="mx-auto mb-2 text-slate-400" />
+                      <p>No project updates yet</p>
                     </div>
                   ) : (
-                    <div className={darkMode ? "divide-y divide-slate-700" : "divide-y divide-slate-200"}>
-                      {orders
-                        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                    <div className={darkMode ? "max-h-96 divide-y divide-slate-700 overflow-y-auto" : "max-h-96 divide-y divide-slate-200 overflow-y-auto"}>
+                      {[...orders]
+                        .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
                         .slice(0, 5)
                         .map((order) => {
                           const product = order.items?.[0] || {};
-                          const notificationMessage = () => {
-                            switch (order.status) {
+                          const status = String(order.status || "").toLowerCase();
+                          const contractStatus = String(order.contract_status || "").toLowerCase();
+                          const notificationDetails = () => {
+                            if (contractStatus === "accepted" || status === "contract_accepted") {
+                              return { title: "Contract accepted", message: "Your contract has been accepted. Work can now move forward.", color: "text-emerald-600" };
+                            }
+                            if (contractStatus === "declined" || status === "contract_declined" || status === "cancelled") {
+                              return { title: "Order update", message: "Your contract or order was declined or cancelled.", color: "text-red-600" };
+                            }
+
+                            switch (status) {
                               case "order_submitted":
-                                return "Order submitted";
+                                return { title: "Order submitted", message: "Your order is waiting for admin review.", color: "text-blue-600" };
                               case "admin_review":
-                                return "Under review";
+                                return { title: "Order under review", message: "Our team is reviewing your project request.", color: "text-amber-600" };
                               case "site_inspection":
-                                return "Site inspection scheduled";
+                                return { title: "Site inspection", message: "Your project is ready for site inspection.", color: "text-amber-600" };
                               case "contract_sent":
-                                return "Contract sent";
-                              case "contract_accepted":
-                                return "Contract accepted";
-                              case "Fabrication":
-                                return "In fabrication";
-                              case "Installation":
-                                return "Installation in progress";
+                                return { title: "Contract ready", message: "Review and respond to your project contract.", color: "text-blue-600" };
+                              case "fabrication":
+                                return { title: "Fabrication started", message: "Your project is currently being fabricated.", color: "text-indigo-600" };
+                              case "installation":
+                                return { title: "Installation in progress", message: "Your project installation is underway.", color: "text-violet-600" };
                               case "completed":
-                                return "Project completed";
-                              case "cancelled":
-                                return "Order cancelled";
+                                return { title: "Project completed", message: "Your project has been completed successfully.", color: "text-emerald-600" };
                               default:
-                                return `Status: ${getOrderStatusLabel(order.status)}`;
+                                return { title: "Project update", message: `Your order is now ${getOrderStatusLabel(order.status).toLowerCase()}.`, color: "text-amber-600" };
                             }
                           };
+                          const details = notificationDetails();
 
                           return (
                             <button
@@ -2184,20 +2201,21 @@ function CustomerDashboard() {
                                 setActiveTab("orders");
                                 setNotificationsOpen(false);
                               }}
-                              className={`w-full px-4 py-3 text-left transition ${darkMode ? "hover:bg-slate-700" : "hover:bg-gray-50"}`}
+                              className={`w-full px-4 py-3 text-left transition ${darkMode ? "hover:bg-slate-700" : "hover:bg-slate-50"}`}
                             >
                               <div className="flex gap-3">
-                                <div className="shrink-0">
-                                  <Bell size={16} className={order.status === "completed" ? "text-emerald-600" : order.status === "cancelled" ? "text-red-600" : "text-amber-600"} />
+                                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-slate-700" : "bg-slate-100"}`}>
+                                  <Bell size={17} className={details.color} />
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                  <p className={`truncate text-sm font-semibold ${darkMode ? "text-white" : "text-slate-950"}`}>
-                                    {product.name || "Project Update"}
-                                  </p>
+                                  <div className="flex items-center justify-between gap-3">
+                                    <p className={`truncate text-sm font-semibold ${darkMode ? "text-white" : "text-slate-950"}`}>{details.title}</p>
+                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${getOrderStatusClasses(order.status)}`}>{getOrderStatusLabel(order.status)}</span>
+                                  </div>
                                   <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                                    {notificationMessage()}
+                                    {details.message}
                                   </p>
-                                  <p className="mt-1 text-xs text-slate-400">{order.tracking}</p>
+                                  <p className="mt-1 text-xs text-slate-400">{product.name || "Project"} · {order.tracking || "Order update"}</p>
                                 </div>
                               </div>
                             </button>

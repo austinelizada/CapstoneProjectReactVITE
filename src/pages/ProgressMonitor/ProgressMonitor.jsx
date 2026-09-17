@@ -16,6 +16,7 @@ import ProgressEditModal from "../../components/ProgressEditModal";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
+import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 
@@ -511,17 +512,10 @@ function ProgressMonitor() {
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
-          {/* HEADER */}
-
-          <div className="bg-gradient-to-r from-red-700 via-red-600 to-orange-500 text-white rounded-3xl p-8 shadow-lg">
-            <h1 className="text-3xl font-bold">
-              Progress Monitor
-            </h1>
-
-            <p className="mt-2 text-red-100">
-              Monitor fabrication and installation progress.
-            </p>
-          </div>
+          <AdminPageHeader
+            title="Progress Monitor"
+            description="Monitor fabrication and installation progress."
+          />
 
           {/* FILTERS */}
 
