@@ -70,7 +70,8 @@ export const permissionMiddleware = (permission) => async (req, res, next) => {
     if (req.user.role !== "customer") return next();
 
     const user = await User.findById(req.user.id).select("access_permissions").lean();
-    const allowed = user?.access_permissions?.[permission] !== false;
+    const permissions = user?.access_permissions || {};
+    const allowed = !permissions.view_only_access && permissions[permission] !== false;
     if (!allowed) {
       return res.status(403).json({ success: false, message: "This action is disabled for your account." });
     }

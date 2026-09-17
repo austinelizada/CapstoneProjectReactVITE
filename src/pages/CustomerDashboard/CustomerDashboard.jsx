@@ -149,9 +149,9 @@ function CustomerDashboard() {
   };
   const canRequestOrders = !maintenanceMode && accountPermissions.can_request_orders && !accountPermissions.view_only_access;
   const canEstimatePricing = !maintenanceMode && accountPermissions.can_estimate_pricing && !accountPermissions.view_only_access;
-  const canTrackProducts = !maintenanceMode && accountPermissions.can_track_products;
+  const canTrackProducts = !maintenanceMode && accountPermissions.can_track_products && !accountPermissions.view_only_access;
   const canUploadFeedback = !maintenanceMode && accountPermissions.can_upload_feedback && !accountPermissions.view_only_access;
-  const canShowRatings = accountPermissions.show_ratings_homepage;
+  const canShowRatings = accountPermissions.show_ratings_homepage && !accountPermissions.view_only_access;
 
   const [activeTab, setActiveTab] = useState("home");
   const [darkMode, setDarkMode] = useState(() => {

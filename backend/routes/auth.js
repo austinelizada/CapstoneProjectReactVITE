@@ -123,7 +123,15 @@ router.patch("/system-settings", authMiddleware, roleMiddleware("admin"), async 
       update.maintenance_mode = req.body.maintenance_mode;
     }
     if (req.body?.global_permissions && typeof req.body.global_permissions === "object") {
-      update.global_permissions = req.body.global_permissions;
+      const permissions = { ...req.body.global_permissions };
+      if (permissions.view_only_access === true) {
+        permissions.can_request_orders = false;
+        permissions.can_estimate_pricing = false;
+        permissions.can_track_products = false;
+        permissions.can_upload_feedback = false;
+        permissions.show_ratings_homepage = false;
+      }
+      update.global_permissions = permissions;
     }
 
     const settings = await SystemSetting.findOneAndUpdate(
@@ -342,11 +350,19 @@ router.patch("/users/:id", authMiddleware, roleMiddleware("admin"), async (req, 
       "can_upload_feedback",
       "show_ratings_homepage",
     ];
-    const permissions = Object.fromEntries(
+    const permissionValues = Object.fromEntries(
       allowedFields
         .filter((field) => typeof req.body?.[field] === "boolean")
         .map((field) => [`access_permissions.${field}`, req.body[field]])
     );
+    const permissions = { ...permissionValues };
+    if (req.body?.view_only_access === true) {
+      allowedFields
+        .filter((field) => field !== "view_only_access")
+        .forEach((field) => {
+          permissions[`access_permissions.${field}`] = false;
+        });
+    }
     const update = {};
     if (Object.keys(permissions).length > 0) Object.assign(update, permissions);
     if (typeof req.body?.is_active === "boolean") update.is_active = req.body.is_active;

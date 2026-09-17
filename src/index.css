@@ -3,6 +3,20 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+html,
+body,
+#root,
+* {
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -973,4 +987,187 @@
 
 .glow-bar-slate {
   animation: glowPulseSlate 2s ease-in-out infinite;
+}
+
+.settings-premium main {
+  background:
+    radial-gradient(circle at 92% 8%, rgb(183 111 68 / 0.08), transparent 24rem),
+    linear-gradient(135deg, #eef1f3 0%, #f8fafb 48%, #e8edf0 100%);
+}
+
+.settings-premium .bg-red-950 {
+  background-color: #17324d !important;
+}
+
+.settings-premium .bg-red-900 {
+  background-color: #214966 !important;
+}
+
+.settings-premium .bg-red-100,
+.settings-premium .bg-red-50 {
+  background-color: #f5ebe4 !important;
+}
+
+.settings-premium .text-red-950,
+.settings-premium .text-red-900 {
+  color: #17324d !important;
+}
+
+.settings-premium .text-red-700,
+.settings-premium .text-red-600,
+.settings-premium .text-red-500 {
+  color: #a96038 !important;
+}
+
+.settings-premium .border-red-100,
+.settings-premium .border-red-200 {
+  border-color: #e4cfc1 !important;
+}
+
+.settings-premium .border-red-900 {
+  border-color: #214966 !important;
+}
+
+.settings-premium .hover\:bg-red-900:hover {
+  background-color: #214966 !important;
+}
+
+.settings-premium .hover\:bg-red-200:hover {
+  background-color: #ead8cc !important;
+}
+
+.settings-premium .focus\:border-red-500:focus {
+  border-color: #b66d43 !important;
+}
+
+.settings-premium .focus\:ring-red-100:focus {
+  --tw-ring-color: rgb(182 109 67 / 0.2) !important;
+}
+
+.settings-premium table tbody td:first-child button[role="switch"] {
+  position: relative;
+  width: 6.5rem;
+  height: 1.75rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 9999px;
+  padding: 0;
+}
+
+.settings-premium table tbody td:first-child button[role="switch"] > span:first-child {
+  position: absolute;
+  inset: 0;
+  left: auto !important;
+  top: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  justify-content: flex-start;
+  padding-left: 0.75rem;
+  border-radius: 0;
+  background: transparent !important;
+  color: white !important;
+  box-shadow: none !important;
+}
+
+.settings-premium table tbody td:first-child button[role="switch"] > span:last-child {
+  position: absolute;
+  top: 0.25rem;
+  left: auto !important;
+  right: 0.25rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 9999px;
+  background: white;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 0.28);
+  transform: none !important;
+}
+
+.settings-premium table tbody td:first-child button[role="switch"]:not(:has(> span:first-child[class*="text-slate-500"])) {
+  background: #059669;
+  border-color: #047857;
+}
+
+.settings-premium table tbody td:first-child button[role="switch"]:has(> span:first-child[class*="text-slate-500"]) {
+  background: #f59e0b;
+  border-color: #d97706;
+}
+
+.settings-premium table tbody td:first-child button[role="switch"]:has(> span:first-child[class*="text-slate-500"]) > span:first-child {
+  justify-content: flex-end;
+  padding-right: 0.75rem;
+  padding-left: 0;
+  color: #78350f !important;
+}
+
+.settings-premium table tbody td:first-child button[role="switch"]:has(> span:first-child[class*="text-slate-500"]) > span:last-child {
+  right: auto;
+  left: 0.25rem !important;
+}
+
+.settings-premium table tbody td:first-child span[class*="bg-slate-100"] {
+  background-color: #fef3c7 !important;
+  color: #92400e !important;
+}
+
+.admin-theme-dark .settings-premium table tbody td:first-child span[class*="bg-slate-800"] {
+  background-color: rgb(120 53 15 / 0.45) !important;
+  color: #fcd34d !important;
+}
+
+.admin-theme-dark .settings-premium main {
+  background:
+    radial-gradient(circle at 92% 8%, rgb(182 109 67 / 0.12), transparent 24rem),
+    linear-gradient(135deg, #0b1420 0%, #101d2b 52%, #142536 100%);
+}
+
+.admin-theme-dark .settings-premium .bg-red-950 {
+  background-color: #b66d43 !important;
+}
+
+.admin-theme-dark .settings-premium .bg-red-900 {
+  background-color: #8f5335 !important;
+}
+
+.admin-theme-dark .settings-premium .bg-red-100,
+.admin-theme-dark .settings-premium .bg-red-50 {
+  background-color: rgb(182 109 67 / 0.16) !important;
+}
+
+.admin-theme-dark .settings-premium .text-red-950,
+.admin-theme-dark .settings-premium .text-red-900 {
+  color: #f0c1a1 !important;
+}
+
+.admin-theme-dark .settings-premium table thead,
+.admin-theme-dark .settings-premium table thead th {
+  background-color: #1a2a3d !important;
+  color: #a8bfd4 !important;
+}
+
+.admin-theme-dark .settings-premium table tbody tr {
+  border-color: #2b4056 !important;
+}
+
+.admin-theme-dark .settings-premium table tbody td:first-child,
+.admin-theme-dark .settings-premium table tbody td:first-child + td {
+  background-color: #0f1b2d !important;
+}
+
+.admin-theme-dark .settings-premium table tbody td:first-child button[role="switch"]:not(:has(> span:first-child[class*="text-slate-500"])) {
+  background: #059669 !important;
+  border-color: #047857 !important;
+}
+
+.admin-theme-dark .settings-premium table tbody td:first-child button[role="switch"]:has(> span:first-child[class*="text-slate-500"]) {
+  background: #b45309 !important;
+  border-color: #d97706 !important;
+}
+
+.admin-theme-dark .settings-premium table tbody td:first-child button[role="switch"]:has(> span:first-child[class*="text-slate-500"]) > span:first-child {
+  color: #fde68a !important;
+}
+
+.admin-theme-dark .settings-premium table tbody td:first-child span[class*="bg-slate-800"] {
+  background-color: rgb(180 83 9 / 0.35) !important;
+  color: #fcd34d !important;
 }
