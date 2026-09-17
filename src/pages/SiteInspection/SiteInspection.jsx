@@ -1251,6 +1251,11 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
           <AdminPageHeader
             title="Site Inspection Management"
             description="Manage all site inspections and estimations."
+            stats={[
+              { label: "Inspections", value: inspections.length, color: "text-blue-200" },
+              { label: "Scheduled", value: inspections.filter(hasValidInspectionDate).length, color: "text-emerald-300" },
+              { label: "Cancelled", value: cancelledInspections.length, color: "text-red-300" },
+            ]}
           />
 
 

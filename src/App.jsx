@@ -64,7 +64,17 @@ function AppRoutes() {
   }
 
   return (
-    <div className={user?.role === "admin" && darkMode ? "admin-theme-shell admin-theme-dark" : "admin-theme-shell"}>
+    <div className={`admin-theme-shell relative ${user?.role === "admin" ? (darkMode ? "admin-theme-dark" : "admin-theme-light") : ""}`}>
+      {user?.role === "admin" && (
+        <div className="admin-shell-drawing" aria-hidden="true">
+          <div className="admin-shell-circle admin-shell-circle-top" />
+          <div className="admin-shell-circle admin-shell-circle-top-small" />
+          <div className="admin-shell-circle admin-shell-circle-middle" />
+          <div className="admin-shell-circle admin-shell-circle-middle-small" />
+          <div className="admin-shell-circle admin-shell-circle-bottom" />
+          <div className="admin-shell-circle admin-shell-circle-bottom-small" />
+        </div>
+      )}
       <AdminCreationModal />
       <Routes>
           <Route path="/" element={<LandingPage />} />

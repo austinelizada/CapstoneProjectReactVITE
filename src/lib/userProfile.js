@@ -11,6 +11,8 @@ export const normalizeUserProfile = (user = {}) => {
     city: user.city || "",
     province: user.province || "",
     zip_code: user.zip_code || "",
+    is_active: user.is_active !== false,
+    access_permissions: user.access_permissions || {},
     created_at: user.created_at || user.createdAt || null,
     updated_at: user.updated_at || user.updatedAt || null,
   };

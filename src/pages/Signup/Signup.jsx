@@ -68,7 +68,7 @@ function Signup() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-4 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(135deg,#020617,#111827_54%,#450a0a)] [background-size:42px_42px,42px_42px,100%_100%] sm:p-6">
-      <div className="grid w-full max-w-7xl overflow-hidden rounded-[24px] border border-white/10 bg-white shadow-[0_28px_90px_rgba(2,6,23,0.65)] lg:max-h-[calc(100vh-2rem)] lg:grid-cols-5">
+      <div className="grid w-full max-w-7xl overflow-hidden rounded-[24px] border border-gray-800 bg-white shadow-[0_28px_90px_rgba(2,6,23,0.65)] lg:max-h-[calc(100vh-2rem)] lg:grid-cols-5">
         <div className="relative flex flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] px-6 py-8 text-white sm:px-8 lg:col-span-2 lg:min-h-[620px]">
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(148,163,184,.08),transparent_42%,rgba(127,29,29,.28))]" />
           <div className="pointer-events-none absolute -right-28 -top-20 h-80 w-80 rounded-full border border-white/10" />

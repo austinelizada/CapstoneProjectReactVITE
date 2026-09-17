@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { createPortal } from "react-dom";
 import toast, { Toaster } from "react-hot-toast";
@@ -41,6 +41,7 @@ import { calculateEstimate } from "@/lib/estimator";
 import { buildOrderTimelineStages } from "@/lib/orderTimeline";
 import { getProgressColor } from "@/lib/utils";
 import { paginateItems } from "@/lib/pagination";
+import { getSystemSettings, getSystemSettingsEventsUrl } from "@/api/users";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -136,6 +137,21 @@ function CustomerDashboard() {
   const { user, loading, updateProfile, refreshUser, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const accountPermissions = {
+    can_request_orders: true,
+    can_estimate_pricing: true,
+    view_only_access: false,
+    can_track_products: true,
+    can_upload_feedback: true,
+    show_ratings_homepage: true,
+    ...(user?.access_permissions || {}),
+  };
+  const canRequestOrders = !maintenanceMode && accountPermissions.can_request_orders && !accountPermissions.view_only_access;
+  const canEstimatePricing = !maintenanceMode && accountPermissions.can_estimate_pricing && !accountPermissions.view_only_access;
+  const canTrackProducts = !maintenanceMode && accountPermissions.can_track_products;
+  const canUploadFeedback = !maintenanceMode && accountPermissions.can_upload_feedback && !accountPermissions.view_only_access;
+  const canShowRatings = accountPermissions.show_ratings_homepage;
 
   const [activeTab, setActiveTab] = useState("home");
   const [darkMode, setDarkMode] = useState(() => {
@@ -292,12 +308,89 @@ function CustomerDashboard() {
   const [profileTab, setProfileTab] = useState("profile");
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
+  const [permissionNotice, setPermissionNotice] = useState(null);
+  const [maintenanceCountdown, setMaintenanceCountdown] = useState(10);
+  const permissionNoticeTimer = useRef(null);
+
+  useEffect(() => {
+    getSystemSettings()
+      .then((response) => {
+        const enabled = response.maintenance_mode === true;
+        setMaintenanceMode(enabled);
+        if (enabled) showPermissionNotice("The system is under maintenance. Please log out and try again later.", { maintenance: true });
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const events = new EventSource(getSystemSettingsEventsUrl());
+    events.onmessage = (event) => {
+      try {
+        const enabled = JSON.parse(event.data).maintenance_mode === true;
+        setMaintenanceMode(enabled);
+        if (enabled) {
+          showPermissionNotice("The system is under maintenance. Please log out and try again later.", { maintenance: true });
+        } else {
+          setPermissionNotice((current) => (current?.maintenance ? null : current));
+        }
+      } catch (error) {
+        console.error("Unable to process maintenance mode update", error);
+      }
+    };
+    events.onerror = () => {
+      // EventSource automatically retries while the customer remains signed in.
+    };
+    return () => events.close();
+  }, [user]);
+
+  const showPermissionNotice = (message, options = {}) => {
+    if (permissionNoticeTimer.current) {
+      clearTimeout(permissionNoticeTimer.current);
+    }
+
+    setPermissionNotice((current) => {
+      if (current?.maintenance && options.maintenance) return current;
+      return { message, maintenance: options.maintenance === true, closing: false };
+    });
+    if (options.maintenance) {
+      setMaintenanceCountdown(10);
+      return;
+    }
+
+    permissionNoticeTimer.current = setTimeout(() => {
+      setPermissionNotice((current) => (current ? { ...current, closing: true } : current));
+      permissionNoticeTimer.current = setTimeout(() => setPermissionNotice(null), 350);
+    }, 2400);
+  };
+
+  useEffect(() => () => {
+    if (permissionNoticeTimer.current) clearTimeout(permissionNoticeTimer.current);
+  }, []);
 
   const handleLogoutConfirm = () => {
     logout();
     setConfirmOpen(false);
     navigate("/login");
   };
+
+  useEffect(() => {
+    if (!permissionNotice?.maintenance) return undefined;
+
+    setMaintenanceCountdown(5);
+    const countdownTimer = setInterval(() => {
+      setMaintenanceCountdown((current) => {
+        if (current <= 1) {
+          clearInterval(countdownTimer);
+          handleLogoutConfirm();
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1800);
+
+    return () => clearInterval(countdownTimer);
+  }, [permissionNotice?.maintenance]);
 
   useEffect(() => {
     if (user) {
@@ -458,6 +551,10 @@ function CustomerDashboard() {
   const hasOrderReview = (order) => Boolean(order?.review?.submittedAt);
 
   const openCustomerReviewModal = (order) => {
+    if (!canUploadFeedback) {
+      showPermissionNotice("Feedback access is disabled for your account.");
+      return;
+    }
     const existingReview = order?.review || {};
     setSelectedReviewOrder(order);
     setOrderReviewForm({
@@ -479,6 +576,10 @@ function CustomerDashboard() {
   };
 
   const openProductReviewModal = () => {
+    if (!canUploadFeedback) {
+      showPermissionNotice("Feedback access is disabled for your account.");
+      return;
+    }
     setShowProductReviewModal(true);
   };
 
@@ -491,6 +592,7 @@ function CustomerDashboard() {
   };
 
   const handleOrderReviewPhotoChange = async (e) => {
+    if (!canUploadFeedback) return;
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     const existingCount = orderReviewForm.photos.length;
@@ -519,6 +621,7 @@ function CustomerDashboard() {
   };
 
   const submitCustomerReview = async () => {
+    if (!canUploadFeedback) return;
     if (!selectedReviewOrder) return;
     if (!orderReviewForm.rating || orderReviewForm.rating < 1 || orderReviewForm.rating > 5) {
       setReviewFormError("Please select a rating from 1 to 5.");
@@ -577,6 +680,12 @@ function CustomerDashboard() {
         }
 
         const eligibleProducts = productsList.filter((product) => product.is_active !== false);
+
+        if (!canUploadFeedback) {
+          setFeaturedRatingStats({ average: 0, total: 0, counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } });
+          setFeaturedProducts(eligibleProducts.slice(0, 3));
+          return;
+        }
 
         const productReviewData = await Promise.all(
           eligibleProducts.map(async (product) => {
@@ -651,7 +760,7 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [canUploadFeedback]);
 
   useEffect(() => {
     setProductPage(1);
@@ -673,6 +782,11 @@ function CustomerDashboard() {
 
         const productsList = response.products || [];
         setProducts(productsList);
+
+        if (!canUploadFeedback) {
+          setProductReviewStats({});
+          return;
+        }
 
         const stats = {};
         await Promise.all(
@@ -713,7 +827,7 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, [searchQuery, categoryFilter]);
+  }, [searchQuery, categoryFilter, canUploadFeedback]);
 
   const paginatedProducts = paginateItems(products, productPage, productsPerPage);
 
@@ -743,7 +857,7 @@ function CustomerDashboard() {
   }, [user]);
 
   useEffect(() => {
-    if (!selectedProduct?._id) {
+    if (!selectedProduct?._id || !canUploadFeedback) {
       setProductReviews([]);
       return;
     }
@@ -768,7 +882,7 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, [selectedProduct]);
+  }, [selectedProduct, canUploadFeedback]);
 
   const generateCartId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -870,6 +984,10 @@ function CustomerDashboard() {
   };
 
   const handleAddToCart = (product) => {
+    if (!canRequestOrders) {
+      setCartActionError("Order requests are disabled for your account.");
+      return;
+    }
     const cartItem = buildCustomerOrderItem(product, { quantity: 1 });
     if (!areOrderItemDimensionsValid(cartItem.dimensions)) {
       setCartActionError("Please provide valid product dimensions before submitting your order.");
@@ -898,6 +1016,14 @@ function CustomerDashboard() {
   };
 
   const handleAddEstimateToCart = ({ product, width, height, quantity, notes, measurementUnit }) => {
+    if (!canRequestOrders) {
+      setCartActionError("Order requests are disabled for your account.");
+      return;
+    }
+    if (!canEstimatePricing) {
+      setCartActionError("Pricing estimates are disabled for your account.");
+      return;
+    }
     const parsedWidth = Number(width) || 0;
     const parsedHeight = Number(height) || 0;
     const parsedQuantity = Number(quantity) || 1;
@@ -942,6 +1068,14 @@ function CustomerDashboard() {
   };
 
   const openCartDecisionModal = (product, step = "choice") => {
+    if (step === "estimate" && !canEstimatePricing) {
+      showPermissionNotice("Pricing estimates are disabled for your account.");
+      return;
+    }
+    if (step !== "estimate" && !canRequestOrders) {
+      showPermissionNotice("Order requests are disabled for your account.");
+      return;
+    }
     setCartDecisionProduct(product);
     setCartDecisionStep(step);
     setShowCartDecisionModal(true);
@@ -1010,6 +1144,10 @@ function CustomerDashboard() {
   };
 
   const openOrderReviewModal = () => {
+    if (!canRequestOrders) {
+      setCartActionError("Order requests are disabled for your account.");
+      return;
+    }
     if (!cartDecisionProduct) return;
     if (!estimateForm.width || !estimateForm.height) {
       setCartActionError("Please enter width and height to estimate.");
@@ -1026,6 +1164,10 @@ function CustomerDashboard() {
   };
 
   const handleEstimateAfterEstimation = () => {
+    if (!canRequestOrders) {
+      setCartActionError("Your estimate is ready, but order requests are disabled for your account.");
+      return;
+    }
     if (estimateFlowType === "add_to_cart_estimate") {
       handleEstimateAddToCart();
     } else {
@@ -1340,6 +1482,10 @@ function CustomerDashboard() {
   };
 
   const openOrderNowModal = (product) => {
+    if (!canRequestOrders) {
+      showPermissionNotice("Order requests are disabled for your account.");
+      return;
+    }
     setOrderNowProduct(product);
     setOrderNowQuantity(1);
     setShowOrderNowModal(true);
@@ -1432,6 +1578,10 @@ function CustomerDashboard() {
   };
 
   const handleTrackingSubmit = async () => {
+    if (!canTrackProducts) {
+      showPermissionNotice("Product tracking is disabled for your account.");
+      return;
+    }
     if (!trackingNumber.trim()) {
       setTrackingResult({ error: "Please enter a tracking number." });
       return;
@@ -1996,11 +2146,42 @@ function CustomerDashboard() {
   }
 
   return (
-    <div className={`min-h-screen overflow-x-clip bg-[size:42px_42px] ${darkMode
+    <div className={`relative min-h-screen overflow-x-clip bg-[size:42px_42px] ${darkMode
       ? "bg-slate-950 text-slate-100 [background-image:linear-gradient(rgba(148,163,184,0.07)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.07)_1px,transparent_1px),radial-gradient(circle_at_top_right,rgba(127,29,29,0.24),transparent_34%)]"
       : "bg-gray-100 text-slate-900 [background-image:linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(135deg,rgba(255,255,255,0.9),transparent_58%)]"
     }`}>
+      <div className="customer-theme-drawing" aria-hidden="true">
+        <div className="customer-theme-circle customer-theme-circle-top" />
+        <div className="customer-theme-circle customer-theme-circle-top-small" />
+        <div className="customer-theme-circle customer-theme-circle-middle" />
+        <div className="customer-theme-circle customer-theme-circle-middle-small" />
+        <div className="customer-theme-circle customer-theme-circle-bottom" />
+        <div className="customer-theme-circle customer-theme-circle-bottom-small" />
+      </div>
       <Toaster position="bottom-right" />
+      {permissionNotice && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[2px]">
+          <div
+            className={`w-full max-w-md rounded-3xl border border-amber-200 bg-white p-6 text-center shadow-2xl transition-all duration-300 ${
+              permissionNotice.closing ? "translate-y-2 scale-95 opacity-0" : "translate-y-0 scale-100 opacity-100"
+            }`}
+            role="alertdialog"
+            aria-live="assertive"
+            aria-label="Permission notice"
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+              <Info size={24} />
+            </div>
+            <h2 className="mt-4 text-lg font-black text-slate-900">{permissionNotice.maintenance ? "System Under Maintenance" : "Access Restricted"}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{permissionNotice.message}</p>
+            {permissionNotice.maintenance ? (
+              <button type="button" onClick={handleLogoutConfirm} className="mt-5 rounded-xl bg-red-700 px-6 py-2.5 text-sm font-bold text-white transition hover:bg-red-800">Logout ({maintenanceCountdown})</button>
+            ) : (
+              <button type="button" onClick={() => setPermissionNotice(null)} className="mt-5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800">Close</button>
+            )}
+          </div>
+        </div>
+      )}
       <div className={`${darkMode ? "bg-slate-900/90 border-b border-slate-700 shadow-lg shadow-slate-950/20" : "bg-white/95 border-b border-slate-200 shadow-sm"} sticky top-0 z-50`}>
         <div className="w-full px-6 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <button
@@ -2460,7 +2641,7 @@ function CustomerDashboard() {
             )}
           </div>
 
-          <section className={`mt-8 rounded-3xl px-6 py-8 shadow-sm sm:px-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+          {canShowRatings && <section className={`mt-8 rounded-3xl px-6 py-8 shadow-sm sm:px-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
             <h2 className={`text-center text-3xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Customer Ratings</h2>
             <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
               <div className="text-center">
@@ -2496,7 +2677,7 @@ function CustomerDashboard() {
                 })}
               </div>
             </div>
-          </section>
+          </section>}
         </div>
       )}
 
@@ -3167,7 +3348,7 @@ function CustomerDashboard() {
                         </button>
                         <button
                           onClick={handleEstimateAfterEstimation}
-                          disabled={orderRequestLoading}
+                          disabled={orderRequestLoading || !canRequestOrders}
                           className={`rounded-xl text-white font-semibold py-3 px-6 transition shadow-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed ${
                             estimateFlowType === "add_to_cart_estimate"
                               ? "bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800"
@@ -3178,10 +3359,10 @@ function CustomerDashboard() {
                           {estimateFlowType === "add_to_cart_estimate"
                             ? orderRequestLoading
                               ? "Adding..."
-                              : "Add to Cart"
+                              : canRequestOrders ? "Add to Cart" : "Orders Disabled"
                             : orderRequestLoading
                               ? "Requesting..."
-                              : "Request Order"}
+                              : canRequestOrders ? "Request Order" : "Orders Disabled"}
                         </button>
                       </div>
                     )}

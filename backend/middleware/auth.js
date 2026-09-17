@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import User from "../models/User.js";
 
 /**
  * Authentication Middleware
@@ -61,4 +62,21 @@ export const roleMiddleware = (requiredRoles) => {
 
     next();
   };
+};
+
+export const permissionMiddleware = (permission) => async (req, res, next) => {
+  try {
+    if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
+    if (req.user.role !== "customer") return next();
+
+    const user = await User.findById(req.user.id).select("access_permissions").lean();
+    const allowed = user?.access_permissions?.[permission] !== false;
+    if (!allowed) {
+      return res.status(403).json({ success: false, message: "This action is disabled for your account." });
+    }
+    next();
+  } catch (error) {
+    console.error("Permission middleware error:", error);
+    res.status(500).json({ success: false, message: "Unable to verify account permissions." });
+  }
 };

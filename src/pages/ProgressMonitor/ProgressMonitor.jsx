@@ -515,6 +515,11 @@ function ProgressMonitor() {
           <AdminPageHeader
             title="Progress Monitor"
             description="Monitor fabrication and installation progress."
+            stats={[
+              { label: "Projects", value: projectList.length, color: "text-blue-200" },
+              { label: "In Progress", value: projectList.filter((project) => project.progress < 100 && project.status !== "Cancelled").length, color: "text-amber-200" },
+              { label: "Completed", value: projectList.filter((project) => project.status === "Completed" || project.progress >= 100).length, color: "text-emerald-300" },
+            ]}
           />
 
           {/* FILTERS */}

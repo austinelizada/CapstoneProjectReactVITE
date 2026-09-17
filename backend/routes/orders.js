@@ -1,5 +1,5 @@
 import express from "express";
-import { authMiddleware, roleMiddleware } from "../middleware/auth.js";
+import { authMiddleware, permissionMiddleware, roleMiddleware } from "../middleware/auth.js";
 import {
   createOrder,
   createOrderAsAdmin,
@@ -21,12 +21,12 @@ import {
 const router = express.Router();
 
 router.get("/", authMiddleware, listOrders);
-router.post("/", authMiddleware, roleMiddleware("customer"), createOrder);
-router.get("/track/:tracking", trackOrder);
+router.post("/", authMiddleware, roleMiddleware("customer"), permissionMiddleware("can_request_orders"), createOrder);
+router.get("/track/:tracking", authMiddleware, permissionMiddleware("can_track_products"), trackOrder);
 router.put("/:orderId/contract", authMiddleware, roleMiddleware("customer"), respondToContract);
 router.put("/:orderId/installation-schedule", authMiddleware, respondToInstallationSchedule);
-router.put("/:orderId/review", authMiddleware, roleMiddleware("customer"), submitOrderReview);
-router.get("/reviews/product/:productId", authMiddleware, getProductReviews);
+router.put("/:orderId/review", authMiddleware, roleMiddleware("customer"), permissionMiddleware("can_upload_feedback"), submitOrderReview);
+router.get("/reviews/product/:productId", authMiddleware, permissionMiddleware("can_upload_feedback"), getProductReviews);
 
 // Admin routes
 router.get("/admin/list", authMiddleware, roleMiddleware("admin"), getAdminOrders);

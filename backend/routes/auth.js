@@ -2,6 +2,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import Admin from "../models/Admin.js";
+import SystemSetting from "../models/SystemSetting.js";
 import { authMiddleware, roleMiddleware } from "../middleware/auth.js";
 
 const normalizeAddress = (value) => {
@@ -62,6 +63,85 @@ const buildAddressFromRequest = (reqBody) => {
 };
 
 const router = express.Router();
+const systemSettingClients = new Set();
+
+const broadcastSystemSettings = (maintenanceMode) => {
+  const payload = `data: ${JSON.stringify({ maintenance_mode: maintenanceMode === true })}\n\n`;
+  systemSettingClients.forEach((client) => {
+    try {
+      client.write(payload);
+    } catch (error) {
+      systemSettingClients.delete(client);
+    }
+  });
+};
+
+router.get("/system-settings", authMiddleware, async (req, res) => {
+  try {
+    const settings = await SystemSetting.findOne({ key: "global" }).lean();
+    res.json({
+      success: true,
+      maintenance_mode: settings?.maintenance_mode === true,
+      global_permissions: settings?.global_permissions || null,
+    });
+  } catch (error) {
+    console.error("Get system settings error:", error);
+    res.status(500).json({ success: false, message: "Unable to load system settings." });
+  }
+});
+
+router.get("/system-settings/events", async (req, res) => {
+  try {
+    const token = req.query.token;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key");
+    if (!decoded?.id) return res.status(401).end();
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    const settings = await SystemSetting.findOne({ key: "global" }).lean();
+    res.write(`data: ${JSON.stringify({ maintenance_mode: settings?.maintenance_mode === true })}\n\n`);
+    systemSettingClients.add(res);
+
+    const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 25000);
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      systemSettingClients.delete(res);
+      res.end();
+    });
+  } catch (error) {
+    res.status(401).end();
+  }
+});
+
+router.patch("/system-settings", authMiddleware, roleMiddleware("admin"), async (req, res) => {
+  try {
+    const update = {};
+    if (typeof req.body?.maintenance_mode === "boolean") {
+      update.maintenance_mode = req.body.maintenance_mode;
+    }
+    if (req.body?.global_permissions && typeof req.body.global_permissions === "object") {
+      update.global_permissions = req.body.global_permissions;
+    }
+
+    const settings = await SystemSetting.findOneAndUpdate(
+      { key: "global" },
+      { $set: update },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    ).lean();
+    broadcastSystemSettings(settings.maintenance_mode);
+    res.json({
+      success: true,
+      maintenance_mode: settings.maintenance_mode === true,
+      global_permissions: settings.global_permissions || null,
+    });
+  } catch (error) {
+    console.error("Update system settings error:", error);
+    res.status(500).json({ success: false, message: "Unable to update system settings." });
+  }
+});
 
 /**
  * POST /api/auth/register
@@ -150,6 +230,7 @@ router.post("/register", async (req, res) => {
         city: user.city,
         province: user.province,
         zip_code: user.zip_code,
+        access_permissions: user.access_permissions,
         created_at: user.createdAt,
         updated_at: user.updatedAt,
       },
@@ -228,6 +309,54 @@ router.get("/customers", authMiddleware, roleMiddleware("admin"), async (req, re
   } catch (error) {
     console.error("Customer search error:", error);
     res.status(500).json({ success: false, message: "Unable to search customers", error: error.message });
+  }
+});
+
+router.get("/users", authMiddleware, roleMiddleware("admin"), async (req, res) => {
+  try {
+    const { role, search } = req.query;
+    const query = {};
+
+    if (role && role !== "all") query.role = role;
+    if (search?.trim()) {
+      const queryText = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(queryText, "i");
+      query.$or = [{ first_name: regex }, { last_name: regex }, { email: regex }, { username: regex }];
+    }
+
+    const users = await User.find(query).select("-password").sort({ createdAt: -1 });
+    res.json({ success: true, users });
+  } catch (error) {
+    console.error("Get users error:", error);
+    res.status(500).json({ success: false, message: "Unable to load users." });
+  }
+});
+
+router.patch("/users/:id", authMiddleware, roleMiddleware("admin"), async (req, res) => {
+  try {
+    const allowedFields = [
+      "can_request_orders",
+      "can_estimate_pricing",
+      "view_only_access",
+      "can_track_products",
+      "can_upload_feedback",
+      "show_ratings_homepage",
+    ];
+    const permissions = Object.fromEntries(
+      allowedFields
+        .filter((field) => typeof req.body?.[field] === "boolean")
+        .map((field) => [`access_permissions.${field}`, req.body[field]])
+    );
+    const update = {};
+    if (Object.keys(permissions).length > 0) Object.assign(update, permissions);
+    if (typeof req.body?.is_active === "boolean") update.is_active = req.body.is_active;
+
+    const user = await User.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true }).select("-password");
+    if (!user) return res.status(404).json({ success: false, message: "User not found." });
+    res.json({ success: true, user });
+  } catch (error) {
+    console.error("Update user access error:", error);
+    res.status(500).json({ success: false, message: "Unable to update user access." });
   }
 });
 
@@ -420,6 +549,7 @@ router.post("/login", async (req, res) => {
         city: user.city,
         province: user.province,
         zip_code: user.zip_code,
+        access_permissions: user.access_permissions,
         created_at: user.createdAt,
         updated_at: user.updatedAt,
       },
@@ -477,6 +607,7 @@ router.get("/me", authMiddleware, async (req, res) => {
         city: user.city,
         province: user.province,
         zip_code: user.zip_code,
+        access_permissions: user.access_permissions,
         created_at: user.createdAt,
         updated_at: user.updatedAt,
       },
@@ -592,6 +723,7 @@ router.put("/profile", authMiddleware, async (req, res) => {
         city: user.city,
         province: user.province,
         zip_code: user.zip_code,
+        access_permissions: user.access_permissions,
         created_at: user.createdAt,
         updated_at: user.updatedAt,
       },

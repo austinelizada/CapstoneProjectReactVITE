@@ -65,6 +65,14 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    access_permissions: {
+      can_request_orders: { type: Boolean, default: true },
+      can_estimate_pricing: { type: Boolean, default: true },
+      view_only_access: { type: Boolean, default: false },
+      can_track_products: { type: Boolean, default: true },
+      can_upload_feedback: { type: Boolean, default: true },
+      show_ratings_homepage: { type: Boolean, default: true },
+    },
   },
   {
     timestamps: true,

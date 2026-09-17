@@ -775,6 +775,11 @@ function Transactions() {
           <AdminPageHeader
             title="Transactions"
             description="Manage receipts, contracts and completed projects."
+            stats={[
+              { label: "Receipts", value: receipts.length, color: "text-blue-200" },
+              { label: "Completed", value: completedProjects.length, color: "text-emerald-300" },
+              { label: "In Warranty", value: inWarrantyProjects.length, color: "text-amber-200" },
+            ]}
           />
 
           <div className="flex gap-4 mt-6 flex-wrap">

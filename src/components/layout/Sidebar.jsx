@@ -32,12 +32,19 @@ function Sidebar({ isOpen }) {
   return (
     <>
       <aside
-        className={`admin-sidebar shrink-0 ${darkMode ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300"} border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${
+        className={`admin-sidebar relative shrink-0 border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${darkMode ? "border-red-950/70 bg-gradient-to-b from-[#050817] via-[#10162d] to-[#3b0b1b] text-slate-100" : "border-slate-300 bg-gradient-to-b from-slate-100 via-white to-slate-200 text-slate-900"} ${
           isOpen ? "w-72" : "w-20"
         }`}
       >
+        <div className={`pointer-events-none absolute -right-28 -top-24 h-72 w-72 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
+        <div className={`pointer-events-none absolute -right-16 -top-12 h-48 w-48 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
+        <div className={`pointer-events-none absolute -left-24 top-1/3 h-44 w-44 rounded-full border ${darkMode ? "border-blue-200/10" : "border-slate-900/10"}`} />
+        <div className={`pointer-events-none absolute -left-14 top-[38%] h-24 w-24 rounded-full border ${darkMode ? "border-blue-200/10" : "border-slate-900/10"}`} />
+        <div className={`pointer-events-none absolute -bottom-28 right-6 h-56 w-56 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
+        <div className={`pointer-events-none absolute -bottom-12 right-24 h-28 w-28 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
+
         {/* LOGO */}
-        <div className={`flex items-center gap-1 p-5 border-b ${darkMode ? "border-slate-700" : ""}`}>
+        <div className={`relative z-10 flex items-center gap-1 border-b p-5 ${darkMode ? "border-red-200/10" : "border-slate-300/80"}`}>
           <img
             src={logo}
             alt="ACGC Logo"
@@ -64,6 +71,7 @@ function Sidebar({ isOpen }) {
             label="Dashboard"
             isOpen={isOpen}
             active={location.pathname === "/dashboard"}
+            darkMode={darkMode}
           />
 
           <MenuItem
@@ -72,6 +80,7 @@ function Sidebar({ isOpen }) {
             label="Site Inspection"
             isOpen={isOpen}
             active={location.pathname === "/site-inspection"}
+            darkMode={darkMode}
           />
 
           <MenuItem
@@ -80,6 +89,7 @@ function Sidebar({ isOpen }) {
             label="Transactions"
             isOpen={isOpen}
             active={location.pathname === "/transactions"}
+            darkMode={darkMode}
           />
 
           <MenuItem
@@ -88,6 +98,7 @@ function Sidebar({ isOpen }) {
             label="Progress Monitor"
             isOpen={isOpen}
             active={location.pathname === "/progress-monitor"}
+            darkMode={darkMode}
           />
 
           <MenuItem
@@ -96,6 +107,7 @@ function Sidebar({ isOpen }) {
             label="Products"
             isOpen={isOpen}
             active={location.pathname === "/product"}
+            darkMode={darkMode}
           />
 
           <MenuItem
@@ -104,6 +116,7 @@ function Sidebar({ isOpen }) {
             label="Admin Profile"
             isOpen={isOpen}
             active={location.pathname === "/profile"}
+            darkMode={darkMode}
           />
 
           <MenuItem
@@ -112,13 +125,14 @@ function Sidebar({ isOpen }) {
             label="Settings"
             isOpen={isOpen}
             active={location.pathname === "/settings"}
+            darkMode={darkMode}
           />
 
           {/* LOGOUT */}
           <button
             onClick={() => setShowLogoutModal(true)}
             title="Logout"
-            className={`flex w-full items-center gap-3 p-3 rounded-xl text-red-500 transition-all duration-300 ease-in-out ${darkMode ? "hover:bg-slate-800" : "hover:bg-red-50"} ${isOpen ? "justify-start" : "justify-center"}`}
+            className={`relative z-10 flex w-full items-center gap-3 rounded-xl p-3 text-red-500 transition-all duration-300 ease-in-out ${darkMode ? "hover:bg-red-950/70 hover:text-red-300" : "hover:bg-red-50"} ${isOpen ? "justify-start" : "justify-center"}`}
           >
             <LogOut size={23} />
             <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
@@ -173,6 +187,7 @@ function MenuItem({
   isOpen,
   active,
   nested = false,
+  darkMode = false,
 }) {
   return (
     <Link
@@ -180,8 +195,12 @@ function MenuItem({
       title={label}
       className={`flex w-full items-center gap-1 p-3 rounded-xl transition-all duration-300 ease-in-out ${
         active
-          ? "bg-red-600 text-white"
-          : "text-gray-700 hover:bg-red-50 hover:text-red-700"
+          ? darkMode
+            ? "bg-gradient-to-r from-red-700 to-red-950 text-white shadow-lg shadow-red-950/30"
+            : "bg-red-600 text-white"
+          : darkMode
+            ? "text-slate-300 hover:bg-red-950/70 hover:text-red-200"
+            : "text-gray-700 hover:bg-red-50 hover:text-red-700"
       } ${isOpen ? "justify-start" : "justify-center"} ${nested ? "rounded-l-none rounded-r-xl" : ""}`}
     >
       {icon}

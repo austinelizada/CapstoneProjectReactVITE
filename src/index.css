@@ -346,6 +346,140 @@
   animation: logoutModalIn 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.admin-shell-drawing {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.admin-shell-circle {
+  position: absolute;
+  border: 1px solid rgb(15 23 42 / 0.07);
+  border-radius: 9999px;
+}
+
+.admin-shell-circle-top {
+  top: -12rem;
+  right: -8rem;
+  width: 30rem;
+  height: 30rem;
+}
+
+.admin-shell-circle-top-small {
+  top: -7rem;
+  right: -3rem;
+  width: 19rem;
+  height: 19rem;
+}
+
+.admin-shell-circle-middle {
+  top: 34%;
+  left: -13rem;
+  width: 27rem;
+  height: 27rem;
+}
+
+.admin-shell-circle-middle-small {
+  top: 40%;
+  left: -6rem;
+  width: 15rem;
+  height: 15rem;
+}
+
+.admin-shell-circle-bottom {
+  right: 8%;
+  bottom: -16rem;
+  width: 32rem;
+  height: 32rem;
+}
+
+.admin-shell-circle-bottom-small {
+  right: 16%;
+  bottom: -7rem;
+  width: 18rem;
+  height: 18rem;
+}
+
+.admin-theme-dark .admin-shell-circle {
+  border-color: rgb(248 113 113 / 0.09);
+}
+
+.admin-theme-dark .admin-shell-circle-middle,
+.admin-theme-dark .admin-shell-circle-middle-small {
+  border-color: rgb(147 197 253 / 0.08);
+}
+
+.customer-theme-drawing {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.customer-theme-circle {
+  position: absolute;
+  border: 1px solid rgb(15 23 42 / 0.07);
+  border-radius: 9999px;
+}
+
+.customer-theme-circle-top {
+  top: -12rem;
+  right: -8rem;
+  width: 30rem;
+  height: 30rem;
+}
+
+.customer-theme-circle-top-small {
+  top: -7rem;
+  right: -3rem;
+  width: 19rem;
+  height: 19rem;
+}
+
+.customer-theme-circle-middle {
+  top: 34%;
+  left: -13rem;
+  width: 27rem;
+  height: 27rem;
+}
+
+.customer-theme-circle-middle-small {
+  top: 40%;
+  left: -6rem;
+  width: 15rem;
+  height: 15rem;
+}
+
+.customer-theme-circle-bottom {
+  right: 8%;
+  bottom: -16rem;
+  width: 32rem;
+  height: 32rem;
+}
+
+.customer-theme-circle-bottom-small {
+  right: 16%;
+  bottom: -7rem;
+  width: 18rem;
+  height: 18rem;
+}
+
+.customer-theme-drawing:has(+ *) {
+  opacity: 1;
+}
+
+.customer-theme-circle-top,
+.customer-theme-circle-top-small,
+.customer-theme-circle-middle,
+.customer-theme-circle-middle-small,
+.customer-theme-circle-bottom,
+.customer-theme-circle-bottom-small {
+  opacity: 1;
+}
+
 .admin-theme-dark {
   min-height: 100vh;
   background-color: #0f172a;

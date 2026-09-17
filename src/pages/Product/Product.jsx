@@ -935,6 +935,11 @@ function Products() {
           <AdminPageHeader
             title="Products"
             description="Manage product listings, pricing, and availability from one unified dashboard."
+            stats={[
+              { label: "Products", value: products.length, color: "text-blue-200" },
+              { label: "Active", value: products.filter((product) => product.is_active).length, color: "text-emerald-300" },
+              { label: "Inactive", value: products.filter((product) => !product.is_active).length, color: "text-red-300" },
+            ]}
           />
 
           {/* FILTERS */}
