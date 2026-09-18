@@ -143,8 +143,6 @@ function Login() {
 
             <div className="w-full">
 
-              <p className="text-xs font-black uppercase tracking-[0.28em] text-red-700">Administration access</p>
-
               <h1 className="mt-2 text-4xl font-black tracking-tight text-slate-900 sm:text-5xl">
                 Sign in to ACGC
               </h1>
