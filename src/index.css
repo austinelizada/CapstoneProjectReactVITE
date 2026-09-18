@@ -672,6 +672,10 @@ body::-webkit-scrollbar,
   color: #cbd5e1 !important;
 }
 
+.admin-theme-dark .admin-sidebar .text-red-500 {
+  color: #ef4444 !important;
+}
+
 .admin-theme-dark .admin-sidebar .hover\:bg-red-50:hover {
   background-color: #334155 !important;
 }
