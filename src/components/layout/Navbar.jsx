@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Menu, Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart } from "lucide-react";
+import { Menu, Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck } from "lucide-react";
 import { getAdminOrders } from "@/api/orders";
 import { formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
+
+const ADMIN_READ_NOTIFICATIONS_KEY = "acgc-admin-read-notifications";
 
 function Navbar({ toggleSidebar }) {
   const { darkMode, toggleDarkMode } = useAdminTheme();
@@ -65,8 +67,17 @@ function NotificationMenu() {
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [notificationFilter, setNotificationFilter] = useState("all");
   const { darkMode } = useAdminTheme();
   const navigate = useNavigate();
+
+  const getReadNotificationIds = () => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(ADMIN_READ_NOTIFICATIONS_KEY) || "[]"));
+    } catch {
+      return new Set();
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -81,6 +92,7 @@ function NotificationMenu() {
           getAdminOrders({ contract_status: "declined" }),
         ]);
 
+        const readNotificationIds = getReadNotificationIds();
         const items = [
           ...(newOrders.orders || []).map((order) => ({
             id: `${order._id}-new-order`,
@@ -88,6 +100,7 @@ function NotificationMenu() {
             message: `${order.tracking || "An order"} is waiting for approval.`,
             icon: ShoppingCart,
             color: "text-blue-600",
+            category: "orders",
             path: "/dashboard",
             date: order.createdAt,
           })),
@@ -97,6 +110,7 @@ function NotificationMenu() {
             message: `${order.tracking || "A project"} is ready for site inspection.`,
             icon: ClipboardCheck,
             color: "text-amber-600",
+            category: "inspections",
             path: "/site-inspection",
             date: order.updatedAt || order.createdAt,
           })),
@@ -106,6 +120,7 @@ function NotificationMenu() {
             message: `Customer accepted ${order.tracking || "a contract"}.`,
             icon: CheckCircle2,
             color: "text-emerald-600",
+            category: "accepted",
             path: `/site-inspection?view=${order._id || order.id || order.tracking}`,
             date: order.updatedAt || order.createdAt,
           })),
@@ -115,13 +130,14 @@ function NotificationMenu() {
             message: `Customer declined ${order.tracking || "a contract"}.`,
             icon: XCircle,
             color: "text-red-600",
+            category: "declined",
             path: `/site-inspection?view=${order._id || order.id || order.tracking}`,
             date: order.updatedAt || order.createdAt,
           })),
         ]
           .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
           .slice(0, 8)
-          .map((item) => ({ ...item, read: false }));
+          .map((item) => ({ ...item, read: readNotificationIds.has(item.id) }));
 
         if (active) setNotifications(items);
       } catch (error) {
@@ -139,27 +155,50 @@ function NotificationMenu() {
   }, []);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const filteredNotifications = notifications.filter((notification) => (
+    notificationFilter === "all" || notification.category === notificationFilter
+  ));
+  const adminFilterOptions = [
+    ["all", "All"],
+    ["orders", "Orders"],
+    ["inspections", "Inspections"],
+    ["accepted", "Accepted"],
+    ["declined", "Declined"],
+  ];
 
   const openNotification = (notification) => {
     setNotifications((current) => current.map((item) => (
       item.id === notification.id ? { ...item, read: true } : item
     )));
+    const readNotificationIds = getReadNotificationIds();
+    readNotificationIds.add(notification.id);
+    localStorage.setItem(ADMIN_READ_NOTIFICATIONS_KEY, JSON.stringify([...readNotificationIds]));
+    window.dispatchEvent(new Event("admin-notifications-updated"));
     setOpen(false);
     navigate(notification.path);
+  };
+
+  const markAllNotificationsRead = () => {
+    setNotifications((current) => current.map((item) => ({ ...item, read: true })));
+    const readNotificationIds = getReadNotificationIds();
+    notifications.forEach((notification) => readNotificationIds.add(notification.id));
+    localStorage.setItem(ADMIN_READ_NOTIFICATIONS_KEY, JSON.stringify([...readNotificationIds]));
+    window.dispatchEvent(new Event("admin-notifications-updated"));
   };
 
   return (
     <div className="relative">
       <button
         onClick={() => setOpen((s) => !s)}
-        className={`px-4 py-2 rounded-xl flex items-center gap-2 ${open ? (darkMode ? "bg-slate-800 text-red-300" : "bg-gray-100 text-red-600") : (darkMode ? "hover:bg-slate-800" : "hover:bg-gray-100")}`}
+        className={`relative rounded-xl p-2.5 transition ${open || unreadCount > 0 ? (darkMode ? "bg-red-950/60 text-red-300 ring-1 ring-red-400/60" : "bg-red-50 text-red-600 ring-1 ring-red-200") : (darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-gray-100")}`}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label="Notifications"
+        title="Notifications"
       >
-        <Bell size={18} />
-        <span>Notifications</span>
+        <Bell size={23} strokeWidth={2.2} />
         {unreadCount > 0 && (
-          <span className="ml-1 inline-flex items-center justify-center h-6 w-6 rounded-full bg-red-600 text-white text-xs font-semibold">
+          <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 animate-pulse items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-semibold text-white shadow-md shadow-red-500/40">
             {unreadCount}
           </span>
         )}
@@ -172,19 +211,57 @@ function NotificationMenu() {
               <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Admin activity</p>
               <p className="mt-0.5 text-xs text-slate-400">Actions that need your attention</p>
             </div>
-            {unreadCount > 0 && <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600">{unreadCount} new</span>}
+            <div className="flex items-center gap-2">
+              {unreadCount > 0 && <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600">{unreadCount} new</span>}
+              <button
+                type="button"
+                onClick={markAllNotificationsRead}
+                disabled={unreadCount === 0}
+                className={`inline-flex items-center gap-1 text-xs font-semibold transition ${unreadCount === 0 ? "cursor-not-allowed text-slate-400" : darkMode ? "text-red-300 hover:text-white" : "text-red-600 hover:text-red-700"}`}
+              >
+                <CheckCheck size={14} />
+                Mark all as read
+              </button>
+            </div>
+          </div>
+
+          <div className={`flex flex-wrap gap-1 border-b px-3 py-2 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+            {adminFilterOptions.map(([filter, label]) => {
+              const count = filter === "all"
+                ? notifications.length
+                : notifications.filter((notification) => notification.category === filter).length;
+
+              return (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => setNotificationFilter(filter)}
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                    notificationFilter === filter
+                      ? darkMode
+                        ? "bg-slate-950 text-white"
+                        : "bg-slate-100 text-slate-950"
+                      : darkMode
+                        ? "text-slate-300 hover:bg-slate-700"
+                        : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {label} ({count})
+                </button>
+              );
+            })}
           </div>
 
           {loading ? (
             <div className={`px-4 py-8 text-center text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Loading admin activity...</div>
-          ) : notifications.length === 0 ? (
+          ) : filteredNotifications.length === 0 ? (
             <div className={`px-4 py-6 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
               <Bell size={22} className="mx-auto mb-2 text-slate-400" />
-              <p>No action items right now</p>
+              <p>{notificationFilter === "all" ? "No action items right now" : `No ${notificationFilter} notifications`}</p>
             </div>
           ) : (
             <div className="max-h-96 divide-y overflow-y-auto">
-              {notifications.map((n) => (
+              {filteredNotifications.map((n) => (
                 <button
                   key={n.id}
                   onClick={() => openNotification(n)}

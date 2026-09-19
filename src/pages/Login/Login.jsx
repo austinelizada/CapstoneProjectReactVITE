@@ -142,7 +142,7 @@ function Login() {
           <div className="flex items-center bg-white p-7 text-slate-900 lg:p-12">
 
             <div className="w-full">
-
+              
               <h1 className="mt-2 text-4xl font-black tracking-tight text-slate-900 sm:text-5xl">
                 Sign in to ACGC
               </h1>

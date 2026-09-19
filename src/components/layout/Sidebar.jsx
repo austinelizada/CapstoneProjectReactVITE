@@ -33,7 +33,7 @@ function Sidebar({ isOpen }) {
     <>
       <aside
         className={`admin-sidebar relative shrink-0 border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${darkMode ? "border-red-950/70 bg-gradient-to-b from-[#050817] via-[#10162d] to-[#3b0b1b] text-slate-100" : "border-slate-300 bg-gradient-to-b from-slate-100 via-white to-slate-200 text-slate-900"} ${
-          isOpen ? "w-72" : "w-20"
+          isOpen ? "w-64" : "w-20"
         }`}
       >
         <div className={`pointer-events-none absolute -right-28 -top-24 h-72 w-72 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
@@ -44,11 +44,11 @@ function Sidebar({ isOpen }) {
         <div className={`pointer-events-none absolute -bottom-12 right-24 h-28 w-28 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
 
         {/* LOGO */}
-        <div className={`relative z-10 flex items-center gap-1 border-b p-5 ${darkMode ? "border-red-200/10" : "border-slate-300/80"}`}>
+        <div className={`relative z-10 flex items-center gap-1 border-b p-4 ${darkMode ? "border-red-200/10" : "border-slate-300/80"}`}>
           <img
             src={logo}
             alt="ACGC Logo"
-            className="w-20 h-12 object-contain"
+            className="w-14 h-12 object-contain"
           />
 
           <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
@@ -56,7 +56,7 @@ function Sidebar({ isOpen }) {
               ACGC ADMIN
             </h1>
 
-            <p className={`text-xs font-bold ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
+            <p className={`whitespace-nowrap text-xs font-bold ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
               Aluminum & Glass Services
             </p>
           </div>
@@ -193,17 +193,15 @@ function MenuItem({
     <Link
       to={to}
       title={label}
-      className={`flex w-full items-center gap-1 p-3 rounded-xl transition-all duration-300 ease-in-out ${
+      className={`relative flex w-full items-center gap-1 p-3 rounded-xl transition-all duration-300 ease-in-out ${
         active
-          ? darkMode
-            ? "bg-gradient-to-r from-red-700 to-red-950 text-white shadow-lg shadow-red-950/30"
-            : "bg-red-600 text-white"
+          ? "bg-gradient-to-r from-red-700 to-red-950 text-white shadow-lg shadow-red-950/30"
           : darkMode
             ? "text-slate-300 hover:bg-red-950/70 hover:text-red-200"
             : "text-gray-700 hover:bg-red-50 hover:text-red-700"
       } ${isOpen ? "justify-start" : "justify-center"} ${nested ? "rounded-l-none rounded-r-xl" : ""}`}
     >
-      {icon}
+      <span className="relative shrink-0">{icon}</span>
       <span className={`overflow-hidden whitespace-nowrap transition-all duration-1000 ease-in-out ${
         isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"
       }`}>

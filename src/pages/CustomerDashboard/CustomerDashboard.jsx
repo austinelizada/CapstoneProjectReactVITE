@@ -22,6 +22,7 @@ import {
   Minus,
   FileText,
   Bell,
+  CheckCheck,
   Star,
   StarHalf,
   Clock3,
@@ -45,6 +46,8 @@ import { getSystemSettings, getSystemSettingsEventsUrl } from "@/api/users";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
+
+const CUSTOMER_READ_NOTIFICATIONS_KEY = "acgc-customer-read-notifications";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -305,12 +308,33 @@ function CustomerDashboard() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationFilter, setNotificationFilter] = useState("all");
+  const [readNotificationIds, setReadNotificationIds] = useState(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(CUSTOMER_READ_NOTIFICATIONS_KEY) || "[]"));
+    } catch {
+      return new Set();
+    }
+  });
   const [profileTab, setProfileTab] = useState("profile");
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
   const [permissionNotice, setPermissionNotice] = useState(null);
   const [maintenanceCountdown, setMaintenanceCountdown] = useState(10);
   const permissionNoticeTimer = useRef(null);
+  const unreadNotificationCount = orders.filter((order) => !readNotificationIds.has(order._id || order.tracking)).length;
+  const readNotificationCount = orders.length - unreadNotificationCount;
+  const filteredNotifications = orders.filter((order) => {
+    const isRead = readNotificationIds.has(order._id || order.tracking);
+    return notificationFilter === "all" || (notificationFilter === "unread" ? !isRead : isRead);
+  });
+
+  const markAllCustomerNotificationsRead = () => {
+    const nextReadNotificationIds = new Set(readNotificationIds);
+    orders.forEach((order) => nextReadNotificationIds.add(order._id || order.tracking));
+    setReadNotificationIds(nextReadNotificationIds);
+    localStorage.setItem(CUSTOMER_READ_NOTIFICATIONS_KEY, JSON.stringify([...nextReadNotificationIds]));
+  };
 
   useEffect(() => {
     getSystemSettings()
@@ -2235,27 +2259,28 @@ function CustomerDashboard() {
             </button>
             <button
               onClick={() => setActiveTab("cart")}
-              className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-                activeTab === "cart"
+              className={`order-1 relative rounded-full p-2.5 text-sm font-semibold transition ${
+                activeTab === "cart" || cartQuantity > 0
                   ? darkMode
                     ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
-                    : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
+                    : "border border-slate-200 bg-slate-100 text-slate-700 shadow-sm"
                   : darkMode
                     ? "text-slate-200 hover:bg-slate-800"
                     : "text-slate-700 hover:bg-slate-100"
               }`}
+              aria-label="Cart"
+              title="Cart"
             >
-              <ShoppingCart size={18} />
-              <span>Cart</span>
+              <ShoppingCart size={42} strokeWidth={2.2} />
               {cartQuantity > 0 && (
-                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
+                <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 animate-pulse items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white shadow-md shadow-red-500/40">
                   {cartQuantity}
                 </span>
               )}
             </button>
             <button
               onClick={() => setActiveTab("products")}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+              className={`order-3 rounded-full px-4 py-2 text-sm font-semibold transition ${
                 activeTab === "products"
                   ? darkMode
                     ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
@@ -2269,7 +2294,7 @@ function CustomerDashboard() {
             </button>
             <button
               onClick={() => setActiveTab("orders")}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+              className={`order-4 rounded-full px-4 py-2 text-sm font-semibold transition ${
                 activeTab === "orders"
                   ? darkMode
                     ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
@@ -2283,7 +2308,7 @@ function CustomerDashboard() {
             </button>
             <button
               onClick={() => setActiveTab("about")}
-              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+              className={`order-5 rounded-full px-4 py-2 text-sm font-semibold transition ${
                 activeTab === "about"
                   ? darkMode
                     ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
@@ -2295,26 +2320,27 @@ function CustomerDashboard() {
             >
               About Us
             </button>
-            <div className="relative">
+            <div className="relative order-2">
               <button
                 onClick={() => setNotificationsOpen((s) => !s)}
-                className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-                  notificationsOpen
+                className={`relative rounded-full p-2.5 text-sm font-semibold transition ${
+                  notificationsOpen || unreadNotificationCount > 0
                     ? darkMode
                       ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
-                      : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
+                      : "border border-slate-200 bg-slate-100 text-slate-700 shadow-sm"
                     : darkMode
                       ? "text-slate-200 hover:bg-slate-800"
                       : "text-slate-700 hover:bg-slate-100"
                 }`}
                 aria-haspopup="menu"
                 aria-expanded={notificationsOpen}
+                aria-label="Notifications"
+                title="Notifications"
               >
-                <Bell size={18} />
-                <span>Notifications</span>
-                {orders.length > 0 && (
-                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white">
-                    {orders.length}
+                <Bell size={23} strokeWidth={2.2} />
+                {unreadNotificationCount > 0 && (
+                  <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 animate-pulse items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white shadow-md shadow-red-500/40">
+                    {unreadNotificationCount}
                   </span>
                 )}
               </button>
@@ -2326,19 +2352,55 @@ function CustomerDashboard() {
                       <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Project updates</p>
                       <p className="mt-0.5 text-xs text-slate-400">Your latest order activity</p>
                     </div>
-                    {orders.length > 0 && <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600">{orders.length} updates</span>}
+                    <div className="flex items-center gap-2">
+                      {unreadNotificationCount > 0 && <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600">{unreadNotificationCount} new</span>}
+                      <button
+                        type="button"
+                        onClick={markAllCustomerNotificationsRead}
+                        disabled={unreadNotificationCount === 0}
+                        className={`inline-flex items-center gap-1 text-xs font-semibold transition ${unreadNotificationCount === 0 ? "cursor-not-allowed text-slate-400" : darkMode ? "text-red-300 hover:text-white" : "text-red-600 hover:text-red-700"}`}
+                      >
+                        <CheckCheck size={14} />
+                        Mark all as read
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={`flex gap-1 border-b px-3 py-2 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+                    {[
+                      ["all", "All", orders.length],
+                      ["unread", "Unread", unreadNotificationCount],
+                      ["read", "Read", readNotificationCount],
+                    ].map(([filter, label, count]) => (
+                      <button
+                        key={filter}
+                        type="button"
+                        onClick={() => setNotificationFilter(filter)}
+                        className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
+                          notificationFilter === filter
+                            ? darkMode
+                              ? "bg-slate-950 text-white"
+                              : "bg-slate-100 text-slate-950"
+                            : darkMode
+                              ? "text-slate-300 hover:bg-slate-700"
+                              : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {label} ({count})
+                      </button>
+                    ))}
                   </div>
 
                   {ordersLoading ? (
                     <div className={`px-4 py-8 text-center text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Loading your updates...</div>
-                  ) : orders.length === 0 ? (
+                  ) : filteredNotifications.length === 0 ? (
                     <div className={`px-4 py-6 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
                       <Bell size={22} className="mx-auto mb-2 text-slate-400" />
-                      <p>No project updates yet</p>
+                      <p>{notificationFilter === "all" ? "No project updates yet" : `No ${notificationFilter} notifications`}</p>
                     </div>
                   ) : (
                     <div className={darkMode ? "max-h-96 divide-y divide-slate-700 overflow-y-auto" : "max-h-96 divide-y divide-slate-200 overflow-y-auto"}>
-                      {[...orders]
+                      {[...filteredNotifications]
                         .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
                         .slice(0, 5)
                         .map((order) => {
@@ -2416,7 +2478,7 @@ function CustomerDashboard() {
                 </div>
               )}
             </div>
-            <div className="relative">
+            <div className="relative order-6">
               <button
                 onClick={() => setMenuOpen((s) => !s)}
                 className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
@@ -4849,19 +4911,44 @@ function CustomerDashboard() {
               </div>
             </div>
 
+            <div className={`mb-6 inline-flex flex-wrap gap-1 rounded-2xl border p-1 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
+              {[
+                ["all", "All", orders.length],
+                ["unread", "Unread", unreadNotificationCount],
+                ["read", "Read", readNotificationCount],
+              ].map(([filter, label, count]) => (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => setNotificationFilter(filter)}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                    notificationFilter === filter
+                      ? darkMode
+                        ? "bg-slate-950 text-white shadow-sm"
+                        : "bg-white text-slate-950 shadow-sm"
+                      : darkMode
+                        ? "text-slate-300 hover:bg-slate-700"
+                        : "text-slate-600 hover:bg-white/70"
+                  }`}
+                >
+                  {label} ({count})
+                </button>
+              ))}
+            </div>
+
             {ordersLoading ? (
               <div className="space-y-4">
                 {[...Array(3)].map((_, index) => (
                   <div key={index} className="animate-pulse rounded-3xl bg-white p-8 shadow" />
                 ))}
               </div>
-            ) : orders.length === 0 ? (
+            ) : filteredNotifications.length === 0 ? (
               <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800 text-slate-200" : "bg-white text-gray-600"}`}>
-                <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No notifications yet. You'll see updates about your orders here.</p>
+                <p className={darkMode ? "text-slate-300" : "text-gray-600"}>{notificationFilter === "all" ? "No notifications yet. You'll see updates about your orders here." : `No ${notificationFilter} notifications.`}</p>
               </div>
             ) : (
               <div className="space-y-4">
-                {orders
+                {[...filteredNotifications]
                   .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
                   .map((order) => {
                     const product = order.items?.[0] || {};
