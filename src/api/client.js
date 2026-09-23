@@ -53,6 +53,14 @@ export async function apiFetch(path, options = {}) {
         ...options,
         headers,
       });
+
+      if ((response.status === 502 || response.status === 503) && attempt < maxRetries - 1) {
+        attempt += 1;
+        // Give the Vite proxy or MongoDB connection time to become ready.
+        await new Promise((resolve) => setTimeout(resolve, 300 * Math.pow(2, attempt)));
+        continue;
+      }
+
       break;
     } catch (fetchError) {
       attempt += 1;

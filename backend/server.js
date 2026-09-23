@@ -9,6 +9,7 @@ import catalogRoutes from "./routes/catalog.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import orderRoutes from "./routes/orders.js";
+import cartRoutes from "./routes/cart.js";
 import { connectMongo } from "./config/db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -98,6 +99,7 @@ app.use("/api", (req, res, next) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/cart", cartRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/catalog", catalogRoutes);
 

@@ -165,7 +165,7 @@ export const listOrders = async (req, res) => {
 
 export const createOrder = async (req, res) => {
   try {
-    const { items, shipping_address, order_type } = req.body;
+    const { items, shipping_address, customer_phone, order_type } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Order items are required" });
@@ -194,6 +194,7 @@ export const createOrder = async (req, res) => {
 
     const order = new Order({
       customer: req.user.id,
+      customer_phone: String(customer_phone || req.user.phone || "").trim(),
       items: sanitizedItems,
       total_amount,
       shipping_address: normalizeAddress(shipping_address || buildAddressFromUser(req.user)),
