@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import PDFDocument from "pdfkit";
 import Order from "../models/Order.js";
 import { sendMail } from "../config/mailer.js";
 
@@ -86,6 +87,74 @@ const getLocalUploadedAttachment = (fileUrl) => {
   }
 };
 
+const getDataUrlAttachment = (dataUrl, filename) => {
+  if (typeof dataUrl !== "string") return null;
+  const match = dataUrl.match(/^data:(application\/pdf|image\/png|image\/jpeg)(?:;filename=[^;]+)?;base64,(.+)$/s);
+  if (!match) return null;
+  return {
+    filename,
+    content: Buffer.from(match[2], "base64"),
+    contentType: match[1],
+  };
+};
+
+const createContractPdfAttachment = ({
+  customerName,
+  orderNumber,
+  inspectionDate,
+  siteAddress,
+  paymentTerms,
+  warrantyPeriod,
+  inspectionNotes,
+  totalAmount,
+  itemRows,
+}) => new Promise((resolve, reject) => {
+  const document = new PDFDocument({ margin: 48, size: "A4" });
+  const chunks = [];
+
+  document.on("data", (chunk) => chunks.push(chunk));
+  document.on("end", () => resolve(Buffer.concat(chunks)));
+  document.on("error", reject);
+
+  document.fontSize(18).fillColor("#b91c1c").text("ACGC Glass & Aluminum Services");
+  document.moveDown(0.4);
+  document.fontSize(14).fillColor("#111827").text("Site Inspection Contract Details");
+  document.moveDown();
+  document.fontSize(10).fillColor("#111827");
+  document.text(`Hi ${customerName},`);
+  document.moveDown(0.5);
+  document.text("Thank you for choosing ACGC. Below are the contract details based on your site inspection.");
+  document.moveDown();
+  document.font("Helvetica-Bold").text(`Order Number: ${orderNumber}`);
+  document.font("Helvetica").text(`Inspection Date: ${inspectionDate}`);
+  document.text(`Site Address: ${siteAddress}`);
+  document.text(`Payment Terms: ${paymentTerms}`);
+  document.text(`Warranty Period: ${warrantyPeriod}`);
+  document.moveDown();
+
+  document.font("Helvetica-Bold").text("Inspection Items");
+  document.moveDown(0.4);
+  document.font("Helvetica");
+  if (itemRows.length === 0) {
+    document.text("No measurement items recorded.");
+  } else {
+    itemRows.forEach((item, index) => {
+      document.text(`${index + 1}. ${item.name}`);
+      document.text(`   Qty: ${item.quantity} | Dimensions: ${item.dimensions} | Area: ${item.area} | Amount: ${item.amount}`);
+      document.moveDown(0.25);
+    });
+  }
+
+  document.moveDown(0.5);
+  document.font("Helvetica-Bold").text(`Total Contract Amount: ${totalAmount}`);
+  document.moveDown();
+  document.text("Site Notes");
+  document.font("Helvetica").text(inspectionNotes, { width: 500 });
+  document.moveDown();
+  document.text("Please review these details and contact our support team if anything needs to be corrected.");
+  document.end();
+});
+
 const normalizeProductId = (productId) => {
   if (!productId) return null;
   if (typeof productId === "object") {
@@ -98,13 +167,15 @@ const sanitizeOrderItems = (items = []) => {
   return (items || []).map((item) => {
     const incomingDimensions = item.dimensions || {};
     const quantity = Number(item.quantity ?? incomingDimensions.quantity) || 1;
-    const unit_price = Number(item.unit_price) || 0;
     const width = Number(incomingDimensions.width ?? item.width) || 0;
     const height = Number(incomingDimensions.height ?? item.height) || 0;
     const measurement_unit = incomingDimensions.unit || item.measurement_unit || item.measurementUnit || "in";
     const area = Number(item.area) || 0;
+    const productUnitPrice = Number(item.product_id?.unit_price ?? item.product?.unit_price ?? item.base_price ?? item.price ?? item.unit_price ?? 0) || 0;
+    const productRatePerSqft = Number(item.product_id?.price_per_sqft ?? item.product?.price_per_sqft ?? item.price_per_sqft ?? 0) || 0;
+    const unit_price = Number(item.unit_price) || productUnitPrice || (productRatePerSqft > 0 && area > 0 ? productRatePerSqft * area : 0);
     const estimated_price = item.is_estimate
-      ? Number(item.estimated_price) || area * unit_price
+      ? Number(item.estimated_price) || Number(item.manual_estimated_total) || area * (productRatePerSqft || unit_price || 0)
       : 0;
     const estimation_mode = item.estimation_mode === "manual" ? "manual" : "auto";
     const manual_estimated_total = Number(item.manual_estimated_total) || 0;
@@ -137,6 +208,25 @@ const sanitizeOrderItems = (items = []) => {
       is_estimate: Boolean(item.is_estimate),
     };
   });
+};
+
+const getItemAmountValue = (item) => {
+  if (!item) return 0;
+
+  if (item.is_estimate && Number(item.estimated_price || item.manual_estimated_total || 0) > 0) {
+    return Number(item.estimated_price || item.manual_estimated_total || 0);
+  }
+
+  const quantity = Number(item.quantity || 1) || 1;
+  const unitPrice = Number(item.unit_price || 0) || 0;
+  const area = Number(item.area || 0) || 0;
+  const productRate = Number(item.price_per_sqft || item.product?.price_per_sqft || 0) || 0;
+
+  if (productRate > 0 && area > 0) {
+    return productRate * area;
+  }
+
+  return unitPrice > 0 ? unitPrice * quantity : 0;
 };
 
 const generateTrackingNumber = () => {
@@ -187,10 +277,7 @@ export const createOrder = async (req, res) => {
       });
     }
 
-    const total_amount = sanitizedItems.reduce((sum, item) => {
-      const itemAmount = item.is_estimate && item.estimated_price ? item.estimated_price : item.quantity * item.unit_price;
-      return sum + itemAmount;
-    }, 0);
+    const total_amount = sanitizedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
 
     const order = new Order({
       customer: req.user.id,
@@ -202,7 +289,7 @@ export const createOrder = async (req, res) => {
       order_type: order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
       contract_status: "pending",
       payment_status: "not_paid",
-      status: "order_submitted",
+      status: "site_inspection",
     });
 
     await order.save();
@@ -226,11 +313,14 @@ export const createOrderAsAdmin = async (req, res) => {
       customer_phone, 
       customer_email, 
       customer_id,
+      has_account_on_website,
+      downpayment_received,
       // Walk-in customer fields
       signed_contract_url,
       contract_number,
       contract_signed_date,
       inspection_date,
+      estimated_installation_date,
       inspection_notes,
     } = req.body;
 
@@ -238,22 +328,22 @@ export const createOrderAsAdmin = async (req, res) => {
       return res.status(400).json({ success: false, message: "Order items are required" });
     }
 
-    // Validate walk-in customer requirements
-    if (order_type === "walk_in_customer") {
-      if (!signed_contract_url) {
-        return res.status(400).json({ success: false, message: "Signed contract is required for walk-in customers" });
-      }
+    const requiresSignedContract = order_type === "walk_in_customer" && has_account_on_website === true;
+
+    // Walk-in customers only need a signed contract when they have a website account.
+    if (requiresSignedContract && !signed_contract_url) {
+      return res.status(400).json({ success: false, message: "Signed contract is required for walk-in customers with a website account" });
     }
 
     const sanitizedItems = sanitizeOrderItems(items);
 
-    const totalAmountFromItems = sanitizedItems.reduce((sum, item) => {
-      const itemAmount = item.is_estimate && item.estimated_price ? item.estimated_price : item.quantity * item.unit_price;
-      return sum + itemAmount;
-    }, 0);
+    const totalAmountFromItems = sanitizedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
 
     const overrideAmount = Number(req.body.estimated_cost) || 0;
     const total_amount = overrideAmount > 0 ? overrideAmount : totalAmountFromItems;
+
+    const normalizedOrderType = order_type === "walk_in_customer" ? "walk_in_customer" : "online_order";
+    const hasWebsiteAccount = has_account_on_website === true;
 
     const order = new Order({
       customer: customer_id || undefined,
@@ -264,20 +354,23 @@ export const createOrderAsAdmin = async (req, res) => {
       total_amount,
       shipping_address: normalizeAddress(shipping_address || ""),
       payment_terms: payment_terms || "",
+      has_account_on_website: hasWebsiteAccount,
+      downpayment_received: Boolean(downpayment_received),
       attachments: Array.isArray(attachments) ? attachments : [],
       tracking: generateTrackingNumber(),
-      order_type: order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
-      contract_status: order_type === "walk_in_customer" ? "accepted" : "pending",
+      order_type: normalizedOrderType,
+      contract_status: normalizedOrderType === "walk_in_customer" && hasWebsiteAccount ? "accepted" : "pending",
       payment_status: "not_paid",
-      status: order_type === "walk_in_customer" ? "contract_accepted" : "site_inspection",
-      inspection_status: order_type === "walk_in_customer" ? "completed" : "pending",
+      status: normalizedOrderType === "walk_in_customer" && hasWebsiteAccount ? "contract_accepted" : "site_inspection",
+      inspection_status: normalizedOrderType === "walk_in_customer" && hasWebsiteAccount ? "completed" : "pending",
       inspection_date: inspection_date ? new Date(inspection_date) : null,
+      estimated_installation_date: estimated_installation_date ? new Date(estimated_installation_date) : null,
       inspection_notes: inspection_notes || "",
       // Walk-in specific
-      acceptance_method: order_type === "walk_in_customer" ? "walk_in_signed_contract" : "online",
-      signed_contract_url: signed_contract_url || "",
-      contract_number: contract_number || "",
-      contract_signed_date: contract_signed_date ? new Date(contract_signed_date) : null,
+      acceptance_method: normalizedOrderType === "walk_in_customer" && hasWebsiteAccount ? "walk_in_signed_contract" : "online",
+      signed_contract_url: hasWebsiteAccount ? (signed_contract_url || "") : "",
+      contract_number: hasWebsiteAccount ? (contract_number || "") : "",
+      contract_signed_date: hasWebsiteAccount && contract_signed_date ? new Date(contract_signed_date) : null,
     });
 
     await order.save();
@@ -594,6 +687,45 @@ export const respondToContract = async (req, res) => {
   }
 };
 
+export const cancelCustomerOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (!order.customer || order.customer.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Not authorized to cancel this order." });
+    }
+
+    if (order.status === "cancelled") {
+      return res.json({ success: true, order, message: "Order already cancelled." });
+    }
+
+    const isCompleted = order.status === "completed" || Number(order.progress) >= 100;
+    if (isCompleted) {
+      return res.status(400).json({
+        success: false,
+        message: "This order has already been completed and cannot be cancelled.",
+      });
+    }
+
+    order.status = "cancelled";
+    if (order.contract_status === "accepted") {
+      order.contract_status = "declined";
+    }
+
+    await order.save();
+
+    res.json({ success: true, order, message: "Order cancelled successfully." });
+  } catch (error) {
+    console.error("Cancel customer order error:", error);
+    res.status(500).json({ success: false, message: "Unable to cancel order", error: error.message });
+  }
+};
+
 export const respondToInstallationSchedule = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -753,7 +885,7 @@ export const updateOrderInspection = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { inspection_status, inspection_date, inspection_notes, issues_found, shipping_address, payment_terms, items, total_amount, customer_name, customer_email, customer_phone } = req.body;
+    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, items, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, manual_override } = req.body;
 
     updateData = {
       status: "site_inspection",
@@ -766,10 +898,20 @@ export const updateOrderInspection = async (req, res) => {
         updateData.inspection_status = "scheduled";
       }
     }
+    if (estimated_installation_date !== undefined) {
+      const parsedInstallationDate = estimated_installation_date ? new Date(estimated_installation_date) : null;
+      if (parsedInstallationDate && Number.isNaN(parsedInstallationDate.getTime())) {
+        return res.status(400).json({ success: false, message: "Estimated installation date must be a valid date." });
+      }
+      updateData.estimated_installation_date = parsedInstallationDate;
+    }
     if (inspection_notes !== undefined) updateData.inspection_notes = inspection_notes;
     if (issues_found !== undefined) updateData.issues_found = issues_found;
     if (shipping_address !== undefined) updateData.shipping_address = normalizeAddress(shipping_address || "");
     if (payment_terms !== undefined) updateData.payment_terms = payment_terms || "";
+    if (has_account_on_website !== undefined) updateData.has_account_on_website = Boolean(has_account_on_website);
+    if (downpayment_received !== undefined) updateData.downpayment_received = Boolean(downpayment_received);
+    if (manual_override !== undefined) updateData.manual_override = Number(manual_override) || 0;
     if (customer_name !== undefined) updateData.customer_name = customer_name || "";
     if (customer_email !== undefined) updateData.customer_email = customer_email || "";
     if (customer_phone !== undefined) updateData.customer_phone = customer_phone || "";
@@ -785,15 +927,14 @@ export const updateOrderInspection = async (req, res) => {
       updateData.total_amount = Number(total_amount) || 0;
     }
 
-    const order = await Order.findByIdAndUpdate(orderId, updateData, {
-      new: true,
-      runValidators: true,
-      context: "query",
-    });
+    const order = await Order.findById(orderId);
 
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
+
+    Object.assign(order, updateData);
+    await order.save();
 
     res.json({ success: true, order });
   } catch (error) {
@@ -1026,7 +1167,7 @@ export const sendWalkInApprovalEmail = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { customerName, customerEmail, contractUrl } = req.body;
+    const { customerName, customerEmail, contractUrl, contractAttachment } = req.body;
 
     const order = await Order.findById(orderId);
     if (!order) {
@@ -1038,7 +1179,14 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       return res.status(400).json({ success: false, message: "Customer email is required" });
     }
 
-    // Prepare email content
+    // Build the email from the saved inspection so the customer receives the
+    // same project details that admins see in the contract modal.
+    const escapeHtml = (value) => String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
     const customerNameValue = customerName || order.customer_name || "Valued Customer";
     const orderNumber = order.tracking || "N/A";
     const inspectionDate = order.inspection_date
@@ -1048,50 +1196,92 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       ? `₱${order.total_amount.toFixed(2)}`
       : "N/A";
     const siteAddress = order.shipping_address || "N/A";
+    const paymentTerms = order.payment_terms || "50% downpayment, 50% upon completion";
+    const warrantyPeriod = order.warranty_period ? `${order.warranty_period} days` : "90 days";
+    const inspectionNotes = order.inspection_notes || "No additional site notes provided.";
     const contractLink = contractUrl || order.signed_contract_url || "";
     const fromAddress = process.env.EMAIL_FROM || "ACGC Site Inspection <no-reply@acgc.com>";
+    const frontendUrl = (process.env.FRONTEND_URL || process.env.CLIENT_URL || "http://localhost:5173").replace(/\/$/, "");
+    const contractLoginLink = `${frontendUrl}/customer-dashboard?tab=contracts&orderId=${encodeURIComponent(order._id)}`;
+    const itemRows = (order.items || []).map((item) => {
+      const quantity = Number(item.quantity) || 1;
+      const width = Number(item.width) || 0;
+      const height = Number(item.height) || 0;
+      const area = Number(item.area) || 0;
+      const amount = Number(item.estimated_price) || (Number(item.unit_price) || 0) * quantity;
+      return {
+        name: item.name || "Inspection item",
+        quantity,
+        dimensions: `${width} x ${height} in`,
+        area: `${area.toFixed(2)} sq ft`,
+        amount: `₱${amount.toFixed(2)}`,
+      };
+    });
+    const itemHtml = itemRows.length > 0
+      ? itemRows.map((item) => `
+          <tr>
+            <td style="border:1px solid #d1d5db;padding:8px">${escapeHtml(item.name)}</td>
+            <td style="border:1px solid #d1d5db;padding:8px;text-align:center">${item.quantity}</td>
+            <td style="border:1px solid #d1d5db;padding:8px">${escapeHtml(item.dimensions)}</td>
+            <td style="border:1px solid #d1d5db;padding:8px">${escapeHtml(item.area)}</td>
+            <td style="border:1px solid #d1d5db;padding:8px;text-align:right">${escapeHtml(item.amount)}</td>
+          </tr>`).join("")
+      : `<tr><td colspan="5" style="border:1px solid #d1d5db;padding:8px">No measurement items recorded.</td></tr>`;
 
     const htmlBody = `
-      <p>Hi ${customerNameValue},</p>
-      <p>Your walk-in site inspection has been completed and the proposal is ready for review.</p>
-      <p><strong>Order Number:</strong> ${orderNumber}</p>
-      <p><strong>Inspection Date:</strong> ${inspectionDate}</p>
-      <p><strong>Total Amount:</strong> ${totalAmount}</p>
-      <p><strong>Site Address:</strong> ${siteAddress}</p>
-      ${contractLink ? `<p><strong>Signed Contract:</strong> <a href="${contractLink}">View signed contract</a></p>` : ""}
-      <p>If you have any questions, reply to this email or contact our support team.</p>
-      <p>Thank you,<br/>ACGC Site Inspection Team</p>
+      <div style="font-family:Arial,sans-serif;color:#111827">
+        <h2 style="color:#dc2626">ACGC Glass &amp; Aluminum Services</h2>
+        <p>Hi ${escapeHtml(customerNameValue)},</p>
+        <p>Your site inspection contract details are attached as a PDF file.</p>
+        <p><a href="${escapeHtml(contractLoginLink)}" style="display:inline-block;background:#dc2626;color:#fff;padding:10px 16px;text-decoration:none;border-radius:6px">Log in to view your contract</a></p>
+        <p>Please review the attached document and contact our support team if anything needs to be corrected.</p>
+        <p>Thank you,<br/>ACGC Site Inspection Team</p>
+      </div>
     `;
 
     const textBody = `
 Hi ${customerNameValue},
 
-Your walk-in site inspection has been completed and the proposal is ready for review.
+Your site inspection contract details are attached as a PDF file.
 
-Order Number: ${orderNumber}
-Inspection Date: ${inspectionDate}
-Total Amount: ${totalAmount}
-Site Address: ${siteAddress}
-${contractLink ? `
-View signed contract: ${contractLink}` : ""}
+Log in to view your contract: ${contractLoginLink}
 
-If you have any questions, reply to this email or contact our support team.
+Please review the attached document and contact our support team if anything needs to be corrected.
 
 Thank you,
 ACGC Site Inspection Team
 `;
 
-    const attachments = [];
-    const contractAttachment = getLocalUploadedAttachment(contractLink);
-    if (contractAttachment) {
-      attachments.push(contractAttachment);
+    const contractPdf = await createContractPdfAttachment({
+      customerName: customerNameValue,
+      orderNumber,
+      inspectionDate,
+      siteAddress,
+      paymentTerms,
+      warrantyPeriod,
+      inspectionNotes,
+      totalAmount,
+      itemRows,
+    });
+    const renderedContractAttachment = getDataUrlAttachment(
+      contractAttachment,
+      `ACGC-site-inspection-${orderNumber}.pdf`
+    );
+    const attachments = [renderedContractAttachment || {
+      filename: `ACGC-site-inspection-${orderNumber}.pdf`,
+      content: contractPdf,
+      contentType: "application/pdf",
+    }];
+    const uploadedContractAttachment = getLocalUploadedAttachment(contractLink);
+    if (uploadedContractAttachment) {
+      attachments.push(uploadedContractAttachment);
     }
 
     try {
       await sendMail({
         from: fromAddress,
         to: customerEmailValue,
-        subject: "ACGC Site Inspection & Proposal",
+        subject: "ACGC Site Inspection Contract Details",
         text: textBody,
         html: htmlBody,
         attachments: attachments.length > 0 ? attachments : undefined,
@@ -1103,10 +1293,12 @@ ACGC Site Inspection Team
       });
     } catch (emailError) {
       console.error("Approval email send failed:", emailError);
+      const message = emailError?.code === "EAUTH"
+        ? "Email service authentication failed. Update the SMTP credentials or Gmail app password."
+        : "Unable to send email";
       return res.status(500).json({
         success: false,
-        message: "Unable to send email",
-        error: emailError?.message || "Email sending failed",
+        message,
         code: emailError?.code,
       });
     }

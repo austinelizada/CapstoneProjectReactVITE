@@ -30,10 +30,92 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
   const steps = buildOrderTimelineStages(order).filter(
     (step) => audience === "customer" || step.key !== "installation_agreement"
   );
+  const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
   const [selectedStepIndex, setSelectedStepIndex] = useState(0);
   const [selectedSubIndex, setSelectedSubIndex] = useState(null);
+  const [groupStepSelection, setGroupStepSelection] = useState({});
   const stageRefs = useRef([]);
-  const selectedStep = steps[selectedStepIndex] || steps[0] || null;
+
+  const buildBatchProductSteps = (productIndex, orderStatus) => {
+    const normalizedStatus = String(orderStatus || "").toLowerCase();
+    const statusMap = {
+      order_submitted: 0,
+      admin_review: 1,
+      site_inspection: 2,
+      contract_sent: 3,
+      contract_accepted: 3,
+      processing: 3,
+      cutting: 3,
+      fabrication: 3,
+      installation: 3,
+      completed: 4,
+      cancelled: -1,
+    };
+
+    const activeProgressLevel = statusMap[normalizedStatus] ?? 0;
+    const stepLabels = [
+      "Order Submitted",
+      "Admin Review",
+      "Site Inspection",
+      "Contract Sent",
+      "Contract Accepted",
+      "Fabrication",
+      "Installation",
+      "Completed",
+    ];
+
+    return stepLabels.map((label, index) => {
+      let status = "pending";
+      let statusText = "Pending";
+      let dateText = "Pending";
+
+      if (normalizedStatus === "cancelled") {
+        status = "cancelled";
+        statusText = "Cancelled";
+        dateText = "Cancelled";
+      } else if (normalizedStatus === "completed") {
+        status = "completed";
+        statusText = "Completed";
+        dateText = "Completed";
+      } else if (index < activeProgressLevel) {
+        status = "completed";
+        statusText = "Completed";
+        dateText = "Completed";
+      } else if (index === activeProgressLevel && activeProgressLevel < stepLabels.length) {
+        status = "in-progress";
+        statusText = "In Progress";
+        dateText = "In progress";
+      }
+
+      return {
+        key: `batch_${productIndex + 1}_${index + 1}`,
+        label,
+        status,
+        statusText,
+        date: dateText,
+        assignedTo: index < 2 ? "Sales Team" : "Inspection Team",
+        notes: "Batch order progress update.",
+        description: "Group progress for this product in the batch order.",
+        subStages: [],
+      };
+    });
+  };
+
+  const batchOrderGroups = Array.isArray(order?.items) && order.items.length > 1
+    ? order.items.map((item, index) => {
+        const productName = item?.name || item?.product_name || `Product ${index + 1}`;
+        return {
+          key: `batch-order-group-${index + 1}`,
+          label: productName,
+          steps: buildBatchProductSteps(index, order?.status),
+        };
+      })
+    : [];
+  const timelineGroups = batchOrderGroups.length > 0 ? batchOrderGroups : [{ key: "single-order-progress", label: "Order Progress", steps }];
+  const timelineSteps = timelineGroups[0]?.steps || steps;
+  const selectedTimelineGroup = timelineGroups[selectedGroupIndex] || timelineGroups[0] || { steps: [] };
+  const selectedStepIndexForGroup = groupStepSelection[selectedTimelineGroup?.key] ?? 0;
+  const selectedStep = selectedTimelineGroup.steps[selectedStepIndexForGroup] || selectedTimelineGroup.steps[0] || null;
   const scheduleStageKeys = ["installation_agreement", "installation_scheduled", "installation_scheduling"];
   const normalizedProgressStages = Array.isArray(order?.progress_stages)
     ? order.progress_stages.map((stage) => ({
@@ -68,8 +150,9 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
   const selectedStepAcceptedPreferredSchedule =
     currentScheduleResponse === "accepted" &&
     (selectedStep?.customerPreferredInstallationDate || selectedStep?.customerPreferredInstallationTime || currentScheduleStage?.customerPreferredInstallationDate || currentScheduleStage?.customerPreferredInstallationTime);
-  const completedCount = steps.filter((step) => step.status === "completed").length;
-  const totalCount = steps.length;
+  const activeProgressSteps = timelineGroups.flatMap((group) => group.steps);
+  const completedCount = activeProgressSteps.filter((step) => step.status === "completed").length;
+  const totalCount = activeProgressSteps.length;
   let progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   // Avoid showing 100% while an 'installation' stage is still in progress.
@@ -101,33 +184,44 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
     : 0;
 
   const determineDefaultSelectedStepIndex = () => {
-    if (!steps || steps.length === 0) return 0;
+    const fallbackSteps = timelineGroups[0]?.steps || [];
+    if (!fallbackSteps || fallbackSteps.length === 0) return 0;
 
     // Priority 1: Find the first incomplete (not completed) stage
-    const firstIncompleteIndex = steps.findIndex((step) => step.status !== "completed");
+    const firstIncompleteIndex = fallbackSteps.findIndex((step) => step.status !== "completed");
     if (firstIncompleteIndex !== -1) return firstIncompleteIndex;
 
     // Priority 2: If all stages are completed, show the last stage
-    return steps.length - 1;
+    return fallbackSteps.length - 1;
   };
 
   useEffect(() => {
     const defaultIndex = determineDefaultSelectedStepIndex();
     setSelectedStepIndex(defaultIndex);
-  }, [order?._id, order?.status, order?.contract_status, order?.inspection_status, order?.inspection_date, order?.updatedAt, steps.length]);
+    setGroupStepSelection((prev) => ({
+      ...prev,
+      [selectedTimelineGroup?.key || "single-order-progress"]: defaultIndex,
+    }));
+  }, [order?._id, order?.status, order?.contract_status, order?.inspection_status, order?.inspection_date, order?.updatedAt, timelineGroups.length, selectedTimelineGroup?.key]);
 
   useEffect(() => {
-    if (!steps.length || selectedStepIndex < 0 || selectedStepIndex >= steps.length) return;
-    const targetElement = stageRefs.current[selectedStepIndex];
+    if (!selectedTimelineGroup?.steps?.length) return;
+    const selectedIndex = groupStepSelection[selectedTimelineGroup.key] ?? 0;
+    if (selectedIndex < 0 || selectedIndex >= selectedTimelineGroup.steps.length) return;
+    const targetElement = stageRefs.current[selectedIndex];
     if (targetElement?.scrollIntoView) {
       window.requestAnimationFrame(() => {
         targetElement.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
       });
     }
-  }, [selectedStepIndex, steps.length]);
+  }, [selectedGroupIndex, selectedTimelineGroup?.key, selectedTimelineGroup?.steps.length, groupStepSelection]);
 
-  const handleStageSelect = (index) => {
-    setSelectedStepIndex(index);
+  const handleStageSelect = (groupIndex, stepIndex) => {
+    setSelectedGroupIndex(groupIndex);
+    setGroupStepSelection((prev) => ({
+      ...prev,
+      [timelineGroups[groupIndex]?.key]: stepIndex,
+    }));
     setSelectedSubIndex(null);
   };
 
@@ -294,7 +388,7 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
   return (
     <>
       <div className={`order-timeline rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm ${darkMode ? "order-timeline-dark" : ""}`}>
-        <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Order Timeline</h5>
+        <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Order Time-line Monitor</h5>
         <p className="text-sm text-slate-500 mt-1">Status history for this order.</p>
 
         <div className="mt-6 space-y-6">
@@ -333,73 +427,85 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
             </div>
           </div>
 
-          <div className="overflow-x-auto pb-3">
-            <div className="min-w-[180px]">
-              <div className="relative flex items-center gap-8 px-3">
-                {steps.map((step, index) => (
-                  <div
-                key={step.key}
-                ref={(el) => {
-                  stageRefs.current[index] = el;
-                }}
-                className={`relative flex min-w-[180px] flex-col items-center text-center transition ${
-                  selectedStepIndex === index ? "z-10" : "z-0 opacity-70 hover:opacity-100"
-                }`}
-              >
-                    <button
-                      type="button"
-                      onClick={() => handleStageSelect(index)}
-                      className={`group relative z-10 flex h-12 w-12 items-center justify-center rounded-full border text-sm font-semibold transition ${getDotClass(
-                        step,
-                        index
-                      )}`}
-                    >
-                      {step.status === "completed" ? <Check size={18} aria-hidden="true" /> : index + 1}
-                    </button>
-                    <div className="mt-3 w-full">
-                      <p className="text-xs font-semibold text-slate-900">{step.label}</p>
-                      <p className="mt-1 text-xs text-slate-500">{step.date || "Pending"}</p>
-                    </div>
-                    {index < steps.length - 1 && (
-                      <>
-                        <div
-                      className={`absolute left-1/2 top-6 h-0.5 w-full translate-x-6 ${getConnectorClass(step, steps[index + 1])}`}
-                      aria-hidden="true"
-                    />
-                    {step.subStages?.length > 0 && (
-                      <div className="absolute left-1/2 top-6 flex w-full -translate-x-0.5 justify-center gap-1 text-center">
-                        {step.subStages.map((sub, subIndex) => {
-                          const isCompleted = sub.status === "completed";
-                          const isInProgress = sub.status === "in-progress" || sub.status === "in progress";
-                          const dotClass = isCompleted
-                            ? "border-emerald-600 bg-emerald-600 text-white"
-                            : isInProgress
-                            ? "border-emerald-600 bg-white text-emerald-600"
-                            : "border-slate-300 bg-white text-slate-500";
-
-                          const Icon = isCompleted ? Check : isInProgress ? Play : Clock;
-
-                          return (
-                            <div
-                              key={`${step.key}-sub-${subIndex}`}
-                              role="button"
-                              onClick={() => handleSubSelect(index, subIndex)}
-                              className="relative flex flex-col items-center pt-4 min-w-[36px] cursor-pointer"
-                            >
-                              <div className={`absolute top-[2px] h-3.5 w-px ${getSubStageLineClass(sub)}`} />
-                              <div className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0.55rem] font-semibold ${dotClass}`}>
-                                <Icon size={10} aria-hidden="true" />
-                              </div>
-                              <p className="mt-1 max-w-[64px] break-words text-[8px] text-slate-600">{sub.name || sub.label || "Sub-stage"}</p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                      </>
-                    )}
+          {timelineGroups.length > 1 && (
+            <div className="mb-5 space-y-3">
+              {timelineGroups.map((group, groupIndex) => (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedGroupIndex(groupIndex);
+                    setSelectedSubIndex(null);
+                  }}
+                  className={`w-full rounded-[18px] border px-4 py-3 text-left transition ${
+                    selectedGroupIndex === groupIndex
+                      ? "border-emerald-500 bg-emerald-50 shadow-sm"
+                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className={`text-[11px] font-black uppercase tracking-[0.22em] ${selectedGroupIndex === groupIndex ? "text-emerald-700" : "text-slate-700"}`}>
+                      {group.label}
+                    </span>
+                    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${selectedGroupIndex === groupIndex ? "border-emerald-200 bg-white text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                      {group.steps.length} STEPS
+                    </span>
                   </div>
-                ))}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-700">{selectedTimelineGroup.label}</p>
+              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-slate-600">
+                {selectedTimelineGroup.steps.length} steps
+              </span>
+            </div>
+
+            <div className="overflow-x-auto pb-3">
+              <div className="min-w-[180px]">
+                <div className="relative flex items-center gap-8 px-3">
+                  {selectedTimelineGroup.steps.map((step, index) => {
+                    const currentGroupIndex = selectedGroupIndex;
+                    const currentStepIndex = groupStepSelection[selectedTimelineGroup.key] ?? 0;
+                    return (
+                      <div
+                        key={`${selectedTimelineGroup.key}-${step.key}`}
+                        ref={(el) => {
+                          if (selectedTimelineGroup.key === timelineGroups[currentGroupIndex]?.key) {
+                            stageRefs.current[index] = el;
+                          }
+                        }}
+                        className={`relative flex min-w-[180px] flex-col items-center text-center transition ${
+                          currentStepIndex === index ? "z-10" : "z-0 opacity-70 hover:opacity-100"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleStageSelect(currentGroupIndex, index)}
+                          className={`group relative z-10 flex h-12 w-12 items-center justify-center rounded-full border text-sm font-semibold transition ${getDotClass(
+                            step,
+                            index
+                          )}`}
+                        >
+                          {step.status === "completed" ? <Check size={18} aria-hidden="true" /> : index + 1}
+                        </button>
+                        <div className="mt-3 w-full">
+                          <p className="text-xs font-semibold text-slate-900">{step.label}</p>
+                          <p className="mt-1 text-xs text-slate-500">{step.date || "Pending"}</p>
+                        </div>
+                        {index < selectedTimelineGroup.steps.length - 1 && (
+                          <div
+                            className={`absolute left-1/2 top-6 h-0.5 w-full translate-x-6 ${getConnectorClass(step, selectedTimelineGroup.steps[index + 1])}`}
+                            aria-hidden="true"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>

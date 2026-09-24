@@ -54,10 +54,11 @@ function Login() {
       });
 
       const requestedPath = location.state?.from?.pathname;
+      const requestedSearch = location.state?.from?.search || "";
       const isCustomer = response.user?.role === "customer";
       const destination = isCustomer
         ? requestedPath?.startsWith("/customer-dashboard")
-          ? requestedPath
+          ? `${requestedPath}${requestedSearch}`
           : "/customer-dashboard"
         : requestedPath && !requestedPath.startsWith("/customer-dashboard")
           ? requestedPath

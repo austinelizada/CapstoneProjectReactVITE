@@ -138,6 +138,18 @@ const OrderSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    has_account_on_website: {
+      type: Boolean,
+      default: false,
+    },
+    downpayment_received: {
+      type: Boolean,
+      default: false,
+    },
+    manual_override: {
+      type: Number,
+      default: 0,
+    },
     attachments: {
       type: [String],
       default: [],
@@ -200,6 +212,10 @@ const OrderSchema = new mongoose.Schema(
       default: "pending",
     },
     inspection_date: {
+      type: Date,
+      default: null,
+    },
+    estimated_installation_date: {
       type: Date,
       default: null,
     },

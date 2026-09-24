@@ -34,7 +34,7 @@ const getSmtpConfig = () => {
     requireTLS,
     auth: {
       user: SMTP_USER,
-      pass: SMTP_PASS,
+      pass: SMTP_PASS.replace(/\s+/g, ""),
     },
     tls: {
       rejectUnauthorized: false,
@@ -70,9 +70,9 @@ const createTransporter = async () => {
 
 export const sendMail = async (mailOptions) => {
   const transport = await createTransporter();
-  await transport.verify();
 
   try {
+    await transport.verify();
     const result = await transport.sendMail(mailOptions);
 
     if (isTestAccount) {
@@ -86,8 +86,11 @@ export const sendMail = async (mailOptions) => {
   } catch (error) {
     console.error("Primary SMTP send failed:", error);
 
-    if (process.env.NODE_ENV !== "production" && !isTestAccount) {
-      console.warn("Falling back to Nodemailer test account for development email.");
+    // Do not silently route real customer mail to Ethereal when configured SMTP
+    // credentials are invalid. That makes the API look successful while the
+    // customer receives nothing.
+    if (process.env.NODE_ENV !== "production" && !isTestAccount && !process.env.SMTP_HOST) {
+      console.warn("Primary mail transport failed; falling back to Nodemailer test account for development email.");
       const testAccount = await nodemailer.createTestAccount();
       transporter = nodemailer.createTransport({
         host: testAccount.smtp.host,
@@ -100,6 +103,7 @@ export const sendMail = async (mailOptions) => {
       });
       isTestAccount = true;
 
+      await transporter.verify();
       const result = await transporter.sendMail(mailOptions);
       const previewUrl = nodemailer.getTestMessageUrl(result);
       if (previewUrl) {

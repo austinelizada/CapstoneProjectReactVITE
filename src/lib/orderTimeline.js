@@ -1,17 +1,17 @@
 import { formatDateTimeToMMDDYYYY, formatDateToMMDDYYYY } from "@/lib/dateUtils";
 
 const stageDefinitions = [
-  { key: "order_submitted", label: "Order Request Submitted", assignedTo: "Sales Team" },
-  { key: "admin_review", label: "Order Request Reviewed", assignedTo: "Admin Team" },
-  { key: "site_inspection_scheduled", label: "Site Inspection Scheduled", assignedTo: "Inspection Team" },
-  { key: "site_inspection_completed", label: "Site Inspection Completed", assignedTo: "Inspection Team" },
-  { key: "contract_created", label: "Contract Created", assignedTo: "Contract Team" },
-  { key: "contract_sent", label: "Contract Sent to Customer", assignedTo: "Contract Team" },
+  { key: "order_submitted", label: "Order Submitted", assignedTo: "Sales Team" },
+  { key: "admin_review", label: "Admin Review", assignedTo: "Admin Team" },
+  { key: "site_inspection_scheduled", label: "Site Inspection", assignedTo: "Inspection Team" },
+  { key: "site_inspection_completed", label: "Site Inspection", assignedTo: "Inspection Team" },
+  { key: "contract_created", label: "Contract Sent", assignedTo: "Contract Team" },
+  { key: "contract_sent", label: "Contract Sent", assignedTo: "Contract Team" },
   { key: "contract_accepted", label: "Contract Accepted", assignedTo: "Customer" },
-  { key: "project_in_progress", label: "Project In Progress", assignedTo: "Production Team" },
-  { key: "installation_scheduled", label: "Installation Scheduled", assignedTo: "Installation Team" },
-  { key: "installation_completed", label: "Installation Completed", assignedTo: "Installation Team" },
-  { key: "project_completed", label: "Project Completed", assignedTo: "Project Manager" },
+  { key: "project_in_progress", label: "Fabrication", assignedTo: "Production Team" },
+  { key: "installation_scheduled", label: "Installation", assignedTo: "Installation Team" },
+  { key: "installation_completed", label: "Installation", assignedTo: "Installation Team" },
+  { key: "project_completed", label: "Completed", assignedTo: "Project Manager" },
 ];
 
 const getOrderStageScore = (order) => {
@@ -146,10 +146,10 @@ export const buildOrderTimelineStages = (order) => {
   }
 
   const progressStageKeys = [
-    { key: "cutting", label: "Cutting" },
+    { key: "cutting", label: "Fabrication" },
     { key: "fabrication", label: "Fabrication" },
-    { key: "installation_scheduling", label: "Installation Scheduling" },
-    { key: "installation_agreement", label: "Installation Agreement" },
+    { key: "installation_scheduling", label: "Installation" },
+    { key: "installation_agreement", label: "Installation" },
     { key: "installation", label: "Installation" },
   ];
 

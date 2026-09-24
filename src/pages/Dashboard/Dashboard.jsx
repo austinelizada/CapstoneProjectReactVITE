@@ -155,7 +155,6 @@ function Dashboard() {
     const stored = localStorage.getItem("sidebarOpen");
     return stored !== null ? JSON.parse(stored) : true;
   });
-  const [currentPage, setCurrentPage] = useState(1);
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
@@ -403,16 +402,6 @@ function Dashboard() {
     }
   };
 
-  const ordersPerPage = 5;
-
-  const orderRequests = orders.filter((order) => order.status === "order_submitted");
-
-  const lastIndex = currentPage * ordersPerPage;
-  const firstIndex = lastIndex - ordersPerPage;
-
-  const currentOrders = orderRequests.slice(firstIndex, lastIndex);
-
-  const totalPages = Math.max(1, Math.ceil(orderRequests.length / ordersPerPage));
   const activeProjectStatuses = new Set([
     "approved",
     "site_inspection",
@@ -743,223 +732,6 @@ function Dashboard() {
             </div>
           </section>
 
-          {/* Order Requests */}
-
-          <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden">
-
-            <div className="p-6 border-b">
-
-              <h2 className="text-xl font-bold">
-                Order Requests
-              </h2>
-
-              <p className="text-gray-500 text-sm mt-1">
-                Incoming client requests
-              </p>
-
-            </div>
-
-            <div className="overflow-x-auto">
-
-              <table className="w-full">
-
-                <thead className="bg-gray-50">
-
-                  <tr>
-
-                    <th className="w-16 p-4 text-center">
-                      No.
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Client
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Phone
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Product
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Order Type
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Site Address
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Date Submitted
-                    </th>
-
-                    <th className="p-4 text-left">
-                      Estimation
-                    </th>
-
-                    <th className="p-4 text-center">
-                      Actions
-                    </th>
-
-                  </tr>
-
-                </thead>
-
-                <tbody>
-
-                  {ordersLoading ? (
-                    <tr>
-                      <td colSpan={9} className="p-8 text-center text-slate-500">
-                        Loading order requests...
-                      </td>
-                    </tr>
-                  ) : currentOrders.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} className="p-8 text-center text-slate-500">
-                        No order requests available.
-                      </td>
-                    </tr>
-                  ) : (
-                    currentOrders.map((order, index) => {
-                      const customerName = order.customer
-                        ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
-                        : "Customer";
-                      const phone = order.customer?.phone || "—";
-                      const productName = order.items?.[0]?.name || order.items?.[0]?.product_id?.name || "Project Item";
-                      const orderType = order.order_type === "walk_in_customer" ? "Walk-in" : "Online";
-                      const address = order.customer
-                        ? getCustomerAddress(order.customer) || "—"
-                        : "—";
-                      const date = order.createdAt ? formatDateToMMDDYYYY(order.createdAt) : "—";
-                      const estimation = order.total_amount ? `₱${order.total_amount.toLocaleString()}` : "—";
-
-                      return (
-                        <tr
-                          key={order._id || order.tracking || index}
-                          className="border-t hover:bg-gray-50"
-                        >
-                          <td className="w-16 p-4 text-center font-semibold text-slate-600">
-                            {firstIndex + index + 1}
-                          </td>
-
-                          <td className="p-4 font-medium">{customerName}</td>
-
-                          <td className="p-4">{phone}</td>
-
-                          <td className="p-4">{productName}</td>
-
-                          <td className="p-4">{orderType}</td>
-
-                          <td className="p-4 max-w-xs break-words">{address}</td>
-
-                          <td className="p-4">{date}</td>
-
-                          <td className="p-4 font-semibold text-green-500">{estimation}</td>
-
-                          <td className="p-4">
-                            <div className="flex justify-center gap-2">
-                              <button
-                                onClick={() => handleViewOrder(order._id || order.id)}
-                                disabled={selectedOrderLoading}
-                                className="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {selectedOrderLoading ? "..." : "View"}
-                              </button>
-
-                              <button
-                                onClick={() => openConfirmModal(order, "approve")}
-                                disabled={actionLoading}
-                                className="px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                              >
-                                {actionLoading ? "..." : "Approve"}
-                              </button>
-
-                              <button
-                                onClick={() => openConfirmModal(order, "reject")}
-                                disabled={actionLoading}
-                                className="px-3 py-1 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                              >
-                                {actionLoading ? "..." : "Reject"}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-
-                </tbody>
-
-              </table>
-
-            </div>
-
-            {/* Pagination */}
-
-            <div className="flex justify-center items-center p-4 border-t bg-gray-50 gap-4">
-
-              <span className="text-sm text-gray-600">
-                Page {currentPage} of {totalPages}
-              </span>
-
-              <div className="flex gap-2">
-
-                <button
-                  disabled={currentPage === 1}
-                  onClick={() =>
-                    setCurrentPage(currentPage - 1)
-                  }
-                  className={`px-4 py-2 rounded-lg ${
-                    currentPage === 1
-                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                      : "bg-white border hover:bg-gray-100"
-                  }`}
-                >
-                  Previous
-                </button>
-
-                {[...Array(totalPages)].map(
-                  (_, index) => (
-                    <button
-                      key={index}
-                      onClick={() =>
-                        setCurrentPage(index + 1)
-                      }
-                      className={`w-10 h-10 rounded-lg ${
-                        currentPage === index + 1
-                          ? "bg-red-600 text-white"
-                          : "bg-white border hover:bg-gray-100"
-                      }`}
-                    >
-                      {index + 1}
-                    </button>
-                  )
-                )}
-
-                <button
-                  disabled={
-                    currentPage === totalPages
-                  }
-                  onClick={() =>
-                    setCurrentPage(currentPage + 1)
-                  }
-                  className={`px-4 py-2 rounded-lg ${
-                    currentPage === totalPages
-                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                      : "bg-white border hover:bg-gray-100"
-                  }`}
-                >
-                  Next
-                </button>
-
-              </div>
-
-            </div>
-
-          </div>
-
           <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
             <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="flex items-start justify-between gap-4">
@@ -1073,7 +845,7 @@ function Dashboard() {
             </button>
 
             <h2 className="text-2xl font-bold text-slate-950 mb-6">
-              {selectedOrder.status === "order_submitted" ? "Order Details" : "Project Details"}
+              Project Details
             </h2>
 
             <div className="grid grid-cols-2 gap-4 mb-6">
@@ -1193,24 +965,6 @@ function Dashboard() {
               >
                 Close
               </button>
-              {selectedOrder.status === "order_submitted" && (
-                <>
-                  <button
-                    onClick={() => openConfirmModal(selectedOrder, "approve")}
-                    disabled={actionLoading}
-                    className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                  >
-                    {actionLoading ? "Processing..." : "Approve"}
-                  </button>
-                  <button
-                    onClick={() => openConfirmModal(selectedOrder, "reject")}
-                    disabled={actionLoading}
-                    className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                  >
-                    {actionLoading ? "Processing..." : "Reject"}
-                  </button>
-                </>
-              )}
             </div>
           </div>
         </div>

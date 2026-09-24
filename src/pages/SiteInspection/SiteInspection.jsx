@@ -10,6 +10,8 @@ import {
   RotateCcw,
 } from "lucide-react";
 import toast, { Toaster } from 'react-hot-toast';
+import { toPng } from "html-to-image";
+import jsPDF from "jspdf";
 
 import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection, sendWalkInApprovalEmail } from "@/api/orders";
 import { getProducts } from "@/api/products";
@@ -21,6 +23,7 @@ import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { recordActivity } from "@/lib/activityLog";
 
 const getDefaultInspection = () => ({
@@ -31,12 +34,18 @@ const getDefaultInspection = () => ({
   productName: "",
   order_type: "online_order",
   siteAddress: "",
-  inspection_date: new Date().toISOString().split("T")[0],
+  inspection_date: "",
+  estimated_installation_date: "",
   notes: "",
+  site_notes: "",
+  warranty_period: 90,
+  has_account_on_website: true,
+  downpayment_received: false,
+  manual_override: "",
   items: [
     { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, unit_price: 0, area: 0, unit: "sqft", estimation_mode: "auto" },
   ],
-  payment_terms: "",
+  payment_terms: "50%_down_payment",
   estimation_mode: "auto",
   // Walk-in customer fields
   signed_contract_file: null,
@@ -70,6 +79,93 @@ const CONTRACT_STAGE_STATUSES = new Set([
 const normalizeWorkflowValue = (value) =>
   (value || "").toString().trim().toLowerCase();
 
+const normalizeProductId = (productId) => {
+  if (typeof productId === "object" && productId !== null) {
+    return String(productId._id || productId.id || productId);
+  }
+  return productId ? String(productId) : "";
+};
+
+export const getEstimatedInstallationDate = (inspection) => (
+  inspection?.estimated_installation_date ||
+  inspection?.estimated_install_date ||
+  inspection?.estimatedInstallationDate ||
+  inspection?.installation_date ||
+  inspection?.installationDate ||
+  inspection?.estimatedInstallDate ||
+  inspection?.est_install_date ||
+  inspection?.estInstallDate ||
+  ""
+);
+
+const toApiDate = (value) => {
+  if (!value) return null;
+  const date = new Date(`${String(value).slice(0, 10)}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+const createContractPrintClone = (element) => {
+  const clone = element.cloneNode(true);
+  clone.style.width = `${element.scrollWidth}px`;
+  clone.style.height = "auto";
+  clone.style.overflow = "visible";
+  clone.style.position = "relative";
+  clone.style.maxHeight = "none";
+  clone.style.maxWidth = "none";
+
+  const wrapper = document.createElement("div");
+  wrapper.style.position = "fixed";
+  wrapper.style.left = "-9999px";
+  wrapper.style.top = "0";
+  wrapper.style.opacity = "0";
+  wrapper.style.pointerEvents = "none";
+  wrapper.style.zIndex = "-1";
+  wrapper.appendChild(clone);
+  document.body.appendChild(wrapper);
+
+  return { wrapper, clone };
+};
+
+export const validateInspectionPayload = (payload = {}) => {
+  const nextErrors = {};
+
+  if (!payload.customerName?.trim()) nextErrors.customerName = "Client name is required.";
+  if (!payload.phone?.trim()) nextErrors.phone = "Phone number is required.";
+  if (!payload.siteAddress?.trim()) nextErrors.siteAddress = "Site address is required.";
+  if (!payload.inspection_date) nextErrors.inspection_date = "Inspection date is required.";
+  if (!payload.estimated_installation_date) nextErrors.estimated_installation_date = "Estimated installation date is required.";
+  if (!payload.items || payload.items.length === 0) nextErrors.items = "Add at least one measurement row.";
+
+  // Walk-in customers only need a signed contract when they have a website account.
+  if (requiresSignedContractForWalkIn(payload) && !payload.signed_contract_file) {
+    nextErrors.signed_contract_file = "Signed contract is required for walk-in customers with a website account.";
+  }
+
+  const itemErrors = payload.items?.map((item) => {
+    const rowErrors = {};
+    const normalizedProductId = normalizeProductId(item.product_id);
+    if (!normalizedProductId) rowErrors.product_id = "Select a product.";
+    if (!item.name?.trim()) rowErrors.name = "Description is required.";
+    if (Number(item.width) <= 0) rowErrors.width = "Width must be greater than zero.";
+    if (Number(item.height) <= 0) rowErrors.height = "Height must be greater than zero.";
+    if (Number(item.qty) <= 0) rowErrors.qty = "Quantity must be at least 1.";
+    return rowErrors;
+  }) || [];
+
+  if (itemErrors.some((row) => Object.keys(row).length > 0)) {
+    nextErrors.itemErrors = itemErrors;
+  }
+
+  return nextErrors;
+};
+
+export const requiresSignedContractForWalkIn = (payload = {}) => {
+  const isWalkInCustomer = String(payload.order_type || "") === "walk_in_customer";
+  const hasWebsiteAccount = payload.has_account_on_website === true;
+
+  return isWalkInCustomer && hasWebsiteAccount;
+};
+
 const isSiteInspectionVisible = (order) => {
   if (!order) return false;
 
@@ -86,6 +182,7 @@ const isSiteInspectionVisible = (order) => {
 
 function SiteInspection() {
   const { user } = useAuth();
+  const { darkMode } = useAdminTheme();
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -123,6 +220,49 @@ function SiteInspection() {
   
   const today = new Date().toISOString().split("T")[0];
   const pageSize = 8;
+  const formatCurrency = (value) =>
+    new Intl.NumberFormat("en-PH", {
+      style: "currency",
+      currency: "PHP",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(value || 0));
+
+  const modalShellClass = darkMode
+    ? "border border-slate-700 bg-[#071d2d] text-slate-100 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
+    : "border border-slate-200 bg-white text-slate-900 shadow-[0_20px_60px_rgba(15,23,42,0.12)]";
+  const modalHeaderClass = darkMode ? "border-b border-slate-700 bg-[#0b2338]" : "border-b border-slate-200 bg-slate-50";
+  const modalSectionClass = darkMode ? "border border-slate-700 bg-[#0f2438]" : "border border-slate-200 bg-white";
+  const fieldClass = darkMode
+    ? "w-full rounded-xl border border-slate-600 bg-[#122d42] px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-400 focus:border-red-500"
+    : "w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-red-500";
+  const lockedFieldClass = darkMode
+    ? "w-full cursor-not-allowed rounded-xl border border-slate-600 bg-slate-800 px-3 py-3 text-sm text-slate-300 shadow-inner outline-none placeholder:text-slate-500"
+    : "w-full cursor-not-allowed rounded-xl border border-slate-300 bg-slate-200 px-3 py-3 text-sm text-slate-600 shadow-inner outline-none placeholder:text-slate-400";
+  const labelClass = darkMode ? "text-slate-200" : "text-slate-700";
+  const mutedTextClass = darkMode ? "text-slate-400" : "text-slate-500";
+  const statusBadgeClass = darkMode
+    ? "flex h-[48px] items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 text-sm font-bold text-amber-200"
+    : "flex h-[48px] items-center justify-center rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-bold text-amber-700";
+  const inspectionStatus = newInspection.inspection_date ? {
+    label: "Scheduled",
+    icon: "✓",
+    className: darkMode
+      ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+      : "border border-emerald-200 bg-emerald-50 text-emerald-700",
+  } : {
+    label: "Needs to be Called",
+    icon: "📞",
+    className: statusBadgeClass,
+  };
+  const inputGridClass = darkMode ? "bg-[#122d42]" : "bg-slate-50";
+  const footerClass = darkMode ? "border-t border-slate-700 bg-[#0b2338]" : "border-t border-slate-200 bg-slate-50";
+  const secondaryButtonClass = darkMode
+    ? "rounded-xl border border-slate-600 bg-slate-800 px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-slate-700"
+    : "rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-100";
+  const primaryButtonClass = darkMode
+    ? "rounded-xl bg-red-600 px-6 py-3 text-sm font-black text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-70"
+    : "rounded-xl bg-red-600 px-6 py-3 text-sm font-black text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-70";
 
   useEffect(() => {
     setCurrentPage(1);
@@ -175,13 +315,21 @@ function SiteInspection() {
     setSelectedCustomer(null);
     setCustomerSearchError("");
     setCustomerSuggestions([]);
-    setNewInspection((prev) => ({
-      ...prev,
-      customerName: value,
-      customerEmail: "",
-      order_type: value.trim() ? "walk_in_customer" : "online_order",
-      customerId: null,
-    }));
+    setNewInspection((prev) => {
+      const isClearingSelectedCustomer = Boolean(prev.customerId);
+      const isClientNameEmpty = !value.trim();
+
+      return {
+        ...prev,
+        customerName: value,
+        customerEmail: "",
+        phone: isClearingSelectedCustomer || isClientNameEmpty ? "" : prev.phone,
+        siteAddress: isClearingSelectedCustomer || isClientNameEmpty ? "" : prev.siteAddress,
+        order_type: value.trim() ? "walk_in_customer" : "online_order",
+        customerId: null,
+        has_account_on_website: isClearingSelectedCustomer || isClientNameEmpty ? false : prev.has_account_on_website,
+      };
+    });
   };
 
   const handleCustomerSelect = (customer) => {
@@ -198,6 +346,7 @@ function SiteInspection() {
       phone: customer.phone || "",
       siteAddress: formatCustomerAddress(customer),
       order_type: "online_order",
+      has_account_on_website: true,
     }));
   };
 
@@ -213,6 +362,7 @@ function SiteInspection() {
       phone: "",
       siteAddress: "",
       order_type: "walk_in_customer",
+      has_account_on_website: false,
     }));
   };
 
@@ -238,38 +388,6 @@ function SiteInspection() {
     setSearchQuery(value);
   };
 
-
-  const validateInspectionPayload = (payload) => {
-    const nextErrors = {};
-    if (!payload.customerName?.trim()) nextErrors.customerName = "Client name is required.";
-    if (!payload.phone?.trim()) nextErrors.phone = "Phone number is required.";
-    if (!payload.siteAddress?.trim()) nextErrors.siteAddress = "Site address is required.";
-    if (!payload.inspection_date) nextErrors.inspection_date = "Inspection date is required.";
-    if (!payload.items || payload.items.length === 0) nextErrors.items = "Add at least one measurement row.";
-
-    // Walk-in customer validation
-    if (payload.order_type === "walk_in_customer" && !payload.signed_contract_file) {
-      nextErrors.signed_contract_file = "Signed contract is required for walk-in customers.";
-    }
-
-    const itemErrors = payload.items?.map((item) => {
-      const rowErrors = {};
-      const normalizedProductId = normalizeProductId(item.product_id);
-      if (!normalizedProductId) rowErrors.product_id = "Select a product.";
-      if (!item.name?.trim()) rowErrors.name = "Description is required.";
-      if (Number(item.width) <= 0) rowErrors.width = "Width must be greater than zero.";
-      if (Number(item.height) <= 0) rowErrors.height = "Height must be greater than zero.";
-      if (Number(item.qty) <= 0) rowErrors.qty = "Quantity must be at least 1.";
-      // unit_price is derived from admin product settings; no manual rate validation here
-      return rowErrors;
-    }) || [];
-
-    if (itemErrors.some((row) => Object.keys(row).length > 0)) {
-      nextErrors.itemErrors = itemErrors;
-    }
-
-    return nextErrors;
-  };
 
   const normalizeProductId = (productId) => {
     if (typeof productId === "object" && productId !== null) {
@@ -436,12 +554,18 @@ function SiteInspection() {
       })),
       shipping_address: payload.siteAddress,
       order_type: payload.order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
-      inspection_notes: payload.notes,
+      inspection_notes: payload.notes || payload.site_notes || "",
+      site_notes: payload.site_notes || payload.notes || "",
       payment_terms: payload.payment_terms,
       customer_name: payload.customerName,
       customer_phone: payload.phone,
       estimation_mode: "auto",
-      inspection_date: payload.inspection_date,
+      inspection_date: toApiDate(payload.inspection_date),
+      estimated_installation_date: toApiDate(payload.estimated_installation_date),
+      warranty_period: payload.warranty_period || 90,
+      has_account_on_website: Boolean(payload.has_account_on_website),
+      manual_override: payload.manual_override || "",
+      downpayment_received: Boolean(payload.downpayment_received),
     };
 
     // Add walk-in customer specific fields
@@ -972,12 +1096,70 @@ function SiteInspection() {
       };
       const generatedContract = generateContractData(generatedOrder) || contract;
 
+      const contractEmail = generatedOrder.customer_email || generatedOrder.customer?.email || order.customer_email || order.customer?.email || "";
+      if (!contractEmail.trim()) {
+        toast("Contract generated, but no customer email was provided.", { icon: "⚠️" });
+      }
+
       setInspections((prev) => prev.filter((inspection) => (inspection._id || inspection.id) !== orderId));
       setViewInspection((prev) => ((prev?._id || prev?.id) === orderId ? null : prev));
       setEditInspection((prev) => (prev?.id === orderId ? null : prev));
       setContractInspection(generatedOrder);
       setContractData(generatedContract);
       setShowContractModal(true);
+
+      if (contractEmail.trim()) {
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          const contractElement = document.getElementById("contract-content");
+          let contractAttachment;
+          if (contractElement) {
+            const { wrapper, clone } = createContractPrintClone(contractElement);
+            try {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              const contractImage = await toPng(clone, {
+                cacheBust: true,
+                pixelRatio: 2,
+                backgroundColor: "#ffffff",
+              });
+              const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+              const pdfWidth = pdf.internal.pageSize.getWidth();
+              const pdfHeight = pdf.internal.pageSize.getHeight();
+              const imageProperties = pdf.getImageProperties(contractImage);
+              const imageHeight = (imageProperties.height * pdfWidth) / imageProperties.width;
+              let heightLeft = imageHeight;
+              let position = 0;
+
+              pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
+              heightLeft -= pdfHeight;
+              while (heightLeft > 0) {
+                position -= pdfHeight;
+                pdf.addPage();
+                pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
+                heightLeft -= pdfHeight;
+              }
+
+              const pdfDataUrl = pdf.output("datauristring");
+              contractAttachment = `data:application/pdf;base64,${pdfDataUrl.split(",")[1]}`;
+            } finally {
+              wrapper.remove();
+            }
+          }
+          await sendWalkInApprovalEmail(orderId, {
+            customerName: generatedOrder.customer_name || generatedOrder.customer?.first_name
+              ? `${generatedOrder.customer?.first_name || ""} ${generatedOrder.customer?.last_name || ""}`.trim() || generatedOrder.customer_name
+              : order.customer_name,
+            customerEmail: contractEmail.trim(),
+            contractUrl: generatedOrder.signed_contract_url || order.signed_contract_url || "",
+            contractAttachment,
+          });
+          recordActivity(user, `Emailed contract details for order ${orderId}.`, "Site Inspection");
+          toast.success("Contract PDF emailed to customer");
+        } catch (emailError) {
+          console.error("Contract generated but email delivery failed:", emailError);
+          toast.error(emailError?.data?.message || "Contract generated, but the email could not be sent.");
+        }
+      }
       toast.success("Contract generated successfully!");
     } catch (err) {
       console.error("Generate contract failed", err);
@@ -985,6 +1167,25 @@ function SiteInspection() {
     } finally {
       setGeneratingId(null);
     }
+  };
+
+  const normalizeDateInputValue = (value) => {
+    if (!value) return "";
+    if (value instanceof Date) {
+      return value.toISOString().split("T")[0];
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return "";
+      const date = new Date(trimmed);
+      if (!Number.isNaN(date.getTime())) {
+        return date.toISOString().split("T")[0];
+      }
+      return trimmed.split("T")[0];
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toISOString().split("T")[0];
   };
 
   const handleEdit = (orderId) => {
@@ -1005,7 +1206,7 @@ function SiteInspection() {
       
       const phone = inspection.customer?.phone || inspection.customer_phone || "";
       const customerEmail = inspection.customer?.email || inspection.customer_email || "";
-const siteAddress = inspection.shipping_address || inspection.customer?.street_address || formatCustomerAddress(inspection.customer) || "";
+      const siteAddress = inspection.shipping_address || inspection.customer?.street_address || formatCustomerAddress(inspection.customer) || "";
       const orderType = inspection.order_type || "online_order";
 
       setEditInspection({
@@ -1016,11 +1217,17 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
         siteAddress,
         order_type: orderType,
         payment_terms: inspection.payment_terms || "",
-        inspection_date: inspection.inspection_date ? inspection.inspection_date.split("T")[0] : "",
+        inspection_date: normalizeDateInputValue(inspection.inspection_date),
+        estimated_installation_date: normalizeDateInputValue(getEstimatedInstallationDate(inspection)),
+        warranty_period: inspection.warranty_period || 90,
+        has_account_on_website: Boolean(inspection.has_account_on_website),
+        downpayment_received: Boolean(inspection.downpayment_received),
+        manual_override: inspection.manual_override || "",
         inspection_notes: inspection.inspection_notes || "",
         issues_found: inspection.issues_found || "",
         inspection_status: inspection.inspection_status || "pending",
-        items: (inspection.items || []).map((item) => getEditItemFromOrderItem(item)),        customerId: inspection.customer?._id || null,
+        items: (inspection.items || []).map((item) => getEditItemFromOrderItem(item)),
+        customerId: inspection.customer?._id || null,
       });
     } else {
       // fallback: open an empty editor
@@ -1157,12 +1364,16 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
         customer_name: editInspection.customerName || undefined,
         customer_email: editInspection.customerEmail || undefined,
         customer_phone: editInspection.phone || undefined,
-        inspection_date: editInspection.inspection_date || undefined,
+        inspection_date: toApiDate(editInspection.inspection_date),
         inspection_notes: editInspection.inspection_notes || undefined,
         issues_found: editInspection.issues_found || undefined,
         inspection_status: editInspection.inspection_date ? "scheduled" : editInspection.inspection_status || undefined,
+        estimated_installation_date: toApiDate(editInspection.estimated_installation_date),
         shipping_address: editInspection.siteAddress || undefined,
         payment_terms: editInspection.payment_terms || undefined,
+        warranty_period: editInspection.warranty_period || 90,
+        has_account_on_website: Boolean(editInspection.has_account_on_website),
+        downpayment_received: Boolean(editInspection.downpayment_received),
         items: (editInspection.items || []).map((item) => {
           const normalizedProductId = normalizeProductId(item.product_id);
           // Preserve original product_id if normalization fails; only use null as last resort
@@ -1182,7 +1393,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
             unit: item.unit || "sqft",
           };
         }),
-        total_amount: computeEditTotals().totalEstimate,
+        total_amount: Number(editInspection.manual_override) || computeEditTotals().totalEstimate,
       };
 
       // Validate that all items have product_id before sending
@@ -1199,6 +1410,23 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
       const res = await updateOrderInspection(editInspection.id, payload);
       recordActivity(user, `Updated site inspection ${editInspection.id}.`, "Site Inspection");
       toast.success("Inspection saved");
+
+      // Walk-in customers without website accounts can still receive the proposal
+      // at the email entered in the inspection form.
+      if (editInspection.order_type === "walk_in_customer" && editInspection.customerEmail?.trim()) {
+        try {
+          await sendWalkInApprovalEmail(editInspection.id, {
+            customerName: editInspection.customerName,
+            customerEmail: editInspection.customerEmail.trim(),
+          });
+          recordActivity(user, `Sent walk-in approval email for ${editInspection.customerName || "customer"}.`, "Site Inspection");
+          toast.success("Contract details emailed to customer");
+        } catch (emailError) {
+          console.error("Failed to send approval email after edit:", emailError);
+          toast.error(emailError?.data?.message || "Inspection saved, but the contract email could not be sent.");
+        }
+      }
+
       // update local inspections list with returned order
       if (res && res.order) {
         setInspections((prev) => {
@@ -1206,6 +1434,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
           return next.filter(isSiteInspectionVisible);
         });
       }
+      await fetchSiteInspections();
       setEditInspection(null);
     } catch (err) {
       console.error("Failed to save inspection edit", err, err?.data);
@@ -1234,6 +1463,23 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
   const paginatedList = filteredList.slice((currentPageIndex - 1) * pageSize, currentPageIndex * pageSize);
   const visibleRecordStart = filteredList.length === 0 ? 0 : (currentPageIndex - 1) * pageSize + 1;
   const visibleRecordEnd = Math.min(currentPageIndex * pageSize, filteredList.length);
+
+  const getInspectionProductSummary = (inspection) => {
+    const items = Array.isArray(inspection?.items) ? inspection.items : [];
+
+    if (!items.length) return "Project Item";
+
+    const names = items
+      .map((item) => item?.name || item?.product_id?.name || item?.product_name || "Unnamed item")
+      .filter(Boolean);
+
+    if (items.length === 1) return names[0] || "Project Item";
+
+    const firstName = names[0] || "Project Item";
+    const extraCount = items.length - 1;
+
+    return `${firstName} + ${extraCount} more item${extraCount > 1 ? "s" : ""}`;
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
@@ -1325,25 +1571,25 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
           <Toaster position="bottom-right" />
 
           {/* SEARCH */}
-          <div className="bg-white rounded-3xl shadow mt-6 p-6">
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="relative flex-1">
                 <Search
-                  size={20}
-                  className="absolute left-4 top-4 text-gray-400"
+                  size={18}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
                 />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   placeholder="Search inspections..."
-                  className="w-full pl-12 pr-4 py-3 border rounded-xl focus:outline-none focus:border-red-500"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-12 pr-4 text-sm text-slate-700 outline-none transition focus:border-red-400 focus:bg-white"
                 />
               </div>
 
               <button
                 onClick={() => { resetNewInspectionForm(); setShowModal(true); }}
-                className="inline-flex items-center justify-center rounded-2xl bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                className="inline-flex items-center justify-center rounded-xl bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
               >
                 <Plus size={18} className="mr-2" />
                 New Site Inspection
@@ -1353,26 +1599,26 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
           {/* TABLE */}
 
-          <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden">
+          <div className={`mt-6 overflow-hidden rounded-3xl border shadow-sm ${darkMode ? "border-slate-700 bg-[#071f2f] shadow-[0_18px_48px_rgba(15,23,42,0.42)]" : "border-slate-200 bg-white"}`}>
 
-            <div className="p-6 border-b">
+            <div className={`border-b px-6 py-5 ${darkMode ? "border-slate-700 bg-[#0b2338]" : "border-slate-200 bg-slate-50"}`}>
 
-              <h2 className="text-xl font-bold">
+              <h2 className={`text-xl font-bold tracking-[-0.02em] ${darkMode ? "text-white" : "text-slate-900"}`}>
                 Site Inspection Records
               </h2>
 
             </div>
 
             {/* Tabs */}
-            <div className="p-4 border-b bg-white flex items-center gap-4">
+            <div className={`flex items-center gap-3 border-b p-4 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-white"}`}>
               <button
-                className={`px-4 py-2 rounded-xl font-semibold ${activeTab === 'site' ? 'bg-red-600 text-white' : 'bg-white text-gray-700'}`}
+                className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'site' ? 'bg-red-600 text-white shadow-sm' : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                 onClick={() => setActiveTab('site')}
               >
                 Site Inspections
               </button>
               <button
-                className={`px-4 py-2 rounded-xl font-semibold ${activeTab === 'cancelled' ? 'bg-red-600 text-white' : 'bg-white text-gray-700'}`}
+                className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'cancelled' ? 'bg-red-600 text-white shadow-sm' : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                 onClick={() => setActiveTab('cancelled')}
               >
                 Cancelled
@@ -1383,35 +1629,31 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
               <table className="w-full">
 
-                <thead className="bg-gray-50">
-
+                <thead className={darkMode ? "bg-[#0d2033] shadow-inner" : "bg-gradient-to-r from-slate-100 via-slate-50 to-white shadow-inner"}>
                   <tr>
-
-                    <th className="w-16 p-4 text-center">No.</th>
-                    <th className="p-4 text-left">Client</th>
-                    <th className="p-4 text-left">Phone</th>
-                    <th className="p-4 text-left">Product</th>
-                    <th className="p-4 text-left">Client Type</th>
-                    <th className="p-4 text-left">Site Address</th>
-                    <th className="p-4 text-left">Date Submitted</th>
-                    <th className="p-4 text-left">Status</th>
-                    <th className="p-4 text-left">Estimation</th>
-                    <th className="p-4 text-center">Actions</th>
-
+                    <th className={`w-16 p-4 text-center text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>#</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Tracking ID</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Client</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Site Address</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Created</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Inspection Date</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Est. Install Date</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Status</th>
+                    <th className={`p-4 text-right text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Est. Total</th>
+                    <th className={`p-4 text-center text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Actions</th>
                   </tr>
-
                 </thead>
 
                 <tbody>
                   {inspectionsLoading ? (
                     <tr>
-                      <td colSpan={10} className="p-8 text-center text-slate-500">
+                      <td colSpan={9} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                         Loading inspections...
                       </td>
                     </tr>
                   ) : !filteredList.length ? (
                     <tr>
-                      <td colSpan={10} className="p-8 text-center text-slate-500">
+                      <td colSpan={9} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                         No records in this tab.
                       </td>
                     </tr>
@@ -1419,98 +1661,145 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                     paginatedList.map((inspection, index) => {
                       const clientName = inspection.customer
                         ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim() || inspection.customer.email || inspection.customer_name || "Customer"
-                        : inspection.customer_name || "Customer";
+                        : inspection.customer_name || inspection.customer_email || "Customer";
+                      const trackingId = inspection.tracking || inspection.order_number || inspection.orderId || `SI-${String((inspection._id || inspection.id || "")).slice(-8).toUpperCase()}`;
                       const phone = inspection.customer?.phone || inspection.customer_phone || "—";
-                      const productName = inspection.items?.[0]?.name || inspection.items?.[0]?.product_id?.name || "Project Item";
-                      const orderType = inspection.order_type === "walk_in_customer" ? "Walk-in" : "Online";
-                      const address = inspection.shipping_address || "—";
-                      const date = inspection.createdAt ? formatDateToMMDDYYYY(inspection.createdAt) : "—";
-                      const statusLabel = inspection.inspection_status
-                        ? inspection.inspection_status
-                            .replace(/_/g, " ")
-                            .replace(/\b\w/g, (c) => c.toUpperCase())
-                        : inspection.status === "site_inspection"
-                          ? "Site Inspection"
-                          : inspection.status?.replace(/_/g, " ") || "Pending";
-                      const estimatedCost = inspection.total_amount ? `₱${inspection.total_amount.toLocaleString()}` : "—";
+                      const siteAddress = inspection.shipping_address || inspection.siteAddress || inspection.customer?.street_address || "—";
+                      const createdDate = inspection.createdAt ? formatDateToMMDDYYYY(inspection.createdAt) : "—";
+                      const inspectionDate = inspection.inspection_date ? formatDateToMMDDYYYY(inspection.inspection_date) : "—";
+                      const installDateValue = getEstimatedInstallationDate(inspection);
+                      const installDate = installDateValue ? formatDateToMMDDYYYY(installDateValue) : "—";
+                      const total = Number(inspection.total_amount || inspection.contract_amount || 0);
+                      const isScheduled = hasValidInspectionDate(inspection);
+                      const isCancelledTab = activeTab === "cancelled";
+                      const statusConfig = isCancelledTab
+                        ? {
+                            label: "Cancelled",
+                            className: darkMode
+                              ? "border border-rose-300/40 bg-gradient-to-r from-rose-500/25 via-red-500/20 to-slate-800 text-rose-50 shadow-[0_10px_24px_rgba(244,63,94,0.26)] ring-1 ring-rose-200/10"
+                              : "border border-rose-200 bg-gradient-to-r from-rose-50 via-red-50 to-slate-100 text-rose-700 shadow-[0_10px_24px_rgba(244,63,94,0.12)]",
+                          }
+                        : isScheduled
+                          ? {
+                              label: "Scheduled",
+                              className: darkMode
+                                ? "border border-emerald-300/40 bg-gradient-to-r from-emerald-500/30 via-teal-500/25 to-emerald-400/20 text-emerald-50 shadow-[0_10px_24px_rgba(16,185,129,0.28)] ring-1 ring-emerald-200/10"
+                                : "border border-emerald-200 bg-gradient-to-r from-emerald-50 via-teal-50 to-lime-50 text-emerald-700 shadow-[0_10px_24px_rgba(16,185,129,0.12)]",
+                            }
+                          : {
+                              label: "Needs to be Called",
+                              className: darkMode
+                                ? "border border-amber-300/40 bg-gradient-to-r from-amber-500/30 via-orange-500/18 to-yellow-500/14 text-amber-50 shadow-[0_10px_24px_rgba(245,158,11,0.24)] ring-1 ring-amber-200/10"
+                                : "border border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-yellow-50 text-amber-700 shadow-[0_10px_24px_rgba(245,158,11,0.12)]",
+                            };
 
                       return (
                         <tr
                           key={inspection._id || inspection.id}
-                          className="border-t hover:bg-gray-50"
+                          className={isCancelledTab
+                            ? darkMode
+                              ? "border-t border-slate-700 bg-slate-900/40 opacity-85 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800/70 hover:shadow-[0_8px_18px_rgba(15,23,42,0.22)]"
+                              : "border-t border-slate-200 bg-slate-50/80 opacity-85 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-100 hover:shadow-[0_8px_18px_rgba(15,23,42,0.04)]"
+                            : darkMode
+                              ? "border-t border-slate-700 bg-[#0b2338] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#102d46] hover:shadow-[0_8px_18px_rgba(15,23,42,0.2)]"
+                              : "border-t border-slate-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-50 hover:shadow-[0_8px_18px_rgba(15,23,42,0.04)]"}
                         >
-                          <td className="w-16 p-4 text-center font-semibold text-slate-600">
+                          <td className={`w-16 p-4 text-center font-bold ${isCancelledTab ? darkMode ? "text-slate-400" : "text-slate-500" : darkMode ? "text-slate-300" : "text-slate-600"}`}>
                             {(currentPageIndex - 1) * pageSize + index + 1}
                           </td>
-                          <td className="p-4">{clientName}</td>
-                          <td className="p-4">{phone}</td>
-                          <td className="p-4">{productName}</td>
-                          <td className="p-4">{orderType}</td>
-                          <td className="p-4 max-w-xs break-words">{address}</td>
-                          <td className="p-4">{date}</td>
-                          <td className="p-4">
-                            <span className="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-sm">
-                              {statusLabel}
+                          <td className="p-4 align-top py-5">
+                            <div className={`text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Tracking</div>
+                            <div className={`mt-1 font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{trackingId}</div>
+                          </td>
+                          <td className="p-4 align-top py-5">
+                            <div className={`font-semibold ${darkMode ? "text-slate-100" : isCancelledTab ? "text-slate-600" : "text-slate-900"}`}>{clientName}</div>
+                            <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{phone}</div>
+                          </td>
+                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
+                            <div className="max-w-[220px] break-words leading-relaxed">
+                              {siteAddress}
+                            </div>
+                          </td>
+                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{createdDate}</td>
+                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{inspectionDate}</td>
+                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{installDate}</td>
+                          <td className="p-4 align-top py-5">
+                            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-bold tracking-[0.02em] ${statusConfig.className}`}>
+                              <span
+                                className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] shadow-inner ${darkMode ? "border-white/15 bg-slate-950/70 text-white" : "border-white/70 bg-white/80 text-slate-700"}`}
+                                aria-hidden="true"
+                              >
+                                {isCancelledTab ? "⛔" : isScheduled ? "✓" : "📞"}
+                              </span>
+                              {statusConfig.label}
                             </span>
                           </td>
-                          <td className="p-4 font-semibold text-green-500">{estimatedCost}</td>
-                          <td className="p-4">
-                            <div className="flex justify-center gap-3">
+                          <td className={`p-4 align-top py-5 text-right font-black ${darkMode ? "text-slate-100" : isCancelledTab ? "text-slate-600" : "text-slate-900"}`}>
+                            {Number.isFinite(total) && total > 0 ? `₱${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00"}
+                          </td>
+                          <td className="p-4 align-top py-5">
+                            <div className="flex items-center justify-center gap-3">
                               <button
-                                className="text-blue-600 hover:text-blue-800"
+                                className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 ${darkMode ? "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:-translate-y-0.5 hover:border-sky-400 hover:bg-sky-500/20" : isCancelledTab ? "border-blue-200 bg-blue-50 text-blue-700 hover:-translate-y-0.5 hover:border-blue-300 hover:bg-blue-100" : "border-sky-200 bg-sky-50 text-sky-700 hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100"}`}
                                 onClick={() => handleView(inspection)}
                                 title="View inspection"
                                 aria-label="View inspection"
                               >
-                                <Eye size={23} />
+                                <Eye size={18} />
                               </button>
-                              {activeTab !== 'cancelled' && hasValidInspectionDate(inspection) && (
+                              {activeTab !== "cancelled" && (
+                                <button
+                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:-translate-y-0.5 hover:border-amber-400 hover:bg-amber-500/20" : "border-amber-200 bg-amber-50 text-amber-700 hover:-translate-y-0.5 hover:border-amber-300 hover:bg-amber-100"}`}
+                                  onClick={() => handleEdit(inspection._id || inspection.id)}
+                                  title="Edit inspection"
+                                  aria-label="Edit inspection"
+                                >
+                                  <Pencil size={18} />
+                                </button>
+                              )}
+                              {activeTab !== "cancelled" && hasValidInspectionDate(inspection) && (
                                 <button
                                   title="Generate Contract"
                                   aria-label="Generate contract"
-                                  className="text-emerald-600 hover:text-emerald-800"
+                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-500/20" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100"}`}
                                   onClick={() => requestGenerateContract(inspection._id || inspection.id)}
                                   disabled={generatingId === (inspection._id || inspection.id)}
                                 >
                                   {generatingId === (inspection._id || inspection.id) ? (
-                                    "Generating..."
+                                    <span className="text-[10px] font-bold">…</span>
                                   ) : (
-                                    <FileText size={23} />
+                                    <FileText size={18} />
                                   )}
                                 </button>
                               )}
-                              {activeTab !== 'cancelled' ? (
-                                <>
-                                  <button
-                                    title="Edit inspection"
-                                    aria-label="Edit inspection"
-                                    className="text-orange-500 hover:text-orange-700"
-                                    onClick={() => handleEdit(inspection._id || inspection.id)}
-                                  >
-                                    <Pencil size={23} />
-                                  </button>
-                                  <button
-                                    className="text-red-600 hover:text-red-800"
-                                    onClick={() => requestCancel(inspection._id || inspection.id)}
-                                    title="Cancel inspection"
-                                    aria-label="Cancel inspection"
-                                    disabled={cancellingId === (inspection._id || inspection.id)}
-                                  >
-                                    {cancellingId === (inspection._id || inspection.id) ? "Cancelling..." : <XOctagon size={23} />}
-                                  </button>
-                                </>
+                              {activeTab !== "cancelled" ? (
+                                <button
+                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-red-500/30 bg-red-500/10 text-red-200 hover:-translate-y-0.5 hover:border-red-400 hover:bg-red-500/20" : "border-red-200 bg-red-50 text-red-700 hover:-translate-y-0.5 hover:border-red-300 hover:bg-red-100"}`}
+                                  onClick={() => requestCancel(inspection._id || inspection.id)}
+                                  title="Cancel inspection"
+                                  aria-label="Cancel inspection"
+                                  disabled={cancellingId === (inspection._id || inspection.id)}
+                                >
+                                  {cancellingId === (inspection._id || inspection.id) ? (
+                                    <span className="text-[10px] font-bold">…</span>
+                                  ) : (
+                                    <XOctagon size={18} />
+                                  )}
+                                </button>
                               ) : (
-                                <>
-                                  <button
-                                    title="Restore inspection"
-                                    aria-label="Restore inspection"
-                                    className="text-emerald-600 hover:text-emerald-800"
-                                    onClick={() => requestRestore(inspection._id || inspection.id)}
-                                    disabled={restoringId === (inspection._id || inspection.id)}
-                                  >
-                                    {restoringId === (inspection._id || inspection.id) ? 'Restoring...' : <RotateCcw size={23} />}
-                                  </button>
-                                </>
+                                <button
+                                  title="Restore inspection"
+                                  aria-label="Restore inspection"
+                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-500/20" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100"}`}
+                                  onClick={() => requestRestore(inspection._id || inspection.id)}
+                                  disabled={restoringId === (inspection._id || inspection.id)}
+                                >
+                                  {restoringId === (inspection._id || inspection.id) ? (
+                                    <span className="text-[10px] font-bold">…</span>
+                                  ) : (
+                                    <RotateCcw size={18} />
+                                  )}
+                                </button>
                               )}
                             </div>
                           </td>
@@ -1524,8 +1813,8 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
 
             </div>
 
-            <div className="flex flex-col gap-3 justify-center items-center p-4 border-t bg-gray-50 sm:flex-row">
-              <div className="text-sm text-slate-600">
+            <div className={`flex flex-col gap-3 justify-center items-center border-t p-4 sm:flex-row ${darkMode ? "border-slate-700 bg-[#0b2338]" : "border-slate-200 bg-gray-50"}`}>
+              <div className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                 Showing {visibleRecordStart} - {visibleRecordEnd} of {filteredList.length} records
               </div>
               <div className="flex flex-wrap items-center justify-center gap-2">
@@ -1533,7 +1822,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                   type="button"
                   onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                   disabled={currentPage <= 1}
-                  className="px-4 py-2 rounded-lg border bg-white text-slate-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={`px-4 py-2 rounded-lg border disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border bg-white text-slate-700 hover:bg-gray-100"}`}
                 >
                   Previous
                 </button>
@@ -1545,7 +1834,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                       key={pageNumber}
                       type="button"
                       onClick={() => setCurrentPage(pageNumber)}
-                      className={`w-10 h-10 rounded-lg ${pageNumber === currentPage ? 'bg-red-600 text-white' : 'border bg-white text-slate-700 hover:bg-gray-100'}`}
+                      className={`w-10 h-10 rounded-lg ${pageNumber === currentPage ? 'bg-red-600 text-white' : darkMode ? 'border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700' : 'border bg-white text-slate-700 hover:bg-gray-100'}`}
                     >
                       {pageNumber}
                     </button>
@@ -1555,7 +1844,7 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
                   type="button"
                   onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
                   disabled={currentPage >= totalPages}
-                  className="px-4 py-2 rounded-lg border bg-white text-slate-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={`px-4 py-2 rounded-lg border disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border bg-white text-slate-700 hover:bg-gray-100"}`}
                 >
                   Next
                 </button>
@@ -1567,781 +1856,979 @@ const siteAddress = inspection.shipping_address || inspection.customer?.street_a
           {/* MODAL */}
 
           {showModal && (
-
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
-
-              <div className="bg-white w-full max-w-4xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto">
-
-                <div className="flex justify-between items-center mb-8">
-
-                  <h2 className="text-2xl font-bold">
-                    New Site Inspection
-                  </h2>
-
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-6 backdrop-blur-[2px]">
+              <div className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] ${modalShellClass}`}>
+                <div className={`flex items-start justify-between px-6 py-5 ${modalHeaderClass}`}>
+                  <div>
+                    <h2 className={`text-[26px] font-black tracking-[-0.04em] ${darkMode ? "text-white" : "text-slate-900"}`}>New Site Inspection</h2>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Fill in the details below to create a new inspection record.</p>
+                  </div>
                   <button
+                    type="button"
                     onClick={() => setShowModal(false)}
-                    className="text-3xl"
+                    className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border text-2xl shadow-sm transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-900"}`}
+                    aria-label="Close new site inspection modal"
                   >
                     ×
                   </button>
-
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-6">
+                <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-5 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Client Information</h3>
 
-                  <div className="relative">
-                  <label className="block font-medium text-gray-700 mb-2">Client Name</label>
-                    <input
-                      type="text"
-                      placeholder="Search customer or enter name"
-                      className="border rounded-xl p-3 w-full"
-                      value={customerSearch || newInspection.customerName}
-                      onChange={(e) => handleClientNameInput(e.target.value)}
-                      disabled={Boolean(selectedCustomer)}
-                    />
-                    {selectedCustomer && (
-                      <button
-                        type="button"
-                        onClick={clearSelectedCustomer}
-                        className="mt-2 text-sm text-blue-600"
-                      >
-                        Change customer
-                      </button>
-                    )}
-                    {customerSearchLoading && !selectedCustomer && (
-                      <p className="mt-2 text-sm text-gray-500">Searching customers...</p>
-                    )}
-                    {customerSearchError && <p className="mt-2 text-sm text-red-600">{customerSearchError}</p>}
-                    {customerSuggestions.length > 0 && !selectedCustomer && (
-                      <div className="absolute z-30 mt-2 w-full rounded-2xl border bg-white shadow-lg max-h-72 overflow-y-auto">
-                        {customerSuggestions.map((customer) => {
-                          const label = `${customer.first_name || ""} ${customer.last_name || ""}`.trim() || customer.email || customer.phone || "Unnamed";
+                    <div className="grid gap-5 md:grid-cols-3">
+                      <div className="md:col-span-1">
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Name <span className="text-red-400">*</span></label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Maria Santos"
+                          className={`${fieldClass} ${Boolean(selectedCustomer) ? "border-slate-300 bg-slate-200 text-slate-600 shadow-inner dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" : ""}`}
+                          value={customerSearch || newInspection.customerName}
+                          onChange={(e) => handleClientNameInput(e.target.value)}
+                        />
+                        {customerSearchLoading && !selectedCustomer && <p className={`mt-2 text-xs ${mutedTextClass}`}>Searching customers...</p>}
+                        {customerSearchError && <p className="mt-2 text-xs text-red-400">{customerSearchError}</p>}
+                        {errors.customerName && <p className="mt-2 text-xs text-red-400">{errors.customerName}</p>}
+                        {customerSuggestions.length > 0 && !selectedCustomer && (
+                          <div className={`absolute z-30 mt-2 w-full max-w-[22rem] rounded-2xl border shadow-lg max-h-72 overflow-y-auto ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
+                            {customerSuggestions.map((customer) => {
+                              const label = `${customer.first_name || ""} ${customer.last_name || ""}`.trim() || customer.email || customer.phone || "Unnamed";
+                              return (
+                                <button
+                                  key={customer._id}
+                                  type="button"
+                                  onClick={() => handleCustomerSelect(customer)}
+                                  className={`w-full text-left px-4 py-3 ${darkMode ? "hover:bg-slate-700" : "hover:bg-slate-100"}`}
+                                >
+                                  <div className={`font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{label}</div>
+                                  <div className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{customer.email || customer.phone || formatCustomerAddress(customer)}</div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="md:col-span-1">
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Number <span className="text-red-400">*</span></label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 09171234567"
+                          className={selectedCustomer ? lockedFieldClass : fieldClass}
+                          value={newInspection.phone}
+                          onChange={(e) => handleInspectionFieldChange("phone", e.target.value)}
+                          readOnly={!!selectedCustomer}
+                        />
+                        {errors.phone && <p className="mt-2 text-xs text-red-400">{errors.phone}</p>}
+                      </div>
+
+                      <div className="md:col-span-1">
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Site Address <span className="text-red-400">*</span></label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 45 Magsaysay Dr."
+                          className={selectedCustomer ? lockedFieldClass : fieldClass}
+                          value={newInspection.siteAddress}
+                          onChange={(e) => handleInspectionFieldChange("siteAddress", e.target.value)}
+                          readOnly={!!selectedCustomer}
+                        />
+                        {errors.siteAddress && <p className="mt-2 text-xs text-red-400">{errors.siteAddress}</p>}
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-5 md:grid-cols-3">
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Inspection Date <span className="text-red-400">*</span></label>
+                        <input
+                          type="date"
+                          className={fieldClass}
+                          value={newInspection.inspection_date}
+                          min={today}
+                          onChange={(e) => handleInspectionFieldChange("inspection_date", e.target.value)}
+                        />
+                        {errors.inspection_date && <p className="mt-2 text-xs text-red-400">{errors.inspection_date}</p>}
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date <span className="text-red-400">*</span></label>
+                        <input
+                          type="date"
+                          className={fieldClass}
+                          value={newInspection.estimated_installation_date || ""}
+                          min={today}
+                          onChange={(e) => handleInspectionFieldChange("estimated_installation_date", e.target.value)}
+                        />
+                        {errors.estimated_installation_date && <p className="mt-2 text-xs text-red-400">{errors.estimated_installation_date}</p>}
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Status</label>
+                        <div className={`flex h-[48px] items-center justify-center rounded-xl px-3 text-sm font-bold ${inspectionStatus.className}`}>
+                          <span className="mr-2 text-base">{inspectionStatus.icon}</span>
+                          {inspectionStatus.label}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-6">
+                      <p className={`mb-3 text-[14px] font-bold ${labelClass}`}>Warranty Period</p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        {[30, 90, "Custom"].map((option) => {
+                          const isSelected = option === "Custom"
+                            ? newInspection.warranty_period === "Custom"
+                            : Number(newInspection.warranty_period) === Number(option);
                           return (
                             <button
-                              key={customer._id}
+                              key={String(option)}
                               type="button"
-                              onClick={() => handleCustomerSelect(customer)}
-                              className="w-full text-left px-4 py-3 hover:bg-gray-100"
+                              onClick={() => handleInspectionFieldChange("warranty_period", option === "Custom" ? "Custom" : Number(option))}
+                              className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+                                isSelected
+                                  ? "border-red-500 bg-red-600 text-white shadow-sm"
+                                  : darkMode
+                                    ? "border-slate-600 bg-[#122d42] text-slate-200 hover:bg-slate-700"
+                                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                              }`}
                             >
-                              <div className="font-semibold">{label}</div>
-                              <div className="text-sm text-gray-500">{customer.email || customer.phone || formatCustomerAddress(customer)}</div>
+                              {option === "Custom" ? "Custom" : `${option} Days`}
                             </button>
                           );
                         })}
                       </div>
-                    )}
-                    {errors.customerName && <p className="mt-2 text-sm text-red-600">{errors.customerName}</p>}
-                  </div>
+                      <p className={`mt-3 text-xs ${mutedTextClass}`}>Coverage starts on the installation date. Used for testing warranty expiry.</p>
+                    </div>
+                  </section>
 
-                  <div>
-                  <label className="block font-medium text-gray-700 mb-2">Email Address</label>
-                    <input
-                      type="email"
-                      placeholder="Email Address"
-                      className="border rounded-xl p-3 w-full"
-                      value={newInspection.customerEmail}
-                      onChange={(e) => handleInspectionFieldChange("customerEmail", e.target.value)}
-                      readOnly={Boolean(selectedCustomer)}
-                    />
-                  </div>
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-5 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Customer Account</h3>
 
-                  <div>
-                  <label className="block font-medium text-gray-700 mb-2">Phone Number</label>
-                    <input
-                      type="text"
-                      placeholder="Phone Number"
-                      className="border rounded-xl p-3 w-full"
-                      value={newInspection.phone}
-                      onChange={(e) => handleInspectionFieldChange("phone", e.target.value)}
-                      readOnly={Boolean(selectedCustomer)}
-                    />
-                    {errors.phone && <p className="mt-2 text-sm text-red-600">{errors.phone}</p>}
-                  </div>
-
-                  <div>
-                    <label className="block font-medium text-gray-700 mb-2">Site Inspection Date</label>
-                    <input
-                      type="date"
-                      className="border rounded-xl p-3 w-full"
-                      value={newInspection.inspection_date}
-                      min={today}
-                      onChange={(e) => handleInspectionFieldChange("inspection_date", e.target.value)}
-                    />
-                    {errors.inspection_date && <p className="mt-2 text-sm text-red-600">{errors.inspection_date}</p>}
-                  </div>
-
-                  <div>
-                    <label className="block font-medium text-gray-700 mb-2">Customer Type</label>
-                    <select
-                      className="border rounded-xl p-3 w-full"
-                      value={newInspection.order_type}
-                      onChange={(e) => handleInspectionFieldChange("order_type", e.target.value)}
-                      disabled={Boolean(selectedCustomer)}
-                    >
-                      <option value="online_order">Online Customer</option>
-                      <option value="walk_in_customer">Walk-in Customer</option>
-                    </select>
-                  </div>
-
-                            <div>
-                              <label className="block font-medium text-gray-700 mb-2">Site Address</label>
-                                <input
-                                  type="text"
-                                  placeholder="Site Address"
-                                  className="border rounded-xl p-3 w-full"
-                                  value={newInspection.siteAddress}
-                                  onChange={(e) => handleInspectionFieldChange("siteAddress", e.target.value)}
-                                />
-                                {errors.siteAddress && <p className="mt-2 text-sm text-red-600">{errors.siteAddress}</p>}
-                              </div>
-                  
-		              <div>
-                    <label className="block font-medium text-gray-700 mb-2">Payment Terms</label>
-                    <select
-                      className="border rounded-xl p-3 w-full"
-                      value={newInspection.payment_terms}
-                      onChange={(e) => handleInspectionFieldChange("payment_terms", e.target.value)}
-                    >
-                      <option value="">Select Payment Terms</option>
-                      <option value="50%_down_payment">50% Down Payment</option>
-                      <option value="full_payment">Full Payment</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Walk-in Customer Fields */}
-                {newInspection.order_type === "walk_in_customer" && (
-                  <div className="mt-6 bg-blue-50 rounded-2xl p-4">
-                    <h3 className="font-semibold text-blue-900 mb-4">Walk-in Customer - Contract Information</h3>
-                    <div className="grid md:grid-cols-2 gap-6">
-                      <div className="md:col-span-2">
-                        <label className="block font-medium text-gray-700 mb-2">
-                          Signed Contract / Acceptance Form <span className="text-red-600">*</span>
-                        </label>
-                        <label className="block border-2 border-dashed rounded-xl p-4 text-center cursor-pointer hover:bg-gray-50">
-                          <input
-                            type="file"
-                            accept=".pdf,.jpg,.jpeg,.png"
-                            onChange={(e) => handleSignedContractUpload(e.target.files)}
-                            className="hidden"
-                            disabled={uploadingContractFile}
-                          />
-                          {uploadingContractFile ? (
-                            <p className="text-gray-600">Uploading...</p>
-                          ) : typeof newInspection.signed_contract_file === "string" && newInspection.signed_contract_file.trim() ? (
-                            <div>
-                              <p className="text-green-600 font-semibold">✓ File uploaded</p>
-                              <p className="text-sm text-gray-600 mt-1">{newInspection.signed_contract_file.split("/").pop()}</p>
-                            </div>
-                          ) : (
-                            <div>
-                              <p className="text-gray-700">📄 Upload PDF, JPG, or PNG</p>
-                              <p className="text-sm text-gray-600">Max 10 MB</p>
-                            </div>
-                          )}
-                        </label>
-                        {contractUploadError && <p className="mt-2 text-sm text-red-600">{contractUploadError}</p>}
-                        {errors.signed_contract_file && <p className="mt-2 text-sm text-red-600">{errors.signed_contract_file}</p>}
+                    <div className="grid gap-5 md:grid-cols-[1.1fr_1.7fr]">
+                      <div>
+                        <p className={`mb-2 text-[14px] font-bold ${labelClass}`}>Has Account on Website?</p>
+                        <div className={`grid grid-cols-2 overflow-hidden rounded-xl border shadow-sm ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-200 bg-slate-50"}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleInspectionFieldChange("has_account_on_website", true)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${
+                              newInspection.has_account_on_website
+                                ? darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700"
+                                : darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500"
+                            }`}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            disabled={Boolean(selectedCustomer || newInspection.customerId)}
+                            onClick={() => handleInspectionFieldChange("has_account_on_website", false)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                              !newInspection.has_account_on_website
+                                ? darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800"
+                                : darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500"
+                            }`}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
+                            No
+                          </button>
+                        </div>
                       </div>
 
                       <div>
-                        <label className="block font-medium text-gray-700 mb-2">Date Signed</label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Customer Email (optional)</label>
                         <input
-                          type="date"
-                          className="border rounded-xl p-3 w-full"
-                          value={newInspection.contract_signed_date}
-                          onChange={(e) => handleInspectionFieldChange("contract_signed_date", e.target.value)}
+                          type="email"
+                          placeholder="e.g. maria@email.com"
+                          className={fieldClass}
+                          value={newInspection.customerEmail}
+                          onChange={(e) => handleInspectionFieldChange("customerEmail", e.target.value)}
+                          readOnly={Boolean(selectedCustomer)}
+                        />
+                        <p className={`mt-2 text-xs ${mutedTextClass}`}>Optional — only needed if you plan to email the contract; you can still print it without one.</p>
+                      </div>
+                    </div>
+
+                  </section>
+
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Site Details</h3>
+                    <textarea
+                      rows={4}
+                      placeholder="Describe the project scope, access notes, special requirements..."
+                      className={fieldClass}
+                      value={newInspection.site_notes || newInspection.notes || ""}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setNewInspection((prev) => ({ ...prev, site_notes: value, notes: value }));
+                      }}
+                    />
+                  </section>
+
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Measurements</h3>
+                    <p className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Add or edit measurement rows. Totals update in real time.</p>
+
+                    <div className={`mt-4 overflow-hidden rounded-xl border ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
+                      <div className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[11px] font-black uppercase tracking-[0.12em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
+                        <div>Product / Description</div>
+                        <div>Width</div>
+                        <div>Height</div>
+                        <div>Unit</div>
+                        <div>Qty</div>
+                        <div>Price/ Sqft</div>
+                        <div>Total</div>
+                      </div>
+
+                      {(newInspection.items || []).map((item, index) => {
+                        const rowSubtotal = calculateRowSubtotal(item);
+                        return (
+                          <div key={item.id} className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={item.product_id || ""}
+                                onChange={(e) => handleItemProductChange(item.id, e.target.value)}
+                                className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
+                              >
+                                <option value="">-- Select Active Product --</option>
+                                {products.map((product) => (
+                                  <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.width || 0}
+                              onChange={(e) => handleItemFieldChange(item.id, "width", e.target.value)}
+                              className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
+                            />
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.height || 0}
+                              onChange={(e) => handleItemFieldChange(item.id, "height", e.target.value)}
+                              className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
+                            />
+                            <div className={`flex items-center justify-center rounded-lg border px-2 py-2 text-sm font-medium ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-200" : "border-slate-200 bg-slate-100 text-slate-700"}`}>
+                              {item.unit || "sqft"}
+                            </div>
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.qty || 1}
+                              onChange={(e) => handleItemFieldChange(item.id, "qty", e.target.value)}
+                              className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
+                            />
+                            <div className={`flex items-center justify-center rounded-lg border px-2 py-2 text-sm font-bold ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-100" : "border-slate-200 bg-slate-100 text-slate-800"}`}>
+                              {formatCurrency(Number(item.unit_price) || 0)}
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{formatCurrency(rowSubtotal)}</span>
+                              <button type="button" onClick={() => removeItemRow(item.id)} className="text-lg font-bold text-red-400 hover:text-red-300">×</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between">
+                      <button type="button" onClick={addItemRow} className={`rounded-[12px] border px-4 py-2 text-sm font-bold transition ${darkMode ? "border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20" : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"}`}>
+                        + Add Row
+                      </button>
+                      <div className={`text-lg font-black ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                        Total: <span className="text-red-400">{formatCurrency(computeTotals().totalEstimate)}</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Payment Information</h3>
+                    <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                      <span className="mr-2 text-base">💡</span>
+                      Business Policy: A 50% downpayment is required before project commences.
+                    </div>
+
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Computed Total</label>
+                        <div className={`rounded-xl border px-3 py-3 text-xl font-black ${darkMode ? "border-slate-600 bg-[#122d42] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+                          {formatCurrency(computeTotals().totalEstimate)}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Manual Override (optional)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="Enter adjusted total..."
+                          className={fieldClass}
+                          value={newInspection.manual_override}
+                          onChange={(e) => handleInspectionFieldChange("manual_override", e.target.value)}
                         />
                       </div>
                     </div>
-                  </div>
-                )}
 
-                <textarea
-                  rows="4"
-                  placeholder="Inspection Notes"
-                  className="w-full border rounded-xl p-3 mt-6"
-                  value={newInspection.notes}
-                  onChange={(e) => setNewInspection((p) => ({ ...p, notes: e.target.value }))}
-                />
+                    <div className={`mt-5 rounded-xl border border-dashed px-4 py-4 ${darkMode ? "border-slate-600 bg-[#102838] text-slate-200" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+                      <div className="flex items-center justify-between gap-4 text-[14px] font-bold">
+                        <span>Final Estimated Total</span>
+                        <span className={`text-[18px] font-black ${darkMode ? "text-white" : "text-slate-900"}`}>
+                          {formatCurrency(Number(newInspection.manual_override) || computeTotals().totalEstimate)}
+                        </span>
+                      </div>
+                      <div className={`mt-3 flex items-center justify-between gap-4 border-t pt-3 text-[14px] font-bold ${darkMode ? "border-slate-700 text-red-400" : "border-slate-200 text-red-600"}`}>
+                        <span>50% Downpayment Due</span>
+                        <span className={`text-[18px] font-black ${darkMode ? "text-red-400" : "text-red-600"}`}>
+                          {formatCurrency(((Number(newInspection.manual_override) || computeTotals().totalEstimate) * 0.5))}
+                        </span>
+                      </div>
+                    </div>
 
-                {/* Measurements rows */}
-                <div className="mt-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-semibold">Measurements</h3>
-                    <button type="button" onClick={addItemRow} className="px-3 py-1 bg-red-600 text-white rounded">+ Add Row</button>
-                  </div>
-                  <div className="space-y-3">
-                    {(newInspection.items || []).map((it, index) => {
-                      const rowSubtotal = calculateRowSubtotal(it);
-                      return (
-                        <div key={it.id} className="py-5 mt-4 grid grid-cols-10 gap-2 items-center">
-                          <div className="col-span-3 relative">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const current = document.getElementById(`product-menu-${it.id}`);
-                                if (current?.classList.contains('hidden')) {
-                                  current.classList.remove('hidden');
-                                } else if (current) {
-                                  current.classList.add('hidden');
-                                }
-                              }}
-                              className="w-full border rounded p-2 text-left bg-white hover:bg-gray-50 flex justify-between items-center"
-                            >
-                              <span>{products.find(p => String(p._id || p.id) === it.product_id)?.name || 'Select product'}</span>
-                              <span>▼</span>
-                            </button>
-                            <div
-                              id={`product-menu-${it.id}`}
-                              className="hidden absolute top-full left-0 right-0 mt-1 border rounded bg-white shadow-lg z-[100] max-h-48 overflow-y-auto"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  handleItemProductChange(it.id, '');
-                                  document.getElementById(`product-menu-${it.id}`)?.classList.add('hidden');
-                                }}
-                                className="w-full text-left px-3 py-2 hover:bg-gray-100"
-                              >
-                                Select product
-                              </button>
-                              {products.map((product) => (
-                                <button
-                                  key={String(product._id || product.id)}
-                                  type="button"
-                                  onClick={() => {
-                                    handleItemProductChange(it.id, String(product._id || product.id));
-                                    document.getElementById(`product-menu-${it.id}`)?.classList.add('hidden');
-                                  }}
-                                  className="w-full text-left px-3 py-2 hover:bg-gray-100"
-                                >
-                                  {product.name}
-                                </button>
-                              ))}
-                            </div>
-                            {productsLoading && <p className="text-xs text-gray-500 mt-1">Loading products...</p>}
-                          </div>
-                          <input
-                            className="col-span-2 border rounded p-2"
-                            placeholder="W"
-                            value={it.width}
-                            onChange={(e) => handleItemFieldChange(it.id, 'width', e.target.value)}
-                          />
-                          <input
-                            className="col-span-2 border rounded p-2"
-                            placeholder="H"
-                            value={it.height}
-                            onChange={(e) => handleItemFieldChange(it.id, 'height', e.target.value)}
-                          />
-                          <div className="col-span-2 border rounded p-2 bg-gray-50 flex items-center">
-                            <div className="text-sm">{formatRateLabel(it)}</div>
-                          </div>
+                    <div className="mt-5 grid gap-5 md:grid-cols-2">
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Payment Terms</label>
+                        <select
+                          className={fieldClass}
+                          value={newInspection.payment_terms}
+                          onChange={(e) => handleInspectionFieldChange("payment_terms", e.target.value)}
+                        >
+                          <option value="50%_down_payment">50% downpayment, 50% upon completion</option>
+                          <option value="full_payment">Full Payment</option>
+                        </select>
+                      </div>
 
-                          <button type="button" className="col-span-1 text-red-600" onClick={() => removeItemRow(it.id)}>Remove</button>
-
-                          {/* per-row summary cards below inputs */}
-                          <div className="col-span-12 mt-2 grid grid-cols-3 gap-2">
-                            <div className="p-4 bg-red-100 rounded text-sm">
-                              <div className="text-sm text-gray-700">Total Area</div>
-                              <div className="font-bold text-gray-700"> {it.area || 0} sq ft
-                              </div>
-                            </div>
-                            <div className="p-3 bg-yellow-100 rounded text-sm">
-                              <div className="text-medium text-gray-700">Estimation Mode</div>
-                              <div className="mt-1">
-                                <select
-                                  value={it.estimation_mode || 'auto'}
-                                  onChange={(e) => handleToggleEstimationMode(it.id, e.target.value)}
-                                  className="w-full border rounded p-1 text-sm text-gray-700 bg-white font-bold"
-                                >
-                                  <option value="auto">Auto</option>
-                                  <option value="manual">Manual</option>
-                                </select>
-                              </div>
-                            </div>
-                            <div className="p-3 bg-green-100 rounded text-sm">
-                              <div className="text-sm text-gray-700">Estimated Total</div>
-                              {it.estimation_mode === 'auto' ? (
-                                <div className="p-2 text-sm font-bold text-gray-700"> ₱{rowSubtotal.toLocaleString()}
-                                </div>
-                              ) : (
-                                <div className="mt-2">
-                                  <input
-                                    type="text"
-                                    inputMode="numeric"
-                                    value={it.manual_estimated_total ?? ''}
-                                    onChange={(e) => handleManualTotalChange(it.id, e.target.value.replace(/[^0-9]/g, ''))}
-                                    className="w-full border rounded p-1 text-sm font-bold"
-                                    placeholder="Enter amount"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          {errors.itemErrors?.[index] && (
-                            <div className="col-span-12 text-sm text-red-600">
-                              {Object.values(errors.itemErrors[index]).filter(Boolean).join(" ")}
-                            </div>
-                          )}
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Downpayment Received?</label>
+                        <div className={`grid grid-cols-2 overflow-hidden rounded-xl border shadow-sm ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-200 bg-slate-50"}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleInspectionFieldChange("downpayment_received", true)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${
+                              newInspection.downpayment_received
+                                ? darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700"
+                                : darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500"
+                            }`}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                            Yes, Paid
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleInspectionFieldChange("downpayment_received", false)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${
+                              !newInspection.downpayment_received
+                                ? darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800"
+                                : darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500"
+                            }`}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">✕</span>
+                            Not Yet
+                          </button>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    </div>
+                  </section>
                 </div>
 
-
-                <div className="flex justify-between items-center gap-3 mt-8">
-
-                  <div className="text-lg font-bold">
-                    Total Project Cost: <span className="text-red-600">₱{computeTotals().totalEstimate.toLocaleString()}</span>
-                  </div>
-
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setShowModal(false)}
-                      className="px-6 py-3 bg-gray-200 rounded-xl"
-                    >
-                      Cancel
-                    </button>
-
-                    <button onClick={submitNewInspection} className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700" disabled={submitting}>
-                      {submitting ? 'Saving...' : 'Save Inspection'}
-                    </button>
-                  </div>
-
+                <div className={`flex shrink-0 justify-end gap-3 px-6 py-5 ${footerClass}`}>
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className={secondaryButtonClass}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitNewInspection}
+                    className={primaryButtonClass}
+                    disabled={submitting}
+                  >
+                    {submitting ? "Creating..." : "Create Inspection"}
+                  </button>
                 </div>
-
               </div>
-
             </div>
-
           )}
 
           {/* VIEW DETAILS MODAL */}
-          {viewInspection && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
-              <div className="bg-white w-full max-w-3xl rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-2xl font-bold">Inspection Details</h2>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => { setViewInspection(null); }}
-                      className="px-4 py-2 bg-gray-200 rounded-xl"
-                    >
-                      Close
-                    </button>
-                    <button
-                      onClick={() => { handleEdit(viewInspection._id || viewInspection.id); setViewInspection(null); }}
-                      className="px-4 py-2 bg-orange-500 text-white rounded-xl"
-                    >
-                      Edit
-                    </button>
-                  </div>
-                </div>
+          {viewInspection && (() => {
+            const orderId = viewInspection._id || viewInspection.id;
+            const customerName = viewInspection.customer
+              ? `${viewInspection.customer.first_name || ""} ${viewInspection.customer.last_name || ""}`.trim() || viewInspection.customer.email || viewInspection.customer_name || "Customer"
+              : viewInspection.customer_name || viewInspection.customer_email || "Customer";
+            const customerPhone = viewInspection.customer?.phone || viewInspection.customer_phone || "—";
+            const siteAddress = viewInspection.shipping_address || viewInspection.siteAddress || viewInspection.customer?.street_address || "—";
+            const inspectionDate = viewInspection.inspection_date ? formatDateToMMDDYYYY(viewInspection.inspection_date) : "—";
+            const installDateValue = getEstimatedInstallationDate(viewInspection);
+            const installDate = installDateValue ? formatDateToMMDDYYYY(installDateValue) : "—";
+            const orderReference = viewInspection.order_number || viewInspection.tracking || viewInspection.contract_number || `SI-ORD-${String(orderId || "NEW").slice(-10).toUpperCase()}`;
+            const readinessIssues = [];
+            if (!viewInspection.inspection_date) readinessIssues.push("Inspection Date");
+            if (!installDateValue) readinessIssues.push("Estimated Installation Date");
+            const inspectionItems = Array.isArray(viewInspection.items) ? viewInspection.items : [];
+            const estimatedTotal = inspectionItems.reduce((sum, item) => {
+              const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+              const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
+              const lineTotal = Number(item.estimated_price ?? item.total_price ?? qty * unitPrice) || 0;
+              return sum + lineTotal;
+            }, 0);
+            const downPayment = estimatedTotal * 0.5;
+            const balance = estimatedTotal - downPayment;
+            const paymentTermsText = viewInspection.payment_terms === "50%_down_payment"
+              ? "50% downpayment, 50% upon completion"
+              : viewInspection.payment_terms === "full_payment"
+                ? "Full payment"
+                : "50% downpayment, 50% upon completion";
+            const statusBadge = !viewInspection.inspection_date || !installDateValue
+              ? {
+                  label: "Needs to be Called",
+                  className: darkMode
+                    ? "border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-violet-200"
+                    : "border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-violet-700",
+                }
+              : {
+                  label: "Scheduled",
+                  className: darkMode
+                    ? "border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200"
+                    : "border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700",
+                };
+            const downpaymentStatus = viewInspection.downpayment_received
+              ? {
+                  label: "Paid",
+                  className: darkMode
+                    ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                    : "border border-emerald-200 bg-emerald-50 text-emerald-700",
+                }
+              : {
+                  label: "Pending",
+                  className: darkMode
+                    ? "border border-amber-500/30 bg-amber-500/10 text-amber-200"
+                    : "border border-amber-200 bg-amber-50 text-amber-700",
+                };
 
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div>
-                      <h3 className="font-semibold">Client</h3>
-                      <p className="text-lg font-medium">
-                        {viewInspection.customer
-                          ? `${viewInspection.customer.first_name || ''} ${viewInspection.customer.last_name || ''}`.trim()
-                          : viewInspection.customer_name || 'Customer'}
-                      </p>
-                      <p className="text-sm text-gray-500">{viewInspection.customer?.email || viewInspection.customer_email || '—'}</p>
-                      <p className="text-sm text-gray-500">{viewInspection.customer?.phone || viewInspection.customer_phone || '—'}</p>
+            return (
+              <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 pt-6">
+                <div className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border ${modalShellClass}`}>
+                  <div className={`flex items-center justify-between px-5 py-4 ${darkMode ? "border-b border-slate-700 bg-[#0b2338]" : "border-b border-slate-200 bg-white"}`}>
+                    <div className="flex items-center gap-4">
+                      <h2 className={`text-[28px] font-black tracking-[-0.04em] ${darkMode ? "text-white" : "text-slate-900"}`}>Inspection Details</h2>
+                      <span className={`text-xs font-semibold uppercase tracking-[0.18em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
+                        {orderReference}
+                      </span>
                     </div>
 
-                    <div>
-                      <h3 className="font-semibold">Order Details</h3>
-                      <div className="space-y-2 text-sm text-gray-700">
-                        <div>
-                          <span className="font-semibold">Order Type: </span>
-                          {viewInspection.order_type === 'walk_in_customer' ? 'Walk-in Customer' : 'Online Customer'}
-                        </div>
-                        <div>
-                          <span className="font-semibold">Payment Terms: </span>
-                          {viewInspection.payment_terms === '50%_down_payment'
-                            ? '50% Down Payment'
-                            : viewInspection.payment_terms === 'full_payment'
-                              ? 'Full Payment'
-                              : viewInspection.payment_terms || '—'}
-                        </div>
-                        <div>
-                          <span className="font-semibold">Total Amount: </span>
-                          {viewInspection.total_amount ? `₱${Number(viewInspection.total_amount).toLocaleString()}` : '—'}
-                        </div>
-                        <div>
-                          <span className="font-semibold">Created:</span> {viewInspection.createdAt ? formatDateTimeToMMDDYYYY(viewInspection.createdAt) : '—'}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleGenerateContract(orderId)}
+                        disabled={!orderId || generatingId === orderId}
+                        className={`inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-600/90 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60`}
+                      >
+                        <span>✓</span>
+                        {generatingId === orderId ? "Generating..." : "Generate Contract"}
+                      </button>
 
-                  <div>
-                    <h3 className="font-semibold">Site Address</h3>
-                    <p className="break-words">{viewInspection.shipping_address || '—'}</p>
-                  </div>
-
-                  <div>
-                    <h3 className="font-semibold">Items</h3>
-                    <div className="space-y-3">
-                      {(viewInspection.items || []).map((it, idx) => (
-                        <div key={idx} className="rounded-2xl border bg-gray-50 p-4">
-                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <p className="font-semibold text-gray-700">{it.name || it.product_id?.name || 'Item'}</p>
-                              <p className="text-sm text-gray-500">Qty: {it.quantity || 1}</p>
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              {it.width || it.height ? `${it.width || 0} x ${it.height || 0}` : 'Dimensions unavailable'}
-                            </div>
-                          </div>
-                          <div className="mt-2 grid grid-cols-2 gap-2 text-sm text-gray-600">
-                            <div>Area: {(Number(it.area) || 0).toLocaleString()} sq ft</div>
-                            <div>Est. Total: {it.estimated_price ? `₱${Number(it.estimated_price).toLocaleString()}` : '₱0'}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="font-semibold">Inspection Notes</h3>
-                    <p className="whitespace-pre-wrap">{viewInspection.inspection_notes || '—'}</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <h3 className="font-semibold">Inspection Date</h3>
-                      <p>{viewInspection.inspection_date ? formatDateToMMDDYYYY(viewInspection.inspection_date) : '—'}</p>
-                    </div>
-                    <div>
-                      <h3 className="font-semibold">Status</h3>
-                      <p>{viewInspection.inspection_status || viewInspection.status || '—'}</p>
+                      <button
+                        type="button"
+                        onClick={() => setViewInspection(null)}
+                        aria-label="Close inspection details"
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg border text-lg font-semibold transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"}`}
+                      >
+                        ×
+                      </button>
                     </div>
                   </div>
 
-                  {/* Acceptance Method Badge */}
-                  <div className="bg-gray-50 rounded-2xl p-4">
-                    <h3 className="font-semibold mb-2">Acceptance Method</h3>
-                    {viewInspection.acceptance_method === 'walk_in_signed_contract' ? (
-                      <div className="flex items-center gap-2">
-                        <span className="inline-block w-3 h-3 bg-orange-500 rounded-full"></span>
-                        <span className="font-medium text-orange-700">Walk-in Signed Contract</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="inline-block w-3 h-3 bg-green-500 rounded-full"></span>
-                        <span className="font-medium text-green-700">Online Acceptance</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Walk-in Specific Details */}
-                  {viewInspection.acceptance_method === 'walk_in_signed_contract' && (
-                    <div className="bg-blue-50 rounded-2xl p-4">
-                      <h3 className="font-semibold text-blue-900 mb-3">Contract Details</h3>
-                      <div className="space-y-2 text-sm">
-                        {viewInspection.contract_number && (
-                          <div>
-                            <span className="font-semibold">Contract Number: </span>
-                            {viewInspection.contract_number}
-                          </div>
-                        )}
-                        {viewInspection.contract_signed_date && (
-                          <div>
-                            <span className="font-semibold">Date Signed: </span>
-                            {formatDateToMMDDYYYY(viewInspection.contract_signed_date)}
-                          </div>
-                        )}
-                        {viewInspection.signed_contract_url && (
-                          <div>
-                            <span className="font-semibold">Signed Contract: </span>
-                            <a href={viewInspection.signed_contract_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                              View/Download
-                            </a>
-                          </div>
-                        )}
-                      </div>
+                  {readinessIssues.length > 0 && (
+                    <div className={`flex items-center gap-3 border-b px-5 py-3 text-sm font-medium ${darkMode ? "border-amber-500/20 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-[#fdf3d5] text-amber-900"}`}>
+                      <span className="text-base">⚠</span>
+                      <span>
+                        This order isn't ready for contract generation yet. Missing: {readinessIssues.join(", ")}. 
+                      </span>
                     </div>
                   )}
+
+                  <div className={`flex-1 space-y-5 overflow-y-auto px-5 py-5 ${darkMode ? "bg-[#0d1b2a]" : "bg-[#f4f3f1]"}`}>
+                    <div className={`rounded-[16px] border p-5 ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-[#f9f9f9]"}`}>
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Client Information</div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+                        <div>
+                          <div className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Client Name</div>
+                          <div className={`text-lg font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{customerName}</div>
+                        </div>
+
+                        <div>
+                          <div className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Client Number</div>
+                          <div className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{customerPhone}</div>
+                        </div>
+
+                        <div className="md:col-span-1">
+                          <div className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Site Address</div>
+                          <div className={`text-sm leading-6 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{siteAddress}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-3">
+                        <div>
+                          <div className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Inspection Date</div>
+                          <div className={`text-base font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{inspectionDate}</div>
+                        </div>
+
+                        <div>
+                          <div className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Est. Installation Date</div>
+                          <div className={`text-base font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{installDate}</div>
+                        </div>
+
+                        <div className="flex items-end justify-start md:justify-end">
+                          <span className={`inline-flex items-center justify-center rounded-xl border px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] ${statusBadge.className}`}>
+                            {statusBadge.label}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={`rounded-[16px] border p-0 overflow-hidden ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
+                      <div className={`px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-500"}`}>
+                        Measurements
+                      </div>
+
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-left">
+                          <thead className={darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}>
+                            <tr>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Product / Description</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Width</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Height</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Unit</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Qty</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Price/SQFT</th>
+                              <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-[0.14em]">Est. Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {inspectionItems.length ? inspectionItems.map((item, index) => {
+                              const itemName = item.name || item.product_id?.name || `Item ${index + 1}`;
+                              const width = Number(item.width || 0);
+                              const height = Number(item.height || 0);
+                              const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+                              const unit = item.unit || "in";
+                              const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
+                              const lineTotal = Number(item.estimated_price ?? item.total_price ?? qty * unitPrice) || 0;
+
+                              return (
+                                <tr key={`${itemName}-${index}`} className={darkMode ? "border-t border-slate-700 text-slate-200" : "border-t border-slate-200 text-slate-700"}>
+                                  <td className="px-4 py-3 font-medium">{itemName}</td>
+                                  <td className="px-4 py-3">{width || "—"}</td>
+                                  <td className="px-4 py-3">{height || "—"}</td>
+                                  <td className="px-4 py-3">{unit}</td>
+                                  <td className="px-4 py-3">{qty}</td>
+                                  <td className="px-4 py-3">{unitPrice ? formatCurrency(unitPrice) : "—"}</td>
+                                  <td className="px-4 py-3 text-right font-semibold">{formatCurrency(lineTotal)}</td>
+                                </tr>
+                              );
+                            }) : (
+                              <tr>
+                                <td colSpan={7} className={`px-4 py-6 text-center text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                  No measurement rows available.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className={`flex justify-end px-4 py-3 text-sm font-semibold ${darkMode ? "bg-[#0d2033] text-slate-200" : "bg-slate-50 text-slate-700"}`}>
+                        <span>Total: </span>
+                        <span className="ml-2 text-base font-black">{formatCurrency(estimatedTotal)}</span>
+                      </div>
+                    </div>
+
+                    <div className={`rounded-[16px] border p-5 ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-[#f5f0f0]"}`}>
+                      <div className="mb-4 text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Payment Summary</div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between text-sm font-semibold">
+                          <span className={darkMode ? "text-slate-200" : "text-slate-700"}>Estimated Total</span>
+                          <span className={darkMode ? "text-slate-100" : "text-slate-900"}>{formatCurrency(estimatedTotal)}</span>
+                        </div>
+
+                        <div className="relative h-10 overflow-hidden rounded-lg border border-rose-200 bg-rose-100">
+                          <div className="absolute inset-y-0 left-0 w-1/2 bg-rose-200" />
+                          <div className="relative flex h-full items-center justify-between px-3 text-sm font-semibold text-rose-700">
+                            <span>50% Downpayment</span>
+                            <span>{formatCurrency(downPayment)}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-sm font-semibold">
+                          <span className={darkMode ? "text-slate-200" : "text-slate-700"}>Balance</span>
+                          <span className={darkMode ? "text-slate-100" : "text-slate-900"}>{formatCurrency(balance)}</span>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4 text-sm text-slate-500">
+                          <span>Payment Terms</span>
+                          <span className={darkMode ? "text-slate-300" : "text-slate-600"}>{paymentTermsText}</span>
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between text-sm">
+                          <span className={darkMode ? "text-slate-300" : "text-slate-600"}>Downpayment Status</span>
+                          <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] ${downpaymentStatus.className}`}>
+                            {downpaymentStatus.label}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* EDIT INSPECTION MODAL */}
           {editInspection && (
-            <div className="fixed inset-0 bg-black/50 flex justify-center items-start pt-10 z-50">
-              <div className="bg-white w-full max-w-4xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto">
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-6 backdrop-blur-[2px]">
+              <div className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] ${modalShellClass}`}>
+                <div className={`flex items-start justify-between px-6 py-5 ${modalHeaderClass}`}>
                   <div>
-                    <h2 className="text-2xl font-bold">Edit Site Inspection</h2>
-                    <p className="text-sm text-gray-500 mt-1">Review customer details and update inspection schedule.</p>
+                    <h2 className={`text-[26px] font-black tracking-[-0.04em] ${darkMode ? "text-white" : "text-slate-900"}`}>
+                      Edit Site Inspection
+                    </h2>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                      Update client, schedule, and project details for this inspection.
+                    </p>
                   </div>
                   <button
+                    type="button"
                     onClick={() => setEditInspection(null)}
-                    className="text-3xl"
+                    className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border text-2xl shadow-sm transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-900"}`}
+                    aria-label="Close edit site inspection modal"
                   >
                     ×
                   </button>
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block font-medium text-gray-700 mb-2">Client Name</label>
-                    <input
-                      type="text"
-                      value={editInspection.customerName || ""}
-                      readOnly
-                      className="border rounded-xl p-3 w-full bg-gray-100"
+                <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-5 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>
+                      Client Information
+                    </h3>
+
+                    <div className="grid gap-5 md:grid-cols-3">
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Name</label>
+                        <input
+                          type="text"
+                          className={fieldClass}
+                          value={editInspection.customerName || ""}
+                          onChange={(e) => handleEditChange("customerName", e.target.value)}
+                        />
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Number</label>
+                        <input
+                          type="text"
+                          className={fieldClass}
+                          value={editInspection.phone || ""}
+                          onChange={(e) => handleEditChange("phone", e.target.value)}
+                        />
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Site Address</label>
+                        <input
+                          type="text"
+                          className={fieldClass}
+                          value={editInspection.siteAddress || ""}
+                          onChange={(e) => handleEditChange("siteAddress", e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-5 md:grid-cols-3">
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Inspection Date <span className="text-red-400">*</span></label>
+                        <input
+                          type="date"
+                          className={fieldClass}
+                          value={editInspection.inspection_date || ""}
+                          min={today}
+                          onChange={(e) => handleEditChange("inspection_date", e.target.value)}
+                        />
+                        {errors.inspection_date && <p className="mt-2 text-xs text-red-400">{errors.inspection_date}</p>}
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date <span className="text-red-400">*</span></label>
+                        <input
+                          type="date"
+                          className={fieldClass}
+                          value={editInspection.estimated_installation_date || ""}
+                          min={today}
+                          onChange={(e) => handleEditChange("estimated_installation_date", e.target.value)}
+                        />
+                        {errors.estimated_installation_date && <p className="mt-2 text-xs text-red-400">{errors.estimated_installation_date}</p>}
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Status</label>
+                        <div className={`flex h-[48px] items-center justify-center rounded-xl px-3 text-sm font-bold ${editInspection.inspection_date ? (darkMode ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border border-emerald-200 bg-emerald-50 text-emerald-700") : statusBadgeClass}`}>
+                          <span className="mr-2 text-base">{editInspection.inspection_date ? "✓" : "📞"}</span>
+                          {editInspection.inspection_date ? "Scheduled" : "Needs to be Called"}
+                        </div>
+                      </div>
+                    </div>
+
+                  </section>
+
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-5 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Customer Account</h3>
+
+                    <div className="grid gap-5 md:grid-cols-[1.1fr_1.7fr]">
+                      <div>
+                        <p className={`mb-2 text-[14px] font-bold ${labelClass}`}>Has Account on Website?</p>
+                        <div className={`grid grid-cols-2 overflow-hidden rounded-xl border shadow-sm ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-200 bg-slate-50"}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleEditChange("has_account_on_website", true)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleEditChange("has_account_on_website", false)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${!Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
+                            No
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Customer Email (optional)</label>
+                        <input
+                          type="email"
+                          className={fieldClass}
+                          value={editInspection.customerEmail || ""}
+                          onChange={(e) => handleEditChange("customerEmail", e.target.value)}
+                        />
+                        <p className={`mt-2 text-xs ${mutedTextClass}`}>Optional — only needed if you plan to email the contract; you can still print it without one.</p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>
+                      Site Details
+                    </h3>
+                    <textarea
+                      rows={4}
+                      placeholder="Describe the project scope, access notes, special requirements..."
+                      className={fieldClass}
+                      value={editInspection.inspection_notes || ""}
+                      onChange={(e) => handleEditChange("inspection_notes", e.target.value)}
                     />
-                  </div>
+                  </section>
 
-                  <div>
-                    <label className="block font-medium text-gray-700 mb-2">Email Address</label>
-                    <input
-                      type="email"
-                      value={editInspection.customerEmail || ""}
-                      readOnly
-                      className="border rounded-xl p-3 w-full bg-gray-100"
-                    />
-                  </div>
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>
+                      Measurements
+                    </h3>
 
-                  <div>
-                    <label className="block font-medium text-gray-700 mb-2">Phone Number</label>
-                    <input
-                      type="text"
-                      value={editInspection.phone || ""}
-                      readOnly
-                      className="border rounded-xl p-3 w-full bg-gray-100"
-                    />
-                  </div>
+                    <div className={`mt-4 overflow-hidden rounded-xl border ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
+                      <div className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[11px] font-black uppercase tracking-[0.12em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
+                        <div>Product / Description</div>
+                        <div>Width</div>
+                        <div>Height</div>
+                        <div>Unit</div>
+                        <div>Qty</div>
+                        <div>Price / Sqft</div>
+                        <div>Total</div>
+                      </div>
 
-                  <div>
-                    <label className="block font-medium text-gray-700 mb-2">Site Inspection Date</label>
-                    <input
-                      type="date"
-                      value={editInspection.inspection_date || ""}
-                      onChange={(e) => handleEditChange('inspection_date', e.target.value)}
-                      className="w-full border rounded-xl p-3"
-                      min={today}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-medium text-gray-700 mb-2">Customer Type</label>
-                    <select
-                      value={editInspection.order_type || "online_order"}
-                      className="w-full border rounded-xl p-3 bg-gray-100"
-                      disabled
-                    >
-                      <option value="online_order">Online Customer</option>
-                      <option value="walk_in_customer">Walk-in Customer</option>
-                    </select>
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block font-medium text-gray-700 mb-2">Site Address</label>
-                    <input
-                      type="text"
-                      value={editInspection.siteAddress || ""}
-                      onChange={(e) => handleEditChange('siteAddress', e.target.value)}
-                      className="border rounded-xl p-3 w-full"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="block font-medium text-gray-700 mb-2">Payment Terms</label>
-                    <select
-                      value={editInspection.payment_terms || ""}
-                      onChange={(e) => handleEditChange('payment_terms', e.target.value)}
-                      className="w-full border rounded-xl p-3"
-                    >
-                      <option value="">Select Payment Terms</option>
-                      <option value="50%_down_payment">50% Down Payment</option>
-                      <option value="full_payment">Full Payment</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="mt-6">
-                  <label className="block font-medium text-gray-700 mb-2">Inspection Notes</label>
-                  <textarea
-                    rows="4"
-                    value={editInspection.inspection_notes || ""}
-                    onChange={(e) => handleEditChange('inspection_notes', e.target.value)}
-                    className="w-full border rounded-xl p-3"
-                  />
-                </div>
-
-                <div className="mt-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-semibold">Measurements</h3>
-                    <button type="button" onClick={addEditItemRow} className="px-3 py-1 bg-red-600 text-white rounded">+ Add Row</button>
-                  </div>
-                  <div className="space-y-3">
-                    {(editInspection.items || []).map((it, index) => {
-                      const rowSubtotal = calculateRowSubtotal(it);
-                      return (
-                        <div key={it.id} className="py-5 mt-4 grid grid-cols-10 gap-2 items-center">
-                          <div className="col-span-3 relative">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const current = document.getElementById(`edit-product-menu-${it.id}`);
-                                if (current?.classList.contains('hidden')) {
-                                  current.classList.remove('hidden');
-                                } else if (current) {
-                                  current.classList.add('hidden');
-                                }
-                              }}
-                              className="w-full border rounded p-2 text-left bg-white hover:bg-gray-50 flex justify-between items-center"
-                            >
-                              <span>{products.find(p => String(p._id || p.id) === it.product_id)?.name || 'Select product'}</span>
-                              <span>▼</span>
-                            </button>
-                            <div
-                              id={`edit-product-menu-${it.id}`}
-                              className="hidden absolute top-full left-0 right-0 mt-1 border rounded bg-white shadow-lg z-[100] max-h-48 overflow-y-auto"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  handleEditItemProductChange(it.id, '');
-                                  document.getElementById(`edit-product-menu-${it.id}`)?.classList.add('hidden');
-                                }}
-                                className="w-full text-left px-3 py-2 hover:bg-gray-100"
+                      {(editInspection.items || []).map((item) => {
+                        const rowSubtotal = calculateRowSubtotal(item);
+                        return (
+                          <div key={item.id || `${item.product_id || "row"}-${Math.random()}`} className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={item.product_id || ""}
+                                onChange={(e) => handleEditItemProductChange(item.id, e.target.value)}
+                                className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                               >
-                                Select product
+                                <option value="">-- Select Product --</option>
+                                {products.map((product) => (
+                                  <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.width || 0}
+                              onChange={(e) => handleEditItemFieldChange(item.id, "width", e.target.value)}
+                              className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
+                            />
+
+                            <input
+                              type="number"
+                              min="0"
+                              value={item.height || 0}
+                              onChange={(e) => handleEditItemFieldChange(item.id, "height", e.target.value)}
+                              className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
+                            />
+
+                            <div className={`flex items-center justify-center rounded-lg border px-2 py-2 text-sm font-medium ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-200" : "border-slate-200 bg-slate-100 text-slate-700"}`}>
+                              {item.unit || "sqft"}
+                            </div>
+
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.qty || item.quantity || 1}
+                              onChange={(e) => handleEditItemFieldChange(item.id, "qty", e.target.value)}
+                              className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
+                            />
+
+                            <div className={`flex items-center justify-center rounded-lg border px-2 py-2 text-sm font-bold ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-100" : "border-slate-200 bg-slate-100 text-slate-800"}`}>
+                              {formatCurrency(Number(item.unit_price) || 0)}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>
+                                {formatCurrency(rowSubtotal)}
+                              </span>
+                              <button type="button" onClick={() => removeEditItemRow(item.id)} className="text-lg font-bold text-red-400 hover:text-red-300">
+                                ×
                               </button>
-                              {products.map((product) => (
-                                <button
-                                  key={String(product._id || product.id)}
-                                  type="button"
-                                  onClick={() => {
-                                    handleEditItemProductChange(it.id, String(product._id || product.id));
-                                    document.getElementById(`edit-product-menu-${it.id}`)?.classList.add('hidden');
-                                  }}
-                                  className="w-full text-left px-3 py-2 hover:bg-gray-100"
-                                >
-                                  {product.name}
-                                </button>
-                              ))}
-                            </div>
-                            {productsLoading && <p className="text-xs text-gray-500 mt-1">Loading products...</p>}
-                          </div>
-                          <input
-                            className="col-span-2 border rounded p-2"
-                            placeholder="W"
-                            value={it.width}
-                            onChange={(e) => handleEditItemFieldChange(it.id, 'width', e.target.value)}
-                          />
-                          <input
-                            className="col-span-2 border rounded p-2"
-                            placeholder="H"
-                            value={it.height}
-                            onChange={(e) => handleEditItemFieldChange(it.id, 'height', e.target.value)}
-                          />
-                          <div className="col-span-2 border rounded p-2 bg-gray-50 flex items-center">
-                            <div className="text-sm">{formatRateLabel(it)}</div>
-                          </div>
-
-                          <button type="button" className="col-span-1 text-red-600" onClick={() => removeEditItemRow(it.id)}>Remove</button>
-
-                          <div className="col-span-12 mt-2 grid grid-cols-3 gap-2">
-                            <div className="p-4 bg-red-100 rounded text-sm">
-                              <div className="text-sm text-gray-700">Total Area</div>
-                              <div className="font-bold text-gray-700">{it.area || 0} sq ft</div>
-                            </div>
-                            <div className="p-3 bg-yellow-100 rounded text-sm">
-                              <div className="text-medium text-gray-700">Estimation Mode</div>
-                              <div className="mt-1">
-                                <select
-                                  value={it.estimation_mode || 'auto'}
-                                  onChange={(e) => handleEditToggleEstimationMode(it.id, e.target.value)}
-                                  className="w-full border rounded p-1 text-sm text-gray-700 bg-white font-bold"
-                                >
-                                  <option value="auto">Auto</option>
-                                  <option value="manual">Manual</option>
-                                </select>
-                              </div>
-                            </div>
-                            <div className="p-3 bg-green-100 rounded text-sm">
-                              <div className="text-sm text-gray-700">Estimated Total</div>
-                              {it.estimation_mode === 'manual' ? (
-                                <div className="mt-2">
-                                  <input
-                                    type="text"
-                                    inputMode="numeric"
-                                    value={it.manual_estimated_total ?? ''}
-                                    onChange={(e) => handleEditManualTotalChange(it.id, e.target.value.replace(/[^0-9]/g, ''))}
-                                    className="w-full border rounded p-1 text-sm font-bold"
-                                    placeholder="Enter amount"
-                                  />
-                                </div>
-                              ) : (
-                                <div className="p-2 text-sm font-bold text-gray-700">₱{rowSubtotal.toLocaleString()}</div>
-                              )}
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="mt-6 bg-gray-50 rounded-3xl p-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="font-semibold">Measurements</h3>
-                      <p className="text-sm text-gray-500">Review item data from this inspection.</p>
+                        );
+                      })}
                     </div>
-                    <div className="text-right text-sm text-gray-600">
-                      Total Area: {computeEditTotals().totalArea.toLocaleString()} sq ft
+
+                    <div className="mt-4 flex items-center justify-between">
+                      <button type="button" onClick={addEditItemRow} className={`rounded-[12px] border px-4 py-2 text-sm font-bold transition ${darkMode ? "border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20" : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"}`}>
+                        + Add Row
+                      </button>
+                      <div className={`text-lg font-black ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                        Total: <span className="text-red-400">{formatCurrency(computeEditTotals().totalEstimate)}</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="space-y-3">
-                    {(editInspection.items || []).map((item, idx) => {
-                      const displayProductName = item.name || products.find((p) => String(p._id || p.id) === normalizeProductId(item.product_id))?.name || 'Item';
-                      return (
-                        <div key={idx} className="rounded-2xl border bg-white p-4">
-                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <div className="font-semibold text-gray-700">{displayProductName}</div>
-                              <div className="text-sm text-gray-500">Qty: {item.qty || item.quantity || 1}</div>
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              Area: {(Number(item.area) || 0).toLocaleString()} sq ft
-                            </div>
-                          </div>
+                  </section>
+
+                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>
+                      Payment Information
+                    </h3>
+
+                    <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                      <span className="mr-2 text-base">💡</span>
+                      Business Policy: A 50% downpayment is required before project commences.
+                    </div>
+
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Computed Total</label>
+                        <div className={`rounded-xl border px-3 py-3 text-xl font-black ${darkMode ? "border-slate-600 bg-[#122d42] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+                          {formatCurrency(computeEditTotals().totalEstimate)}
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Manual Override (optional)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="Enter adjusted total..."
+                          className={fieldClass}
+                          value={editInspection.manual_override || ""}
+                          onChange={(e) => handleEditChange("manual_override", e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className={`mt-5 rounded-xl border border-dashed px-4 py-4 ${darkMode ? "border-slate-600 bg-[#102838] text-slate-200" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+                      <div className="flex items-center justify-between gap-4 text-[14px] font-bold">
+                        <span>Final Estimated Total</span>
+                        <span className={`text-[18px] font-black ${darkMode ? "text-white" : "text-slate-900"}`}>
+                          {formatCurrency(Number(editInspection.manual_override) || computeEditTotals().totalEstimate)}
+                        </span>
+                      </div>
+                      <div className={`mt-3 flex items-center justify-between gap-4 border-t pt-3 text-[14px] font-bold ${darkMode ? "border-slate-700 text-red-400" : "border-slate-200 text-red-600"}`}>
+                        <span>50% Downpayment Due</span>
+                        <span className={`text-[18px] font-black ${darkMode ? "text-red-400" : "text-red-600"}`}>
+                          {formatCurrency((Number(editInspection.manual_override) || computeEditTotals().totalEstimate) * 0.5)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-5 md:grid-cols-2">
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Payment Terms</label>
+                        <select
+                          className={fieldClass}
+                          value={editInspection.payment_terms || ""}
+                          onChange={(e) => handleEditChange("payment_terms", e.target.value)}
+                        >
+                          <option value="">Select Payment Terms</option>
+                          <option value="50%_down_payment">50% Down Payment</option>
+                          <option value="full_payment">Full Payment</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Downpayment Received?</label>
+                        <div className={`grid grid-cols-2 overflow-hidden rounded-xl border shadow-sm ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-200 bg-slate-50"}`}>
+                        <button
+                          type="button"
+                          onClick={() => handleEditChange("downpayment_received", true)}
+                          className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${editInspection.downpayment_received ? (darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                        >
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                          Yes, Paid
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleEditChange("downpayment_received", false)}
+                          className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${!editInspection.downpayment_received ? (darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                        >
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
+                          Not Yet
+                        </button>
+                      </div>
+                    </div>
+
+                    </div>
+                  </section>
                 </div>
 
-                <div className="flex justify-between items-center gap-3 mt-8">
-                  <div className="text-lg font-bold">
-                    Estimated Total: <span className="text-red-600">₱{computeEditTotals().totalEstimate.toLocaleString()}</span>
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => setEditInspection(null)}
-                      className="px-6 py-3 bg-gray-200 rounded-xl"
-                      disabled={savingEdit}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={saveEdit}
-                      className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700"
-                      disabled={savingEdit}
-                    >
-                      {savingEdit ? 'Sending to email...' : 'Save Changes'}
-                    </button>
-                  </div>
+                <div className={`flex shrink-0 justify-end gap-3 px-6 py-5 ${footerClass}`}>
+                  <button
+                    type="button"
+                    onClick={() => setEditInspection(null)}
+                    className={secondaryButtonClass}
+                    disabled={savingEdit}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveEdit}
+                    className={primaryButtonClass}
+                    disabled={savingEdit}
+                  >
+                    {savingEdit ? "Saving..." : "Save Changes"}
+                  </button>
                 </div>
               </div>
             </div>

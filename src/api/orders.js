@@ -69,6 +69,12 @@ export const submitOrderReview = (orderId, payload = {}) =>
     body: JSON.stringify(payload),
   });
 
+export const cancelCustomerOrder = (orderId) =>
+  apiFetch(`/orders/${orderId}/cancel`, {
+    method: "PUT",
+    body: JSON.stringify({}),
+  });
+
 export const sendWalkInApprovalEmail = (orderId, payload = {}) =>
   apiFetch(`/orders/admin/${orderId}/send-approval-email`, {
     method: "POST",

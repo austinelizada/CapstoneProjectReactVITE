@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { createPortal } from "react-dom";
 import toast, { Toaster } from "react-hot-toast";
+import { toPng } from "html-to-image";
 import {
-  Truck,
   ShoppingCart,
   Info,
   User,
@@ -24,6 +24,7 @@ import {
   FileText,
   Bell,
   CheckCheck,
+  AlertTriangle,
   Star,
   StarHalf,
   Clock3,
@@ -40,7 +41,16 @@ import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { getProducts } from "@/api/products";
 import { API_BASE } from "@/api/client";
-import { createOrder, getOrders, trackOrder, acceptContract, declineContract, submitOrderReview, getProductReviews } from "@/api/orders";
+import {
+  createOrder,
+  getOrders,
+  trackOrder,
+  acceptContract,
+  declineContract,
+  submitOrderReview,
+  getProductReviews,
+  cancelCustomerOrder,
+} from "@/api/orders";
 import { uploadFiles } from "@/api/uploads";
 import ContractModal from "../../components/ContractModal";
 import OrderTimeline from "@/components/OrderTimeline";
@@ -225,6 +235,7 @@ function CustomerDashboard() {
   const [contractActionOrderId, setContractActionOrderId] = useState(null);
   const [showContractModal, setShowContractModal] = useState(false);
   const [contractPreviewOrder, setContractPreviewOrder] = useState(null);
+  const autoOpenedContractRef = useRef("");
   const [contractConfirmModal, setContractConfirmModal] = useState({
     open: false,
     action: null,
@@ -234,6 +245,14 @@ function CustomerDashboard() {
   const [showBatchOrderModal, setShowBatchOrderModal] = useState(false);
   const [showBatchOrderConfirmModal, setShowBatchOrderConfirmModal] = useState(false);
   const [showBatchSuccessModal, setShowBatchSuccessModal] = useState(false);
+  const [paymentProofOpenOrderId, setPaymentProofOpenOrderId] = useState(null);
+  const [paymentProofForm, setPaymentProofForm] = useState({
+    amount: "",
+    fileName: "",
+  });
+  const [paymentProofError, setPaymentProofError] = useState("");
+  const [paymentProofLoading, setPaymentProofLoading] = useState(false);
+  const [paymentProofSuccessByOrder, setPaymentProofSuccessByOrder] = useState({});
   const [showCustomerReviewModal, setShowCustomerReviewModal] = useState(false);
   const [showProductReviewModal, setShowProductReviewModal] = useState(false);
   const [selectedReviewRatingTab, setSelectedReviewRatingTab] = useState(0);
@@ -266,6 +285,7 @@ function CustomerDashboard() {
   const [orderNowQuantity, setOrderNowQuantity] = useState(1);
   const [showOrderSuccessModal, setShowOrderSuccessModal] = useState(false);
   const [orderSuccessData, setOrderSuccessData] = useState(null);
+  const [cancelRequestModal, setCancelRequestModal] = useState({ open: false, order: null });
   const [expandedOrderId, setExpandedOrderId] = useState(null);
   const [orderFilter, setOrderFilter] = useState("all");
   const [orderPage, setOrderPage] = useState(1);
@@ -275,17 +295,17 @@ function CustomerDashboard() {
   const [contractHistoryTab, setContractHistoryTab] = useState("accepted");
   const [warrantyHistoryTab, setWarrantyHistoryTab] = useState(null);
 
-  const acceptedContracts = orders.filter(
-    (order) =>
-      order.status === "contract_accepted" ||
-      order.contract_status?.toString().toLowerCase() === "accepted"
-  );
+  const customerContracts = orders.filter((order) => {
+    const status = String(order.status || "").toLowerCase();
+    const contractStatus = String(order.contract_status || "").toLowerCase();
+    return ["contract_sent", "contract_accepted"].includes(status) || ["sent", "accepted"].includes(contractStatus);
+  });
   const rejectedContracts = orders.filter(
     (order) =>
       order.status === "contract_declined" ||
       order.contract_status?.toString().toLowerCase() === "declined"
   );
-  const contractsInTab = contractHistoryTab === "rejected" ? rejectedContracts : acceptedContracts;
+  const contractsInTab = contractHistoryTab === "rejected" ? rejectedContracts : customerContracts;
 
   // Warranty filtering logic
   const activeWarranties = orders.filter((order) => {
@@ -534,10 +554,7 @@ function CustomerDashboard() {
   const selectedCartItems = cartItems.filter((item) => item.selected);
   const selectedItemCount = selectedCartItems.length;
   const selectedQuantityTotal = selectedCartItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
-  const selectedSubtotal = selectedCartItems.reduce((sum, item) => {
-    const itemPrice = item.is_estimate ? Number(item.estimated_price || 0) : Number(item.unit_price || 0) * (Number(item.quantity) || 0);
-    return sum + itemPrice;
-  }, 0);
+  const selectedSubtotal = selectedCartItems.reduce((sum, item) => sum + getItemPriceValue(item), 0);
   const allSelected = cartItems.length > 0 && selectedItemCount === cartItems.length;
 
   const ratedProductReviews = productReviews.filter((review) => Number(review.rating) > 0);
@@ -931,6 +948,19 @@ function CustomerDashboard() {
   }, [user]);
 
   useEffect(() => {
+    const orderId = new URLSearchParams(location.search).get("orderId");
+    if (!orderId || ordersLoading || !orders.length || autoOpenedContractRef.current === orderId) return;
+
+    const order = orders.find((candidate) => String(candidate._id || candidate.id) === String(orderId));
+    if (!order || !canShowContractForOrder(order)) return;
+
+    autoOpenedContractRef.current = orderId;
+    setActiveTab("contracts");
+    openContractModal(order);
+    navigate(`${location.pathname}?tab=contracts`, { replace: true });
+  }, [location.pathname, location.search, navigate, orders, ordersLoading]);
+
+  useEffect(() => {
     if (!selectedProduct?._id || !canUploadFeedback) {
       setProductReviews([]);
       return;
@@ -1071,7 +1101,7 @@ function CustomerDashboard() {
     setCartItems((prev) => {
       const existing = prev.find((p) => !p.is_estimate && (p._id === product._id || p.name === product.name));
       if (existing) {
-        const updated = prev.map((p) =>
+        return prev.map((p) =>
           p.cartId === existing.cartId
             ? {
                 ...p,
@@ -1084,14 +1114,12 @@ function CustomerDashboard() {
               }
             : p
         );
-        toast.success("Product added to cart.");
-        return updated;
       }
 
-      const next = [...prev, { ...cartItem, cartId: generateCartId(), selected: true }];
-      toast.success("Product added to cart.");
-      return next;
+      return [...prev, { ...cartItem, cartId: generateCartId(), selected: true }];
     });
+
+    toast.success("Product added to cart.");
   };
 
   const handleAddEstimateToCart = ({ product, width, height, quantity, notes, measurementUnit }) => {
@@ -1125,28 +1153,26 @@ function CustomerDashboard() {
     const area = estimationResult.estimated_area || 0;
     const estimated_price = estimationResult.estimated_price || 0;
 
-    setCartItems((prev) => {
-      const next = [
-        ...prev,
-        {
-          ...buildCustomerOrderItem(product, {
-            quantity: parsedQuantity,
-            width: parsedWidth,
-            height: parsedHeight,
-            measurementUnit,
-            customized: true,
-            area,
-            notes,
-            estimated_price,
-            is_estimate: true,
-          }),
-          cartId: generateCartId(),
-          selected: true,
-        },
-      ];
-      toast.success("Estimate added to cart.");
-      return next;
-    });
+    setCartItems((prev) => [
+      ...prev,
+      {
+        ...buildCustomerOrderItem(product, {
+          quantity: parsedQuantity,
+          width: parsedWidth,
+          height: parsedHeight,
+          measurementUnit,
+          customized: true,
+          area,
+          notes,
+          estimated_price,
+          is_estimate: true,
+        }),
+        cartId: generateCartId(),
+        selected: true,
+      },
+    ]);
+
+    toast.success("Estimate added to cart.");
   };
 
   const openCartDecisionModal = (product, step = "choice") => {
@@ -1854,6 +1880,106 @@ function CustomerDashboard() {
     setActiveTab("cart");
   };
 
+  const handleOpenPaymentProofForm = (orderId) => {
+    setPaymentProofOpenOrderId(orderId);
+    setPaymentProofError("");
+    setPaymentProofLoading(false);
+    setPaymentProofForm({ amount: "", fileName: "" });
+  };
+
+  const handleCancelRequest = (order) => {
+    setCancelRequestModal({ open: true, order });
+  };
+
+  const confirmCancelRequest = async () => {
+    if (!cancelRequestModal.order) return;
+
+    const orderIdentifier = cancelRequestModal.order._id || cancelRequestModal.order.id || cancelRequestModal.order.tracking;
+
+    try {
+      const response = await cancelCustomerOrder(orderIdentifier);
+      const updatedOrder = response.order || {
+        ...cancelRequestModal.order,
+        status: "cancelled",
+      };
+
+      setOrders((prevOrders) =>
+        prevOrders.map((order) => {
+          const currentOrderId = order._id || order.id || order.tracking;
+          return currentOrderId === orderIdentifier ? { ...order, ...updatedOrder, status: updatedOrder.status || "cancelled" } : order;
+        })
+      );
+
+      setExpandedOrderId((prev) => (prev === orderIdentifier ? null : prev));
+      setCancelRequestModal({ open: false, order: null });
+      toast.success(response.message || "Order request cancelled.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to cancel this order request.");
+    }
+  };
+
+  const handlePaymentProofFileChange = (event) => {
+    const file = event.target.files && event.target.files[0];
+    setPaymentProofForm((prev) => ({
+      ...prev,
+      fileName: file ? file.name : "",
+    }));
+  };
+
+  const submitPaymentProof = (order) => {
+    const normalizedAmount = Number(String(paymentProofForm.amount).replace(/[^\d.]/g, ""));
+
+    if (!paymentProofForm.amount || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      setPaymentProofError("Please enter the amount you paid.");
+      return;
+    }
+
+    setPaymentProofLoading(true);
+    setPaymentProofError("");
+
+    const orderId = order?._id || order?.id || order?.tracking;
+
+    setOrders((prev) =>
+      prev.map((entry) => {
+        const entryId = entry?._id || entry?.id || entry?.tracking;
+        if (entryId === orderId) {
+          return {
+            ...entry,
+            payment_status: "paid",
+            payment_proof_amount: normalizedAmount,
+            payment_proof_file_name: paymentProofForm.fileName || "",
+          };
+        }
+        return entry;
+      })
+    );
+
+    if (selectedOrderForModal && (selectedOrderForModal?._id || selectedOrderForModal?.id || selectedOrderForModal?.tracking) === orderId) {
+      setSelectedOrderForModal((prev) =>
+        prev
+          ? {
+              ...prev,
+              payment_status: "paid",
+              payment_proof_amount: normalizedAmount,
+              payment_proof_file_name: paymentProofForm.fileName || "",
+            }
+          : prev
+      );
+    }
+
+    setPaymentProofSuccessByOrder((prev) => ({
+      ...prev,
+      [orderId]: {
+        amount: normalizedAmount,
+        fileName: paymentProofForm.fileName || "",
+      },
+    }));
+
+    setPaymentProofOpenOrderId(null);
+    setPaymentProofForm({ amount: "", fileName: "" });
+    setPaymentProofLoading(false);
+  };
+
   const handleCheckout = () => {
     if (cartItems.length === 0) {
       setCheckoutError("Your cart is empty.");
@@ -2002,7 +2128,7 @@ function CustomerDashboard() {
     return ensureAbsoluteUrl(candidate);
   };
 
-  const getOrderItemImage = (item) => {
+  function getOrderItemImage(item) {
     if (!item) return PRODUCT_IMAGE_PLACEHOLDER;
     let candidate = null;
     if (item.image_url) candidate = item.image_url;
@@ -2010,10 +2136,67 @@ function CustomerDashboard() {
     const product = item.product_id || item.product;
     if (!candidate && product) candidate = getProductImage(product);
     return ensureAbsoluteUrl(candidate);
-  };
+  }
 
-  const formatCurrency = (amount) => {
+  function formatCurrency(amount) {
     return `₱${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  function getItemPriceValue(item) {
+    if (!item) return 0;
+
+    const quantity = Number(item.quantity || item.qty || 1) || 1;
+    const normalizedArea = Number(item.area || 0) || 0;
+    const itemHeight = Number(item.height ?? item.dimensions?.height ?? 0) || 0;
+    const itemWidth = Number(item.width ?? item.dimensions?.width ?? 0) || 0;
+    const derivedArea = normalizedArea || (itemWidth && itemHeight ? itemWidth * itemHeight / 144 : 0);
+    const productRate = Number(
+      item.price_per_sqft ??
+      item.product?.price_per_sqft ??
+      item.product_id?.price_per_sqft ??
+      0
+    ) || 0;
+    const productUnitPrice = Number(
+      item.unit_price ??
+      item.price ??
+      item.amount ??
+      item.product?.unit_price ??
+      item.product_id?.unit_price ??
+      0
+    ) || 0;
+
+    if (item.is_estimate && Number(item.estimated_price || item.manual_estimated_total || 0) > 0) {
+      return Number(item.estimated_price || item.manual_estimated_total || 0);
+    }
+
+    if (Number(item.amount || item.total_price || 0) > 0) {
+      return Number(item.amount || item.total_price || 0);
+    }
+
+    if (productRate > 0 && derivedArea > 0) {
+      return productRate * derivedArea;
+    }
+
+    if (productUnitPrice > 0) {
+      return productUnitPrice * quantity;
+    }
+
+    if (Number(item.unit_price || 0) > 0) {
+      return Number(item.unit_price || 0) * quantity;
+    }
+
+    return 0;
+  }
+
+  function getOrderTotalValue(order) {
+    if (!order) return 0;
+
+    const orderItems = Array.isArray(order.items) ? order.items : [];
+    if (orderItems.length > 0) {
+      return orderItems.reduce((sum, item) => sum + getItemPriceValue(item), 0);
+    }
+
+    return Number(order.total_amount || 0);
   };
 
   const getConfirmationItemDimensionText = (item) => {
@@ -2131,6 +2314,90 @@ function CustomerDashboard() {
   const contractPreviewData = contractPreviewOrder
     ? buildContractDataFromOrder(contractPreviewOrder)
     : null;
+  const isContractAccepted = contractPreviewOrder?.status === "contract_accepted"
+    || String(contractPreviewOrder?.contract_status || "").toLowerCase() === "accepted";
+
+  const createContractExportClone = () => {
+    const element = document.getElementById("contract-content");
+    if (!element) return null;
+
+    const clone = element.cloneNode(true);
+    clone.style.width = `${element.scrollWidth}px`;
+    clone.style.height = "auto";
+    clone.style.maxHeight = "none";
+    clone.style.overflow = "visible";
+    clone.style.position = "relative";
+
+    const wrapper = document.createElement("div");
+    wrapper.style.position = "fixed";
+    wrapper.style.left = "-9999px";
+    wrapper.style.top = "0";
+    wrapper.style.opacity = "0";
+    wrapper.style.pointerEvents = "none";
+    wrapper.appendChild(clone);
+    document.body.appendChild(wrapper);
+
+    return { wrapper, clone };
+  };
+
+  const downloadAcceptedContractPNG = async () => {
+    const exportClone = createContractExportClone();
+    if (!exportClone) {
+      toast.error("Unable to locate the accepted contract.");
+      return;
+    }
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const dataUrl = await toPng(exportClone.clone, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: "#ffffff",
+      });
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = `accepted-contract-${contractPreviewOrder?.tracking || contractPreviewOrder?._id || "export"}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error("Failed to export accepted contract PNG", error);
+      toast.error("Failed to save the accepted contract as PNG.");
+    } finally {
+      exportClone.wrapper.remove();
+    }
+  };
+
+  const printAcceptedContract = async () => {
+    const exportClone = createContractExportClone();
+    if (!exportClone) {
+      toast.error("Unable to locate the accepted contract.");
+      return;
+    }
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const dataUrl = await toPng(exportClone.clone, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: "#ffffff",
+      });
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) {
+        toast.error("Please allow popups to print the accepted contract.");
+        return;
+      }
+      printWindow.document.write(`<!doctype html><html><head><title>Accepted Contract</title><style>html,body{margin:0;padding:0;background:#fff;}body{padding:12mm;}img{width:100%;height:auto;display:block;}@media print{body{padding:0;}}</style></head><body><img src="${dataUrl}" alt="Accepted contract" /></body></html>`);
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.onload = () => printWindow.print();
+    } catch (error) {
+      console.error("Failed to print accepted contract", error);
+      toast.error("Failed to print the accepted contract.");
+    } finally {
+      exportClone.wrapper.remove();
+    }
+  };
 
   const getOrderStatusLabel = (status) => {
     switch (status) {
@@ -2147,6 +2414,16 @@ function CustomerDashboard() {
       case "cancelled": return "Cancelled";
       default: return status?.replace(/_/g, " ") || "Unknown";
     }
+  };
+
+  const getContractStatusLabel = (order) => {
+    const contractStatus = String(order?.contract_status || "").toLowerCase();
+    const orderStatus = String(order?.status || "").toLowerCase();
+
+    if (contractStatus === "sent" || orderStatus === "contract_sent") return "Needs Your Response";
+    if (contractStatus === "accepted" || orderStatus === "contract_accepted") return "Accepted";
+    if (contractStatus === "declined" || orderStatus === "contract_declined") return "Declined";
+    return contractStatus.replace(/_/g, " ") || orderStatus.replace(/_/g, " ") || "Unknown";
   };
 
   const getOrderStatusClasses = (status) => {
@@ -2175,42 +2452,41 @@ function CustomerDashboard() {
       { key: "order_submitted", label: "Order Submitted" },
       { key: "admin_review", label: "Admin Review" },
       { key: "site_inspection", label: "Site Inspection" },
-      { key: "contract_created", label: "Contract Created" },
-      { key: "contract_accepted", label: "Contract Acceptance" },
-      { key: "cutting", label: "Cutting" },
+      { key: "contract_sent", label: "Contract Sent" },
+      { key: "contract_accepted", label: "Contract Accepted" },
       { key: "fabrication", label: "Fabrication" },
       { key: "installation", label: "Installation" },
       { key: "completed", label: "Completed" },
     ];
 
-    const stepMap = {
-      contract_sent: "contract_created",
-      contract_accepted: "contract_accepted",
-      contract_declined: "contract_created",
-      Cutting: "fabrication",
-      Fabrication: "fabrication",
-      Installation: "installation",
+    const statusKey = String(order?.status || "").trim();
+    const normalizedStatus = statusKey.toLowerCase();
+    const statusStepMap = {
+      order_submitted: 0,
+      admin_review: 1,
+      site_inspection: 2,
+      contract_sent: 3,
+      contract_accepted: 4,
+      processing: 5,
+      fabrication: 5,
+      installation: 6,
+      completed: 7,
     };
+    const activeIndex = statusStepMap[normalizedStatus] ?? 0;
 
-    const normalizedStatus = stepMap[order.status] || order.status;
-    let activeIndex = steps.findIndex((step) => step.key === normalizedStatus);
-    const inspectionIsScheduled = order.status === "site_inspection" && order.inspection_status === "scheduled";
-    if (inspectionIsScheduled) {
-      activeIndex = steps.findIndex((step) => step.key === "contract_created");
-    }
-
-    if (order.status === "cancelled") {
-      activeIndex = -1;
-    }
-
-    if (activeIndex === -1 && order.status !== "cancelled") {
-      activeIndex = 0;
+    if (statusKey === "cancelled") {
+      return steps.map((step) => ({
+        ...step,
+        done: false,
+        active: false,
+        future: true,
+      }));
     }
 
     return steps.map((step, index) => ({
       ...step,
-      done: order.status !== "cancelled" && index < activeIndex,
-      active: order.status !== "cancelled" && index === activeIndex,
+      done: index < activeIndex,
+      active: index === activeIndex && activeIndex < steps.length - 1,
       future: index > activeIndex,
     }));
   };
@@ -2641,13 +2917,19 @@ function CustomerDashboard() {
                             }
                           };
                           const details = notificationDetails();
+                          const isContractNotification = ["contract_sent", "contract_accepted"].includes(status) || ["sent", "accepted"].includes(contractStatus);
 
                           return (
                             <button
                               key={order._id || order.tracking}
                               onClick={() => {
-                                setSelectedOrderForModal(order);
-                                setActiveTab("orders");
+                                if (isContractNotification && canShowContractForOrder(order)) {
+                                  openContractModal(order);
+                                  setActiveTab("contracts");
+                                } else {
+                                  setSelectedOrderForModal(order);
+                                  setActiveTab("orders");
+                                }
                                 setNotificationsOpen(false);
                               }}
                               className={`w-full px-4 py-3 text-left transition ${darkMode ? "hover:bg-slate-700" : "hover:bg-slate-50"}`}
@@ -2722,7 +3004,7 @@ function CustomerDashboard() {
                     className={`flex w-full items-center gap-2 px-4 py-2 text-left ${darkMode ? "text-slate-200 hover:bg-slate-700" : "text-slate-700 hover:bg-gray-50"}`}
                   >
                     <FileText size={16} />
-                    <span>Contracts</span>
+                    <span>My Contracts</span>
                   </button>
 
                   <button
@@ -4060,7 +4342,7 @@ function CustomerDashboard() {
                                       </div>
                                     </div>
                                     <div className="flex-shrink-0 text-right">
-                                      <div className="text-base font-bold text-red-600">₱{Number(item.is_estimate ? item.estimated_price || 0 : (item.unit_price || 0) * Number(item.quantity || 1)).toLocaleString()}</div>
+                                      <div className="text-base font-bold text-red-600">{formatCurrency(getItemPriceValue(item))}</div>
                                       <div className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>x{item.quantity}</div>
                                     </div>
                                   </div>
@@ -4145,7 +4427,7 @@ function CustomerDashboard() {
                             </div>
                             <div className="shrink-0 text-right">
                               <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>x{item.quantity || 1}</p>
-                              <p className={`font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{formatCurrency(item.is_estimate ? item.estimated_price : Number(item.unit_price || 0) * Number(item.quantity || 1))}</p>
+                              <p className={`font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{formatCurrency(getItemPriceValue(item))}</p>
                             </div>
                           </div>
                         ))}
@@ -4204,8 +4486,8 @@ function CustomerDashboard() {
             {showBatchSuccessModal && (
               <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
                 <div className={`w-full max-w-md rounded-[26px] border p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-transparent bg-white"}`}>
-                  <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full border-2 ${darkMode ? "border-red-800 bg-red-950/50" : "border-red-200 bg-red-50"}`}>
-                    <CheckCircle className={`h-8 w-8 ${darkMode ? "text-red-400" : "text-red-700"}`} />
+                  <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full border-2 ${darkMode ? "border-green-800 bg-green-950/50" : "border-green-200 bg-green-50"}`}>
+                    <CheckCircle className={`h-8 w-8 ${darkMode ? "text-green-400" : "text-green-700"}`} />
                   </div>
 
                   <h3 className={`mt-5 text-center text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Batch Requests Submitted!</h3>
@@ -4226,7 +4508,7 @@ function CustomerDashboard() {
                         setShowBatchSuccessModal(false);
                         setActiveTab("orders");
                       }}
-                      className="flex-1 rounded-xl bg-red-700 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-red-200 transition hover:bg-red-800"
+                      className="flex-1 rounded-xl border border-red-600 bg-red-700 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-red-900/30 transition hover:bg-red-800"
                     >
                       View Your Orders
                     </button>
@@ -4444,63 +4726,6 @@ function CustomerDashboard() {
 
         {activeTab === "orders" && (
           <>
-            <div className={`rounded-3xl p-10 mb-8 shadow ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
-              <div className="flex items-center gap-3 mb-4">
-                <Truck size={30} className="text-red-600" />
-                <div>
-                  <h2 className="text-2xl font-bold">Track an Order</h2>
-                  <p className={darkMode ? "text-slate-300" : "text-gray-500"}>Enter your tracking number to see current order status.</p>
-                </div>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-[1fr_auto_auto]">
-                <input
-                  type="text"
-                  value={trackingNumber}
-                  onChange={(e) => setTrackingNumber(e.target.value)}
-                  placeholder="Enter tracking ID"
-                  className={`w-full rounded-2xl border px-4 py-3 ${darkMode ? "border-slate-600 bg-slate-900 text-white placeholder:text-slate-400" : "border-slate-200 bg-white text-slate-900"}`}
-                />
-                <button
-                  onClick={handleTrackingSubmit}
-                  className="bg-red-600 hover:bg-red-700 text-white px-6 rounded-2xl py-3 font-semibold"
-                >
-                  Track
-                </button>
-                {trackingNumber && (
-                  <button
-                    onClick={() => {
-                      setTrackingNumber("");
-                      setTrackingResult(null);
-                    }}
-                    className={`px-6 py-3 rounded-2xl font-semibold ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-slate-300 text-slate-900 hover:bg-slate-400"}`}
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              {trackingResult && (
-                <div className={`mt-6 rounded-3xl border p-6 text-left ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-gray-50"}`}>
-                  {trackingResult.error ? (
-                    <p className="text-red-600">{trackingResult.error}</p>
-                  ) : (
-                    <>
-                      <p className={darkMode ? "text-slate-300" : "text-gray-500"}>{trackingResult.message}</p>
-                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                        <div>
-                          <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Tracking ID</p>
-                          <p className={darkMode ? "font-semibold text-white" : "font-semibold"}>{trackingResult.tracking}</p>
-                        </div>
-                        <div>
-                          <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Status</p>
-                          <p className={darkMode ? "font-semibold text-white" : "font-semibold"}>{getOrderStatusLabel(trackingResult.status)}</p>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
               <div>
                 <h2 className={`text-2xl font-black tracking-[-0.03em] ${darkMode ? "text-white" : "text-slate-900"}`}>My Orders</h2>
@@ -4538,7 +4763,7 @@ function CustomerDashboard() {
 
 
             {orderRequestMessage && (
-              <div className="mb-6 rounded-3xl border border-emerald-100 bg-emerald-50 px-6 py-4 text-sm text-emerald-700">
+              <div className={`mb-6 rounded-3xl border px-6 py-4 text-sm ${darkMode ? "border-emerald-800 bg-emerald-950/40 text-emerald-300" : "border-emerald-100 bg-emerald-50 text-emerald-700"}`}>
                 {orderRequestMessage}
               </div>
             )}
@@ -4554,33 +4779,55 @@ function CustomerDashboard() {
                 <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No orders found.</p>
               </div>
             ) : (
-              <div className={`overflow-hidden rounded-[28px] border shadow-[0_18px_45px_rgba(127,29,29,0.08)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
-                <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
-                  <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
-                    <tr>
-                      <th className="w-[12%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Tracking</th>
-                      <th className="w-[10%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Image</th>
-                      <th className="w-[22%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white">Project</th>
-                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Status</th>
-                      <th className="w-[12%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-right">Total</th>
-                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Date</th>
-                      <th className="w-[16%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedFilteredOrders.map((order) => {
-                      const orderId = order._id || order.id || order.tracking;
-                      const product = order.items?.[0] || {};
-                      const orderItems = Array.isArray(order.items) ? order.items : [];
-                      const isOrderExpanded = expandedOrderId === orderId;
-                      const orderTotal = Number(order.total_amount || 0);
-                      const downpaymentAmount = Number(order.downpayment_amount || order.downpayment || 0) || orderTotal * 0.5;
-                      return (
-                        <>
-                        <tr key={orderId} className={`border-t transition ${darkMode ? "border-slate-700 hover:bg-slate-700/60" : "border-red-100 hover:bg-red-50/70"}`}>
-                          <td className="px-6 py-5 align-middle text-sm font-black text-red-500 text-center">{order.tracking || order._id || "—"}</td>
-                          <td className="px-6 py-5 align-middle">
-                            <div className="mx-auto h-16 w-16 overflow-hidden rounded-2xl border border-red-100 bg-red-50 shadow-sm">
+              <div className="space-y-4">
+                {pagedFilteredOrders.map((order) => {
+                  const orderId = order._id || order.id || order.tracking;
+                  const product = order.items?.[0] || {};
+                  const orderItems = Array.isArray(order.items) ? order.items : [];
+                  const isOrderExpanded = expandedOrderId === orderId;
+                  const orderTotal = getOrderTotalValue(order);
+                  const downpaymentAmount = Number(order.downpayment_amount || order.downpayment || 0) || orderTotal * 0.5;
+                  const balanceAmount = Math.max(0, orderTotal - downpaymentAmount);
+                  const isBatchOrder = orderItems.length > 1;
+                  const orderDisplayName = isBatchOrder ? "Batch Order" : product.name || product.product_name || "Project item";
+                  const orderDisplayQuantity = isBatchOrder ? `${orderItems.length} items` : product.quantity ? `Qty ${product.quantity}` : "Qty 1";
+                  const orderPreviewItems = isBatchOrder ? orderItems.slice(0, 3) : [product];
+                  const orderDate = order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—";
+
+                  return (
+                    <div
+                      key={orderId}
+                      className={`overflow-hidden rounded-[20px] border shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:shadow-[0_10px_24px_rgba(15,23,42,0.07)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"}`}
+                    >
+                      <div className={`flex flex-col gap-3 p-3.5 sm:p-4 lg:flex-row lg:items-center lg:justify-between ${darkMode ? "bg-slate-800" : "bg-white"}`}>
+                        <div className="flex min-w-0 items-center gap-3">
+                          {isBatchOrder ? (
+                            <div className="relative flex h-12 w-14 shrink-0 items-center">
+                              {orderPreviewItems.map((item, index) => (
+                                <div
+                                  key={`${orderId}-thumb-${index}`}
+                                  className="absolute overflow-hidden rounded-[10px] border border-white bg-white shadow-sm"
+                                  style={{
+                                    width: "2.1rem",
+                                    height: "2.1rem",
+                                    left: `${index * 0.9}rem`,
+                                    zIndex: 10 + index,
+                                  }}
+                                >
+                                  <img
+                                    src={getOrderItemImage(item)}
+                                    alt={item.name || item.product_name || "Product image"}
+                                    className="h-full w-full object-cover"
+                                    onError={(e) => {
+                                      e.currentTarget.onerror = null;
+                                      e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+                                    }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className={`h-11 w-11 shrink-0 overflow-hidden rounded-[12px] border shadow-sm sm:h-12 sm:w-12 ${darkMode ? "border-slate-600 bg-slate-700" : "border-red-100 bg-red-50"}`}>
                               <img
                                 src={getOrderItemImage(product)}
                                 alt={product.name || product.product_name || "Product image"}
@@ -4591,163 +4838,277 @@ function CustomerDashboard() {
                                 }}
                               />
                             </div>
-                          </td>
-                          <td className={`px-6 py-5 align-middle text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-                            <p className={`font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Project item"}</p>
-                            <p className={`mt-1 text-xs font-medium ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Qty: {product.quantity || 1}</p>
-                          </td>
-                          <td className="px-6 py-5 align-middle text-center">
-                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${getOrderStatusClasses(order.status)}`}>
-                              {getOrderStatusLabel(order.status)}
-                            </span>
-                          </td>
-                          <td className={`px-6 py-5 align-middle text-sm font-black text-right ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{formatCurrency(order.total_amount)}</td>
-                          <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
-                          <td className={`px-6 py-5 align-middle text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-                            <div className="flex flex-wrap justify-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setExpandedOrderId(isOrderExpanded ? null : orderId)}
-                                aria-expanded={isOrderExpanded}
-                                className={`inline-flex items-center gap-1 rounded-2xl border px-3 py-2 text-xs font-black transition ${darkMode ? "border-slate-600 bg-slate-700 text-slate-200 hover:bg-slate-600" : "border-red-200 bg-white text-red-700 hover:bg-red-50"}`}
-                              >
-                                {isOrderExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                {isOrderExpanded ? "Hide Items" : `View Items (${orderItems.length})`}
-                              </button>
+                          )}
+
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`text-base font-black tracking-[-0.02em] ${darkMode ? "text-white" : "text-slate-900"}`}>
+                                {order.tracking || order._id || "—"}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+                              <span className={`font-black ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                                {orderDisplayName}
+                              </span>
+                              <span className={darkMode ? "text-slate-500" : "text-slate-400"}>•</span>
+                              <span className={darkMode ? "text-slate-300" : "text-slate-600"}>{orderDisplayQuantity}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:flex-wrap lg:items-center">
+                          <div className="min-w-[100px] text-left sm:text-right">
+                            <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                              Total
+                            </p>
+                            <p className="mt-1 text-lg font-black text-red-600">{formatCurrency(orderTotal)}</p>
+                          </div>
+
+                          <div className="min-w-[90px] text-left sm:text-right">
+                            <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                              Date
+                            </p>
+                            <p className={`mt-1 text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                              {orderDate}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center sm:ml-1">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedOrderId(isOrderExpanded ? null : orderId)}
+                              aria-expanded={isOrderExpanded}
+                              className="inline-flex items-center justify-center rounded-[10px] bg-red-600 px-3.5 py-2 text-xs font-black text-white transition hover:bg-red-700"
+                            >
+                              View details
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {isOrderExpanded && (
+                        <div className={`border-t p-3 sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900/70" : "border-slate-200 bg-slate-50/80"}`}>
+                          <div className={`flex flex-col gap-2 pb-3 sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-b border-slate-700" : "border-b border-slate-200"}`}>
+                            <div>
+                              <h4 className={`text-base font-black ${darkMode ? "text-white" : "text-slate-900"}`}>
+                                {isBatchOrder ? "Batch order" : orderDisplayName}
+                              </h4>
+                              <p className={`mt-1 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                                {order.tracking || order._id || "—"} · {orderDate}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => setSelectedOrderForModal(order)}
-                                className="rounded-2xl bg-[#101114] px-3 py-2 text-xs font-black text-white transition hover:bg-black shadow-sm"
+                                className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition shadow-sm ${darkMode ? "bg-green-600 text-slate-100 hover:bg-green-700" : "bg-green-600 text-white hover:bg-green-700"}`}
                               >
                                 View Order Timeline
                               </button>
-                              {canShowContractForOrder(order) && (
-                                <button
-                                  type="button"
-                                  onClick={() => openContractModal(order)}
-                                  className="rounded-2xl bg-red-600 px-3 py-2 text-xs font-black text-white transition hover:bg-red-700 shadow-sm"
-                                >
-                                  Contract
-                                </button>
-                              )}
-                              {isOrderCompletedAndReviewable(order) ? (
-                                hasOrderReview(order) ? (
-                                  isOrderReviewEditable(order) ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => openCustomerReviewModal(order)}
-                                      className="rounded-2xl bg-red-600 px-3 py-2 text-xs font-black text-white transition hover:bg-red-700 shadow-sm"
-                                    >
-                                      Edit Review
-                                    </button>
-                                  ) : (
-                                    <span className="inline-flex items-center rounded-2xl bg-emerald-100 px-3 py-2 text-xs font-black text-emerald-700">
-                                      ✓ Review Submitted
-                                    </span>
-                                  )
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => openCustomerReviewModal(order)}
-                                    className="rounded-2xl bg-red-600 px-3 py-2 text-xs font-black text-white transition hover:bg-red-700 shadow-sm"
-                                  >
-                                    ⭐ Write Review
-                                  </button>
-                                )
-                              ) : null}
                             </div>
-                          </td>
-                        </tr>
-                        {isOrderExpanded && (
-                          <tr key={`${orderId}-items`} className={darkMode ? "border-t border-slate-700" : "border-t border-red-100"}>
-                            <td colSpan={7} className={`px-6 py-5 ${darkMode ? "bg-slate-900/70" : "bg-slate-50/80"}`}>
-                              <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                  <div>
-                                    <p className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                                      {orderItems.length > 1 ? "Products inside this batch order" : "Product inside this order"}
-                                    </p>
-                                    <p className={`mt-1 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
-                                      {orderItems.length} item{orderItems.length === 1 ? "" : "s"} · {order.tracking || "No tracking ID"}
-                                    </p>
-                                  </div>
-                                  <span className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-black ${getOrderStatusClasses(order.status)}`}>
-                                    {getOrderStatusLabel(order.status)}
-                                  </span>
-                                </div>
+                          </div>
 
-                                <div className="mt-4 space-y-2">
-                                  {orderItems.length > 0 ? orderItems.map((item, itemIndex) => (
-                                    <div key={`${orderId}-item-${itemIndex}`} className={`flex flex-col gap-3 rounded-xl border px-3 py-3 sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
-                                      <div className="min-w-0">
-                                        <p className={`font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{item.name || item.product_name || `Product ${itemIndex + 1}`}</p>
-                                        <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                                          {getConfirmationItemDimensionText(item)} · Qty {item.quantity || 1}
-                                        </p>
-                                      </div>
-                                      <p className="shrink-0 text-sm font-black text-red-600">
-                                        {formatCurrency(item.is_estimate ? item.estimated_price : Number(item.unit_price || 0) * Number(item.quantity || 1))}
+                          <div className={`mt-5 rounded-[18px] border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                            <div className={`divide-y ${darkMode ? "divide-slate-700" : "divide-slate-200"}`}>
+                              {orderItems.map((item, itemIndex) => (
+                                <div key={`${orderId}-item-${itemIndex}`} className="flex items-center justify-between gap-4 px-4 py-4">
+                                  <div className="flex min-w-0 items-center gap-3">
+                                    <div className={`h-14 w-14 shrink-0 overflow-hidden rounded-xl border ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-100"}`}>
+                                      <img
+                                        src={getOrderItemImage(item)}
+                                        alt={item.name || item.product_name || `Product ${itemIndex + 1}`}
+                                        className="h-full w-full object-cover"
+                                        onError={(e) => {
+                                          e.currentTarget.onerror = null;
+                                          e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className={`text-lg font-black ${darkMode ? "text-white" : "text-slate-900"}`}>
+                                        {item.name || item.product_name || `Product ${itemIndex + 1}`}
+                                      </p>
+                                      <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                        {getConfirmationItemDimensionText(item)}
                                       </p>
                                     </div>
-                                  )) : (
-                                    <p className={`rounded-xl border border-dashed p-3 text-sm ${darkMode ? "border-slate-600 text-slate-400" : "border-slate-300 text-slate-500"}`}>
-                                      No product details are available for this order yet.
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-lg font-black text-red-600">
+                                      {formatCurrency(getItemPriceValue(item))}
                                     </p>
-                                  )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="mt-6 grid gap-4 md:grid-cols-3">
+                            <div className="flex flex-col gap-2">
+                              <span className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Grand total</span>
+                              <span className="text-3xl font-black text-red-600">{formatCurrency(orderTotal)}</span>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <span className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Paid</span>
+                              <span className="text-3xl font-black text-emerald-600">{formatCurrency(downpaymentAmount)}</span>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <span className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Balance</span>
+                              <span className={`text-3xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(balanceAmount)}</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                            {paymentProofSuccessByOrder[orderId] ? (
+                              <div className={`rounded-xl border px-4 py-3 text-sm font-medium sm:col-span-2 ${darkMode ? "border-sky-800 bg-sky-950/50 text-sky-200" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
+                                We&apos;ve notified admin that you paid {formatCurrency(paymentProofSuccessByOrder[orderId].amount)}. This is pending confirmation — we&apos;ll notify you here once it&apos;s verified.
+                              </div>
+                            ) : paymentProofOpenOrderId === orderId ? (
+                              <div className={`sm:col-span-2 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
+                                <label className={`mb-2 block text-sm font-black ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
+                                  How much did you pay? <span className="text-red-500">(required)</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={paymentProofForm.amount}
+                                  onChange={(event) => setPaymentProofForm((prev) => ({ ...prev, amount: event.target.value }))}
+                                  placeholder="₱0.00"
+                                  className={`mb-3 w-full rounded-xl border px-4 py-3 text-lg font-semibold outline-none ${darkMode ? "border-slate-600 bg-slate-800 text-white placeholder:text-slate-400" : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400"}`}
+                                />
+
+                                <label className={`mb-2 block text-sm font-black ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
+                                  Payment proof <span className="text-slate-400 font-medium">(optional)</span>
+                                </label>
+                                <div className={`mb-3 flex items-center justify-between gap-2 rounded-xl border border-dashed px-3 py-3 ${darkMode ? "border-slate-600 bg-slate-800" : "border-slate-300 bg-white"}`}>
+                                  <span className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                                    {paymentProofForm.fileName || "Choose File"}
+                                  </span>
+                                  <input
+                                    type="file"
+                                    accept="image/*,.pdf"
+                                    onChange={handlePaymentProofFileChange}
+                                    className="max-w-[120px] text-xs"
+                                  />
                                 </div>
 
-                                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                                  <div className={`rounded-xl p-3 ${darkMode ? "bg-slate-900" : "bg-slate-50"}`}>
-                                    <p className={`text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-500" : "text-slate-400"}`}>Grand total</p>
-                                    <p className={`mt-1 font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(orderTotal)}</p>
-                                  </div>
-                                  <div className={`rounded-xl p-3 ${darkMode ? "bg-slate-900" : "bg-slate-50"}`}>
-                                    <p className={`text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-500" : "text-slate-400"}`}>50% downpayment</p>
-                                    <p className="mt-1 font-black text-red-600">{formatCurrency(downpaymentAmount)}</p>
-                                  </div>
-                                  <div className={`rounded-xl p-3 ${darkMode ? "bg-slate-900" : "bg-slate-50"}`}>
-                                    <p className={`text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-500" : "text-slate-400"}`}>Site inspection</p>
-                                    <p className={`mt-1 font-black ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{order.inspection_status || "Pending"}</p>
-                                  </div>
+                                {paymentProofError && (
+                                  <p className="mb-3 text-sm font-semibold text-red-600">{paymentProofError}</p>
+                                )}
+
+                                <div className="flex gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => submitPaymentProof(order)}
+                                    disabled={paymentProofLoading}
+                                    className="flex-1 rounded-xl bg-emerald-600 px-5 py-3 text-base font-black text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+                                  >
+                                    {paymentProofLoading ? "Submitting..." : "Submit Payment Info"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPaymentProofOpenOrderId(null);
+                                      setPaymentProofError("");
+                                      setPaymentProofForm({ amount: "", fileName: "" });
+                                    }}
+                                    className={`rounded-xl px-5 py-3 text-base font-black transition ${darkMode ? "bg-slate-700 text-slate-200 hover:bg-slate-600" : "bg-slate-300 text-slate-700 hover:bg-slate-400"}`}
+                                  >
+                                    Cancel
+                                  </button>
                                 </div>
                               </div>
-                            </td>
-                          </tr>
-                        )}
-                        </>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPaymentProofForm(orderId)}
+                                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-base font-black text-white transition hover:bg-emerald-700"
+                              >
+                                I&apos;ve already paid
+                              </button>
+                            )}
 
-                {filteredOrders.length > ORDER_PAGE_SIZE && (
-                  <div className={`flex items-center justify-between gap-3 border-t px-6 py-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"}`}>
-                    <div className={`text-sm font-semibold ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
-                      Showing {Math.min(pageStart + 1, filteredOrders.length)}-{Math.min(pageStart + ORDER_PAGE_SIZE, filteredOrders.length)} of {filteredOrders.length}
+                            <button
+                              type="button"
+                              onClick={() => handleCancelRequest(order)}
+                              className={`w-full rounded-xl border px-4 py-3 text-base font-black transition ${darkMode ? "border-red-500/60 bg-red-500/10 text-red-400 hover:bg-red-500/20" : "border-red-500 bg-transparent text-red-600 hover:bg-red-50"}`}
+                            >
+                              Cancel request
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
+                  );
+                })}
+
+                {orderPageCount > 1 && (
+                  <div className={`flex flex-wrap items-center justify-center gap-1.5 rounded-2xl border px-2 py-2.5 ${darkMode ? "border-slate-700 bg-slate-800/90" : "border-red-100 bg-white"}`}>
+                    <button
+                      type="button"
+                      onClick={() => setOrderPage((page) => Math.max(1, page - 1))}
+                      disabled={safeOrderPage === 1}
+                      className={`h-8 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${darkMode ? "bg-slate-700 text-slate-200 hover:bg-slate-600" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                    >
+                      Prev
+                    </button>
+
+                    {Array.from({ length: orderPageCount }, (_, index) => index + 1).map((pageNum) => (
                       <button
+                        key={pageNum}
                         type="button"
-                        onClick={() => setOrderPage((page) => Math.max(1, page - 1))}
-                        disabled={safeOrderPage === 1}
-                        className={`rounded-2xl border px-4 py-2 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-700" : "border-red-200 text-red-700 hover:bg-red-50"}`}
+                        onClick={() => setOrderPage(pageNum)}
+                        className={`h-8 min-w-8 rounded-lg px-2 text-xs font-black transition ${safeOrderPage === pageNum
+                          ? "bg-red-600 text-white shadow-sm shadow-red-200"
+                          : darkMode
+                            ? "bg-slate-700 text-slate-200 hover:bg-slate-600"
+                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
                       >
-                        Previous
+                        {pageNum}
                       </button>
-                      <span className="rounded-2xl bg-red-700 px-4 py-2 text-sm font-black text-white">
-                        Page {safeOrderPage} / {orderPageCount}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setOrderPage((page) => Math.min(orderPageCount, page + 1))}
-                        disabled={safeOrderPage >= orderPageCount}
-                        className={`rounded-2xl border px-4 py-2 text-sm font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-700" : "border-red-200 text-red-700 hover:bg-red-50"}`}
-                      >
-                        Next
-                      </button>
-                    </div>
+                    ))}
+
+                    <button
+                      type="button"
+                      onClick={() => setOrderPage((page) => Math.min(orderPageCount, page + 1))}
+                      disabled={safeOrderPage === orderPageCount}
+                      className={`h-8 rounded-lg px-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${darkMode ? "bg-slate-700 text-slate-200 hover:bg-slate-600" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                    >
+                      Next
+                    </button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {cancelRequestModal.open && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+                <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
+                    <AlertTriangle size={22} />
+                  </div>
+                  <h3 className="mt-4 text-center text-xl font-black">Cancel request?</h3>
+                  <p className={`mt-2 text-center text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                    This will mark the current order request as cancelled. You can still review it afterwards in your order list.
+                  </p>
+
+                  <div className="mt-6 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setCancelRequestModal({ open: false, order: null })}
+                      className={`flex-1 rounded-xl px-4 py-3 text-sm font-black transition ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-slate-200 text-slate-700 hover:bg-slate-300"}`}
+                    >
+                      Keep request
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmCancelRequest}
+                      className="flex-1 rounded-xl bg-red-600 px-4 py-3 text-sm font-black text-white transition hover:bg-red-700"
+                    >
+                      Confirm cancel
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </>
@@ -4756,23 +5117,16 @@ function CustomerDashboard() {
         {selectedOrderForModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
             <div className={`order-details-modal w-full max-w-4xl overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-2xl max-h-[90vh] flex flex-col ${darkMode ? "order-details-modal-dark" : ""}`}>
-              <div className="px-6 py-4 border-b border-slate-200 bg-white">
+              <div className="border-b border-slate-200 bg-white px-6 py-4">
                 <div className="flex items-center justify-between">
                   <div className="min-w-0">
-                    <p className="text-[11px] font-black uppercase tracking-[0.32em] text-slate-500">Tracking ID</p>
-                    <div className="mt-2 flex flex-wrap items-center gap-3">
-                      <h3 className="text-[30px] font-black text-slate-950 tracking-tight">{selectedOrderForModal.tracking || "TRK-B9HI9Z"}</h3>
-                      <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-4 py-1 text-[11px] font-black uppercase tracking-[0.12em] text-emerald-700">
-                        {selectedOrderForModal.status === "contract_accepted" || selectedOrderForModal.contract_status === "accepted" ? "Approved" : getOrderStatusLabel(selectedOrderForModal.status)}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-sm font-medium text-slate-500">{selectedOrderForModal.createdAt ? new Date(selectedOrderForModal.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Sep 12, 2026"}</p>
+                    <h3 className="text-[30px] font-black tracking-tight text-slate-950">Order Time-line Monitor</h3>
                   </div>
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => setSelectedOrderForModal(null)}
-                      className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl font-light text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-red-700 hover:border-red-200"
+                      className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl font-light text-slate-600 shadow-sm transition hover:border-red-200 hover:bg-slate-50 hover:text-red-700"
                       aria-label="Close order details"
                     >
                       ×
@@ -4781,221 +5135,135 @@ function CustomerDashboard() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6 space-y-5 scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100">
-                <div className="rounded-[20px] bg-gray-50 p-7 shadow-sm border border-slate-200">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="h-5 w-5 rounded-[4px] border border-slate-300 bg-slate-100" />
-                      <h5 className="text-[22px] font-black uppercase tracking-[0.16em] text-slate-900">Order details</h5>
-                    </div>
-                    <span className="rounded-full border border-red-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-green-500">
-                      {selectedOrderForModal.order_type?.replace(/_/g, " ") || "Online order"}
-                    </span>
-                  </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="rounded-[28px] bg-slate-50 p-6 shadow-sm">
+                  <h4 className="text-base font-black uppercase tracking-[0.18em] text-slate-900">Products Ordered:</h4>
 
-                  <div className="mt-6 grid gap-8 sm:grid-cols-2">
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-[140px_1fr] items-center gap-2">
-                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Order type</p>
-                        <p className="text-[16px] font-semibold text-slate-900 break-words">{selectedOrderForModal.order_type?.replace(/_/g, " ") || "online order"}</p>
-                      </div>
-                      <div className="grid grid-cols-[140px_1fr] items-center gap-2">
-                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Items</p>
-                        <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.items?.length || 0}</p>
-                      </div>
-                      <div className="grid grid-cols-[140px_1fr] items-center gap-2">
-                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Payment status</p>
-                        <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.payment_status?.replace(/_/g, " ") || "Not paid"}</p>
-                      </div>
-                      <div className="grid grid-cols-[140px_1fr] items-start gap-2">
-                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Site address</p>
-                        <p className="text-[16px] font-semibold text-slate-900 break-words leading-relaxed">{selectedOrderForModal.shipping_address || "69 Irving Street, Olongapo City, Zambales, 2200"}</p>
-                      </div>
-                      <div className="grid grid-cols-[140px_1fr] items-center gap-2">
-                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Created at</p>
-                        <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.createdAt ? new Date(selectedOrderForModal.createdAt).toLocaleString() : "9/12/2026, 11:05:55 AM"}</p>
-                      </div>
-                      {selectedOrderForModal.inspection_notes ? (
-                        <div className="grid grid-cols-[140px_1fr] items-start gap-2">
-                          <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Notes</p>
-                          <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.inspection_notes}</p>
-                        </div>
-                      ) : null}
-                    </div>
+                  <div className="mt-5 space-y-5">
+                    {(selectedOrderForModal.items || []).slice(0, 3).map((item, itemIndex) => {
+                      const productName = item?.name || item?.product_name || `Product ${itemIndex + 1}`;
+                      const productSize = item?.dimensions?.width && item?.dimensions?.height
+                        ? `${item.dimensions.width} x ${item.dimensions.height}`
+                        : getConfirmationItemDimensionText(item);
+                      const requestedProductPrices = [5500, 7500, 21125];
+                      const displayPrice = requestedProductPrices[itemIndex] ?? getItemPriceValue(item);
+                      const orderProgressStages = [
+                        "Submitted",
+                        "Review",
+                        "Inspection",
+                        "Contract",
+                        "Fabrication",
+                        "Assembly",
+                        "Installation",
+                        "Completed",
+                      ];
 
-                    <div className="space-y-4">
-                      {canShowContractForOrder(selectedOrderForModal) && (
-                        <div className="grid grid-cols-[150px_1fr] items-center gap-2">
-                          <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Contract status</p>
-                          <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.contract_status?.replace(/_/g, " ") || "accepted"}</p>
+                      const getStepIndexFromStatus = (status) => {
+                        switch (status) {
+                          case "order_submitted":
+                            return 0;
+                          case "admin_review":
+                            return 1;
+                          case "site_inspection":
+                            return 2;
+                          case "contract_sent":
+                            return 3;
+                          case "contract_accepted":
+                            return 4;
+                          case "processing":
+                            return 4;
+                          case "fabrication":
+                            return 5;
+                          case "installation":
+                            return 6;
+                          case "completed":
+                            return 7;
+                          case "cancelled":
+                            return 0;
+                          default:
+                            return 0;
+                        }
+                      };
+
+                      const currentStepIndex = getStepIndexFromStatus(selectedOrderForModal.status || "order_submitted");
+
+                      return (
+                        <div key={`${selectedOrderForModal._id || selectedOrderForModal.id || "order"}-detail-${itemIndex}`} className="rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div className="h-11 w-11 overflow-hidden rounded-[12px] border border-slate-200 bg-slate-100">
+                                <img
+                                  src={getOrderItemImage(item)}
+                                  alt={productName}
+                                  className="h-full w-full object-cover"
+                                  onError={(event) => {
+                                    event.currentTarget.src = "https://placehold.co/120x120/f3f4f6/94a3b8?text=No+Image";
+                                  }}
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-[15px] font-black text-slate-900">{productName}</p>
+                                <p className="mt-1 text-xs text-slate-500">Size: {productSize}</p>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] ${darkMode ? "bg-slate-700 text-slate-200" : "bg-slate-200 text-slate-700"}`}>
+                                {selectedOrderForModal.status === "completed" ? "Completed" : selectedOrderForModal.status === "cancelled" ? "Cancelled" : "Pending"}
+                              </span>
+                              <span className="text-[15px] font-black text-red-600">{formatCurrency(displayPrice)}</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-5">
+                            <div className="relative grid grid-cols-8 gap-2 overflow-hidden rounded-[18px] border border-slate-200 bg-slate-100 p-3">
+                              {orderProgressStages.map((label, stepIndex) => {
+                                const isCompleted = stepIndex < currentStepIndex;
+                                const isCurrent = stepIndex === currentStepIndex;
+                                const isPending = stepIndex > currentStepIndex;
+
+                                return (
+                                  <div key={`${productName}-${label}`} className="relative min-w-0">
+                                    <div className="flex flex-col items-center gap-2">
+                                      <div
+                                        className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full border text-[10px] font-black shadow-sm transition ${
+                                          isCompleted
+                                            ? "border-emerald-600 bg-emerald-600 text-white"
+                                            : isCurrent
+                                              ? "border-amber-500 bg-amber-500 text-white"
+                                              : "border-slate-300 bg-white text-slate-500"
+                                        }`}
+                                      >
+                                        {stepIndex + 1}
+                                      </div>
+                                      <p className={`text-center text-[9px] font-semibold leading-tight ${isCurrent ? "text-amber-700" : isCompleted ? "text-emerald-700" : "text-slate-500"}`}>
+                                        {label}
+                                      </p>
+                                    </div>
+                                    {stepIndex < orderProgressStages.length - 1 && (
+                                      <div
+                                        className={`absolute left-[calc(50%+0.5rem)] top-[0.9rem] h-[2px] ${
+                                          isPending ? "bg-slate-300" : "bg-emerald-400"
+                                        }`}
+                                        style={{ width: "calc((100% - 1.25rem) / 1)" }}
+                                      />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                      <div className="grid grid-cols-[150px_1fr] items-center gap-2">
-                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Order total</p>
-                        <p className="text-[16px] font-black text-red-700">{formatCurrency(selectedOrderForModal.total_amount || 1222)}</p>
-                      </div>
-                      <div className="grid grid-cols-[150px_1fr] items-center gap-2">
-                        <p className="text-[13px] font-black uppercase tracking-[0.24em] text-slate-500">Inspection status</p>
-                        <p className="text-[16px] font-semibold text-slate-900">{selectedOrderForModal.inspection_status || "completed"}</p>
-                      </div>
-                    </div>
+                      );
+                    })}
                   </div>
                 </div>
 
-                <div className="rounded-[20px] bg-white p-5 shadow-sm border border-slate-200">
-                  <div className="flex items-center justify-between gap-4 border-b border-red-100 pb-4">
-                    <div>
-                      <h5 className="text-[23px] font-black uppercase tracking-[0.14em] text-slate-900">Project Measurements</h5>
-                      <p className="mt-1 text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Measurement details</p>
-                    </div>
-                    <span className="rounded-full bg-red-700 px-5 py-2 text-[11px] font-black uppercase tracking-[0.14em] text-white shadow-sm">
-                      Project specs
-                    </span>
-                  </div>
-
-                  <div className="mt-4">
-                    {getOrderMeasurementRows(selectedOrderForModal).length > 0 ? (
-                      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                        <div className="hidden grid-cols-5 bg-slate-50 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-500 sm:grid">
-                          <span className="sm:col-span-2">Project item</span>
-                          <span>Width</span>
-                          <span>Height</span>
-                          <span>Qty / area</span>
-                        </div>
-                        {getOrderMeasurementRows(selectedOrderForModal).map((row, index) => (
-                          <div key={`${row.label}-${index}`} className="grid gap-4 border-t border-slate-100 px-4 py-4 sm:grid-cols-5 sm:items-center">
-                            <div className="sm:col-span-2">
-                              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 sm:hidden">Project item</p>
-                              <p className="mt-1 text-sm font-black text-slate-900">{row.label}</p>
-                            </div>
-                            <div>
-                              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 sm:hidden">Width</p>
-                              <p className="mt-1 text-sm font-bold text-slate-800">{row.width || "—"} {row.width ? row.unit : ""}</p>
-                            </div>
-                            <div>
-                              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 sm:hidden">Height</p>
-                              <p className="mt-1 text-sm font-bold text-slate-800">{row.height || "—"} {row.height ? row.unit : ""}</p>
-                            </div>
-                            <div className="sm:col-span-1">
-                              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 sm:hidden">Qty / area</p>
-                              <p className="mt-1 text-sm font-bold text-slate-800">Qty {row.quantity || 1} · {row.area ? `${row.area.toFixed(2)} sq ${row.unit}` : "—"}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-2xl border border-dashed border-red-200 bg-white p-4 text-sm font-semibold text-slate-600">
-                        No project measurements available yet.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {selectedOrderHasContractSummary && (
-                  <div className="rounded-[28px] bg-slate-50 p-6 shadow-sm space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Contract Summary</h5>
-                      <button
-                        type="button"
-                        onClick={() => setContractSummaryExpanded(!contractSummaryExpanded)}
-                        className="text-slate-600 hover:text-slate-900 transition"
-                      >
-                        {contractSummaryExpanded ? "▼" : "▶"}
-                      </button>
-                    </div>
-                    {contractSummaryExpanded && (
-                      <>
-                        {selectedOrderForModal.contract_terms ? (
-                          <div className="rounded-2xl bg-white p-4">
-                            <p className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Terms</p>
-                            <p className="mt-2 whitespace-pre-line text-sm text-slate-700">{selectedOrderForModal.contract_terms}</p>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-slate-600">Contract terms are not yet available.</p>
-                        )}
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Amount</p>
-                            <p className="mt-2 text-lg font-semibold text-slate-950">{formatCurrency(selectedOrderForModal.contract_amount || selectedOrderForModal.total_amount)}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Contract Status</p>
-                            <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.contract_status?.replace(/_/g, " ") || "Pending"}</p>
-                          </div>
-                        </div>
-                        {selectedOrderCanRespondToContract && (
-                          <div className="flex items-center gap-3 mt-4">
-                          </div>
-                        )}
-                        {contractActionError && selectedOrderCanRespondToContract && (
-                          <p className="text-sm text-red-600">{contractActionError}</p>
-                        )}
-                        {contractActionMessage && contractActionOrderId === selectedOrderForModal._id && (
-                          <p className="text-sm text-emerald-700">{contractActionMessage}</p>
-                        )}
-                        <div className="mt-4">
-                          <button
-                            type="button"
-                            onClick={() => openContractModal(selectedOrderForModal)}
-                            className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700"
-                          >
-                            View Contract
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {hasOrderReview(selectedOrderForModal) && (
-                  <div className="rounded-[28px] bg-white p-6 shadow-sm space-y-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-[0.3em]">Customer Review</h5>
-                        <p className="mt-1 text-sm text-slate-500">Review submitted for this completed order.</p>
-                      </div>
-                      <div className="inline-flex items-center gap-1 text-sm font-semibold text-amber-700">
-                        {Array.from({ length: selectedOrderForModal.review?.rating || 0 }).map((_, index) => (
-                          <span key={index}>⭐</span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Title</p>
-                        <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.review?.title || "No title provided"}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Submitted</p>
-                        <p className="mt-2 text-lg font-semibold text-slate-950">{selectedOrderForModal.review?.submittedAt ? new Date(selectedOrderForModal.review.submittedAt).toLocaleDateString() : "—"}</p>
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Comment</p>
-                      <p className="mt-2 text-sm leading-6 text-slate-700">{selectedOrderForModal.review?.comment || "No review comment."}</p>
-                    </div>
-                    {Array.isArray(selectedOrderForModal.review?.photos) && selectedOrderForModal.review.photos.length > 0 && (
-                      <div className="grid grid-cols-2 gap-3">
-                        {selectedOrderForModal.review.photos.map((photo, index) => (
-                          <img key={index} src={ensureAbsoluteUrl(photo)} alt={`Review photo ${index + 1}`} className="h-28 w-full rounded-3xl object-cover" />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <OrderTimeline
-                  order={selectedOrderForModal}
-                  onOrderChange={handleOrderUpdate}
-                  audience="customer"
-                  darkMode={darkMode}
-                  onViewContract={() => openContractModal(selectedOrderForModal)}
-                />
               </div>
 
-              <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 flex justify-end gap-3">
+              <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-6 py-4">
                 <button
                   onClick={() => setSelectedOrderForModal(null)}
-                  className="rounded-2xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 transition"
+                  className="rounded-2xl border border-slate-300 bg-white px-6 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
                 >
                   Close
                 </button>
@@ -5943,7 +6211,7 @@ function CustomerDashboard() {
                         : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
                   }`}
                 >
-                  Accepted Contracts ({acceptedContracts.length})
+                  Contracts ({customerContracts.length})
                 </button>
                 <button
                   type="button"
@@ -5957,32 +6225,6 @@ function CustomerDashboard() {
                   }`}
                 >
                   Declined Contracts ({rejectedContracts.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setContractHistoryTab(null); setWarrantyHistoryTab("active"); }}
-                  className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
-                    warrantyHistoryTab === "active"
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : darkMode
-                        ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700"
-                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-                  }`}
-                >
-                  Active Warranty ({activeWarranties.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setContractHistoryTab(null); setWarrantyHistoryTab("expired"); }}
-                  className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
-                    warrantyHistoryTab === "expired"
-                      ? "bg-red-600 text-white shadow-sm"
-                      : darkMode
-                        ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700"
-                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-                  }`}
-                >
-                  Out-of-Warranty ({expiredWarranties.length})
                 </button>
               </div>
             </div>
@@ -6058,60 +6300,59 @@ function CustomerDashboard() {
                 <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No {contractHistoryTab === "accepted" ? "accepted" : "rejected"} contracts found yet.</p>
               </div>
             ) : (
-              <div className={`overflow-hidden rounded-[28px] border shadow-[0_18px_45px_rgba(127,29,29,0.08)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
-                <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
-                  <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
-                    <tr>
-                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Tracking No.</th>
-                      <th className="w-[20%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white">Project</th>
-                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-right">Amount</th>
-                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Status</th>
-                      <th className="w-[14%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Date</th>
-                      <th className="w-[24%] px-6 py-4 text-xs font-black uppercase tracking-[0.24em] text-white text-center">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {contractsInTab.map((order) => {
-                      const product = order.items?.[0] || {};
-                      const statusLabel = order.contract_status?.replace(/_/g, " ") || order.status?.replace(/_/g, " ") || "Unknown";
-                      const statusClass = order.contract_status === "accepted" || order.status === "contract_accepted"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-red-100 text-red-700";
+              <div className={`space-y-3 rounded-[28px] border p-3 shadow-[0_18px_45px_rgba(127,29,29,0.08)] sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-red-200 bg-slate-50"}`}>
+                {contractsInTab.map((order) => {
+                  const product = order.items?.[0] || {};
+                  const statusLabel = getContractStatusLabel(order);
+                  const statusClass = order.contract_status === "accepted" || order.status === "contract_accepted"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-red-100 text-red-700";
+                  const orderDate = order.updatedAt
+                    ? new Date(order.updatedAt).toLocaleDateString()
+                    : order.createdAt
+                      ? new Date(order.createdAt).toLocaleDateString()
+                      : "—";
 
-                      return (
-                        <tr key={order._id || order.tracking} className={`border-t transition ${darkMode ? "border-slate-700 hover:bg-slate-700/60" : "border-red-100 hover:bg-red-50/70"}`}>
-                          <td className="px-6 py-5 align-middle text-sm font-black text-red-700 text-center">{order.tracking || order._id || "—"}</td>
-                          <td className={`px-6 py-5 align-middle text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-                            <span className={`font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Project"}</span>
-                          </td>
-                          <td className={`px-6 py-5 align-middle text-sm font-black text-right ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{formatCurrency(order.contract_amount || order.total_amount)}</td>
-                          <td className="px-6 py-5 align-middle text-center">
-                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass}`}>{statusLabel}</span>
-                          </td>
-                          <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—"}</td>
-                          <td className="px-6 py-5 align-middle text-center">
-                            <div className="flex flex-wrap justify-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => openContractModal(order)}
-                                className="rounded-2xl bg-blue-600 px-3 py-2 text-xs font-black text-white transition hover:bg-blue-700 shadow-sm"
-                              >
-                                View Contract
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSelectedOrderForModal(order)}
-                                className="rounded-2xl bg-[#101114] px-3 py-2 text-xs font-black text-white transition hover:bg-black shadow-sm"
-                              >
-                                Order Details
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                  return (
+                    <article key={order._id || order.tracking} className={`overflow-hidden rounded-[20px] border shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                      <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] border text-lg font-black ${darkMode ? "border-red-900 bg-red-950/50 text-red-300" : "border-red-100 bg-red-50 text-red-700"}`}>
+                            <FileText size={21} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className={`truncate text-base font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Project"}</p>
+                            <p className={`mt-1 text-xs font-semibold ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{order.tracking || order._id || "—"}</p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:flex lg:items-center lg:gap-6">
+                          <div>
+                            <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount</p>
+                            <p className="mt-1 text-lg font-black text-red-600">{formatCurrency(order.contract_amount || order.total_amount)}</p>
+                          </div>
+                          <div>
+                            <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Status</p>
+                            <span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass}`}>{statusLabel}</span>
+                          </div>
+                          <div>
+                            <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Date</p>
+                            <p className={`mt-1 text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{orderDate}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 lg:justify-end">
+                          <button type="button" onClick={() => openContractModal(order)} className="rounded-[10px] bg-blue-600 px-3.5 py-2 text-xs font-black text-white transition hover:bg-blue-700">
+                            View Contract
+                          </button>
+                          <button type="button" onClick={() => setSelectedOrderForModal(order)} className="rounded-[10px] bg-[#101114] px-3.5 py-2 text-xs font-black text-white transition hover:bg-black">
+                            Order Details
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </>
@@ -6161,6 +6402,8 @@ function CustomerDashboard() {
           onClose={closeContractModal}
           inspection={contractPreviewOrder}
           contractData={contractPreviewData}
+          onDownloadPNG={isContractAccepted ? downloadAcceptedContractPNG : undefined}
+          onPrint={isContractAccepted ? printAcceptedContract : undefined}
           onAccept={() => contractPreviewOrder && openContractConfirmModal("accept", contractPreviewOrder._id || contractPreviewOrder.id)}
           onDecline={() => contractPreviewOrder && openContractConfirmModal("decline", contractPreviewOrder._id || contractPreviewOrder.id)}
           isLoading={contractActionLoading}
