@@ -5,6 +5,7 @@ import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { getProducts } from "@/api/products";
 import { getProductReviews } from "@/api/orders";
+import ProfileAvatar from "../../components/ui/ProfileAvatar";
 
 function ProductReviews() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -179,7 +180,7 @@ function ProductReviews() {
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div>
                             <p className="text-sm text-slate-500">Customer</p>
-                            <p className="mt-1 font-semibold text-slate-900">{review.customerName}</p>
+                            <div className="mt-2"><ProfileAvatar name={review.customerName} compact /></div>
                           </div>
                           <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-700">
                             <span>{Array.from({ length: review.rating || 0 }).map((_, index) => (<Star key={index} size={14} />))}</span>

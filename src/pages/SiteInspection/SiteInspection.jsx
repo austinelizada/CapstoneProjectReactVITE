@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
@@ -6,6 +6,7 @@ import {
   Eye,
   Pencil,
   FileText,
+  ShieldCheck,
   XOctagon,
   RotateCcw,
 } from "lucide-react";
@@ -14,6 +15,8 @@ import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
 
 import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection, sendWalkInApprovalEmail } from "@/api/orders";
+import { buildContractSnapshot, hasContractSnapshotChanged } from "./contractState";
+import { getCustomerPaymentProof } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "@/api/products";
 import { searchCustomers } from "@/api/users";
 import { uploadFiles } from "@/api/uploads";
@@ -25,6 +28,7 @@ import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY } from "@/lib/dateUtils"
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { recordActivity } from "@/lib/activityLog";
+import ProfileAvatar from "../../components/ui/ProfileAvatar";
 
 const getDefaultInspection = () => ({
   customerId: null,
@@ -39,18 +43,21 @@ const getDefaultInspection = () => ({
   notes: "",
   site_notes: "",
   warranty_period: 90,
-  has_account_on_website: true,
+  custom_warranty_days: 90,
+  has_account_on_website: false,
   downpayment_received: false,
   manual_override: "",
   items: [
     { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, unit_price: 0, area: 0, unit: "sqft", estimation_mode: "auto" },
   ],
   payment_terms: "50%_down_payment",
+  agreed_payment_date: "",
   estimation_mode: "auto",
   // Walk-in customer fields
   signed_contract_file: null,
   contract_number: "",
   contract_signed_date: new Date().toISOString().split("T")[0],
+  customerType: "walk-in",
 });
 
 const generateTrackingId = () => {
@@ -60,7 +67,7 @@ const generateTrackingId = () => {
 };
 
 const SITE_INSPECTION_STATUS = "site_inspection";
-const PENDING_CONTRACT_STATUSES = new Set(["", "pending"]);
+const SITE_INSPECTION_CONTRACT_STATUSES = new Set(["", "pending", "sent", "declined"]);
 const CONTRACT_STAGE_STATUSES = new Set([
   "contract_created",
   "contract_sent",
@@ -78,6 +85,21 @@ const CONTRACT_STAGE_STATUSES = new Set([
 
 const normalizeWorkflowValue = (value) =>
   (value || "").toString().trim().toLowerCase();
+
+export const normalizeWarrantyPeriodValue = (value, fallback = 90) => {
+  if (value === "Custom") return "Custom";
+
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    if (numericValue === 30 || numericValue === 90) {
+      return numericValue;
+    }
+
+    return "Custom";
+  }
+
+  return fallback;
+};
 
 const normalizeProductId = (productId) => {
   if (typeof productId === "object" && productId !== null) {
@@ -133,12 +155,17 @@ export const validateInspectionPayload = (payload = {}) => {
   if (!payload.phone?.trim()) nextErrors.phone = "Phone number is required.";
   if (!payload.siteAddress?.trim()) nextErrors.siteAddress = "Site address is required.";
   if (!payload.inspection_date) nextErrors.inspection_date = "Inspection date is required.";
-  if (!payload.estimated_installation_date) nextErrors.estimated_installation_date = "Estimated installation date is required.";
   if (!payload.items || payload.items.length === 0) nextErrors.items = "Add at least one measurement row.";
+  if (
+    payload.order_type === "walk_in_customer" &&
+    payload.has_account_on_website === true &&
+    !getRegisteredCustomerId(payload)
+  ) {
+    nextErrors.customerId = "Select the matching registered customer account before creating this inspection.";
+  }
 
-  // Walk-in customers only need a signed contract when they have a website account.
   if (requiresSignedContractForWalkIn(payload) && !payload.signed_contract_file) {
-    nextErrors.signed_contract_file = "Signed contract is required for walk-in customers with a website account.";
+    nextErrors.signed_contract_file = "Signed hard-copy contract is required for walk-in customers.";
   }
 
   const itemErrors = payload.items?.map((item) => {
@@ -159,14 +186,61 @@ export const validateInspectionPayload = (payload = {}) => {
   return nextErrors;
 };
 
-export const requiresSignedContractForWalkIn = (payload = {}) => {
-  const isWalkInCustomer = String(payload.order_type || "") === "walk_in_customer";
-  const hasWebsiteAccount = payload.has_account_on_website === true;
+export const normalizeWalkInWebsiteAccountState = (payload = {}) => {
+  const rawOrderType = String(payload.order_type || payload.customerType || payload.customer_type || "").trim().toLowerCase();
+  const isWalkInCustomer = [
+    "walk_in_customer",
+    "walk-in_customer",
+    "walk_in",
+    "walk-in",
+    "walkin",
+    "walk in customer",
+    "walk-in customer",
+  ].includes(rawOrderType);
 
-  return isWalkInCustomer && hasWebsiteAccount;
+  if (isWalkInCustomer) {
+    return false;
+  }
+
+  return Boolean(payload.has_account_on_website);
 };
 
-const isSiteInspectionVisible = (order) => {
+const getRegisteredCustomerId = (inspection = {}) => {
+  const candidateIds = [
+    inspection.customer,
+    inspection.customer_id,
+    inspection.customerId,
+    inspection.userId,
+    inspection.accountId,
+  ].map((value) => (
+    value && typeof value === "object" ? value._id || value.id : value
+  ));
+  const customerId = candidateIds.find(Boolean);
+  return customerId ? String(customerId).trim() : "";
+};
+
+export const isOnlineCustomerInspection = (inspection = {}) => {
+  if (getRegisteredCustomerId(inspection)) return true;
+
+  const customerType = String(inspection.customerType || inspection.customer_type || "").trim().toLowerCase();
+  return ["online", "online_customer", "online customer"].includes(customerType);
+};
+
+export const getInspectionDisplayTotal = (inspection = {}, itemTotal = 0) => {
+  const manualOverride = Number(inspection.manual_override);
+  if (Number.isFinite(manualOverride) && manualOverride > 0) return manualOverride;
+
+  const savedTotal = Number(inspection.total_amount) || Number(inspection.contract_amount) || 0;
+  return savedTotal > 0 ? savedTotal : Number(itemTotal) || 0;
+};
+
+export const requiresSignedContractForWalkIn = (payload = {}) => {
+  const rawOrderType = String(payload.order_type || payload.customerType || payload.customer_type || "").trim().toLowerCase();
+  const isWalkInCustomer = ["walk_in_customer", "walk-in_customer", "walk_in", "walk-in", "walkin", "walk in customer", "walk-in customer"].includes(rawOrderType);
+  return isWalkInCustomer;
+};
+
+export const isSiteInspectionVisible = (order) => {
   if (!order) return false;
 
   const status = normalizeWorkflowValue(order.status);
@@ -174,8 +248,7 @@ const isSiteInspectionVisible = (order) => {
 
   if (status !== SITE_INSPECTION_STATUS) return false;
   if (CONTRACT_STAGE_STATUSES.has(status)) return false;
-  if (!PENDING_CONTRACT_STATUSES.has(contractStatus)) return false;
-  if (order.contract_terms || order.contract_amount) return false;
+  if (!SITE_INSPECTION_CONTRACT_STATUSES.has(contractStatus)) return false;
 
   return true;
 };
@@ -215,9 +288,21 @@ function SiteInspection() {
   const [showContractModal, setShowContractModal] = useState(false);
   const [contractData, setContractData] = useState(null);
   const [contractInspection, setContractInspection] = useState(null);
+  const [contractNeedsRegeneration, setContractNeedsRegeneration] = useState(false);
+  const [sendingCustomerEmail, setSendingCustomerEmail] = useState(false);
   const [uploadingContractFile, setUploadingContractFile] = useState(false);
   const [contractUploadError, setContractUploadError] = useState("");
-  
+  const [manualApprovalModal, setManualApprovalModal] = useState({
+    open: false,
+    orderId: null,
+    tracking: "",
+    uploadedUrl: "",
+    fileName: "",
+    uploading: false,
+    error: "",
+  });
+  const manualApprovalFileInputRef = useRef(null);
+
   const today = new Date().toISOString().split("T")[0];
   const pageSize = 8;
   const formatCurrency = (value) =>
@@ -263,6 +348,38 @@ function SiteInspection() {
   const primaryButtonClass = darkMode
     ? "rounded-xl bg-red-600 px-6 py-3 text-sm font-black text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-70"
     : "rounded-xl bg-red-600 px-6 py-3 text-sm font-black text-white shadow-sm transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-70";
+  const paymentTermsWithAgreedDate = new Set(["full_payment", "installment_3_months", "installment_6_months", "custom_arrangement"]);
+  const shouldShowAgreedPaymentDate = (value = "") => paymentTermsWithAgreedDate.has(String(value).trim());
+  const isFullPaymentPlan = (value = "") => String(value).trim() === "full_payment";
+  const getPaymentTermsLabel = (value = "") => {
+    switch (String(value).trim()) {
+      case "50%_down_payment":
+        return "50% downpayment, 50% upon completion";
+      case "full_payment":
+        return "Full Payment";
+      case "installment_3_months":
+        return "Installment (3 months)";
+      case "installment_6_months":
+        return "Installment (6 months)";
+      case "custom_arrangement":
+        return "Custom Arrangement";
+      default:
+        return "50% downpayment, 50% upon completion";
+    }
+  };
+  const getPaymentReceivedQuestion = (value = "") => (isFullPaymentPlan(value) ? "Payment Received?" : "Downpayment Received?");
+  const getPaymentStatusLabel = (value = "") => (isFullPaymentPlan(value) ? "Payment Status" : "Downpayment Status");
+  const isPastDateValue = (value) => {
+    if (!value) return false;
+    const inputDate = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Number.isNaN(inputDate.getTime()) ? false : inputDate < today;
+  };
+  const actionButtonClass = darkMode
+    ? "inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-[0_10px_24px_rgba(15,23,42,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(15,23,42,0.28)]"
+    : "inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-[0_10px_24px_rgba(15,23,42,0.10)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(15,23,42,0.14)]";
+  const actionIconClass = "drop-shadow-[0_1px_1px_rgba(255,255,255,0.35)]";
 
   useEffect(() => {
     setCurrentPage(1);
@@ -327,6 +444,7 @@ function SiteInspection() {
         siteAddress: isClearingSelectedCustomer || isClientNameEmpty ? "" : prev.siteAddress,
         order_type: value.trim() ? "walk_in_customer" : "online_order",
         customerId: null,
+        customerType: "walk-in",
         has_account_on_website: isClearingSelectedCustomer || isClientNameEmpty ? false : prev.has_account_on_website,
       };
     });
@@ -338,16 +456,20 @@ function SiteInspection() {
     setCustomerSearch(fullName);
     setCustomerSuggestions([]);
     setCustomerSearchError("");
-    setNewInspection((prev) => ({
-      ...prev,
-      customerId: customer._id,
-      customerName: fullName,
-      customerEmail: customer.email || "",
-      phone: customer.phone || "",
-      siteAddress: formatCustomerAddress(customer),
-      order_type: "online_order",
-      has_account_on_website: true,
-    }));
+    setNewInspection((prev) => {
+      const isWalkInAccountLink = prev.order_type === "walk_in_customer" && prev.has_account_on_website;
+      return {
+        ...prev,
+        customerId: customer._id,
+        customerName: fullName,
+        customerEmail: customer.email || "",
+        phone: customer.phone || "",
+        siteAddress: formatCustomerAddress(customer),
+        order_type: isWalkInAccountLink ? "walk_in_customer" : "online_order",
+        customerType: isWalkInAccountLink ? "walk-in" : "online",
+        has_account_on_website: true,
+      };
+    });
   };
 
   const clearSelectedCustomer = () => {
@@ -362,6 +484,7 @@ function SiteInspection() {
       phone: "",
       siteAddress: "",
       order_type: "walk_in_customer",
+      customerType: "walk-in",
       has_account_on_website: false,
     }));
   };
@@ -453,14 +576,30 @@ function SiteInspection() {
     return Math.round(sqft * 100) / 100;
   };
 
+  const getInspectionItemTotal = (item) => {
+    const explicitTotal = Number(item.estimated_price ?? item.total_price ?? item.amount ?? item.line_total ?? 0);
+    if (Number.isFinite(explicitTotal) && explicitTotal > 0) return explicitTotal;
+
+    const manualTotal = Number(item.manual_estimated_total ?? 0);
+    if (Number.isFinite(manualTotal) && manualTotal > 0) return manualTotal;
+
+    const subtotal = calculateRowSubtotal(item);
+    if (subtotal > 0) return subtotal;
+
+    const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+    const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
+    return qty * unitPrice;
+  };
+
   const calculateRowSubtotal = (item) => {
     const area = Number(item.area) || calculateItemArea(item);
-    const qty = Number(item.qty) || 1;
+    const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
     const normalizedProductId = normalizeProductId(item.product_id);
     const product = products.find((p) => String(p._id || p.id) === normalizedProductId) || null;
 
     if (!product) {
-      return Math.round(area * (Number(item.unit_price) || 0) * 100) / 100;
+      const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
+      return Math.round(area * unitPrice * qty * 100) / 100;
     }
 
     const pricingMethod = product.pricing_method || "";
@@ -536,6 +675,7 @@ function SiteInspection() {
   };
 
   const buildInspectionPayload = async (payload) => {
+    const computedTotal = Number(payload.manual_override) || computeTotals().totalEstimate;
     const basePayload = {
       customer_id: payload.customerId || null,
       customer_email: payload.customerEmail || "",
@@ -550,21 +690,31 @@ function SiteInspection() {
         area: Number(item.area) || 0,
         estimation_mode: item.estimation_mode || 'auto',
         is_estimate: true,
-        estimated_price: calculateRowSubtotal(item),
+        estimated_price: getInspectionItemTotal(item),
       })),
       shipping_address: payload.siteAddress,
       order_type: payload.order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
       inspection_notes: payload.notes || payload.site_notes || "",
       site_notes: payload.site_notes || payload.notes || "",
       payment_terms: payload.payment_terms,
+      agreed_payment_date: toApiDate(payload.agreed_payment_date),
       customer_name: payload.customerName,
       customer_phone: payload.phone,
       estimation_mode: "auto",
       inspection_date: toApiDate(payload.inspection_date),
       estimated_installation_date: toApiDate(payload.estimated_installation_date),
-      warranty_period: payload.warranty_period || 90,
+      warranty_period:
+        payload.warranty_period === "Custom"
+          ? Number(payload.custom_warranty_days) || 90
+          : Number(payload.warranty_period) || 90,
+      custom_warranty_days:
+        payload.warranty_period === "Custom"
+          ? Number(payload.custom_warranty_days) || 90
+          : Number(payload.custom_warranty_days) || Number(payload.warranty_period) || 90,
       has_account_on_website: Boolean(payload.has_account_on_website),
       manual_override: payload.manual_override || "",
+      total_amount: computedTotal,
+      contract_amount: computedTotal,
       downpayment_received: Boolean(payload.downpayment_received),
     };
 
@@ -612,6 +762,7 @@ function SiteInspection() {
         const uploadedFile = uploadResp.files[0];
         const uploadedFileUrl = typeof uploadedFile === "string" ? uploadedFile : uploadedFile?.url || "";
         setNewInspection((prev) => ({ ...prev, signed_contract_file: uploadedFileUrl }));
+        setErrors((prev) => ({ ...prev, signed_contract_file: undefined }));
         toast.success("Contract file uploaded successfully");
       } else {
         setContractUploadError("Failed to upload contract file");
@@ -644,6 +795,7 @@ function SiteInspection() {
           return {
             ...prev,
             order_type: value,
+            has_account_on_website: false,
             contract_number: prev.contract_number || generateTrackingId(),
           };
         }
@@ -651,6 +803,7 @@ function SiteInspection() {
         return {
           ...prev,
           order_type: value,
+          has_account_on_website: true,
           contract_number: "",
         };
       }
@@ -905,31 +1058,10 @@ function SiteInspection() {
       const payload = await buildInspectionPayload(newInspection);
       const createResp = await createInspection(payload);
       recordActivity(user, `Created site inspection for ${newInspection.customerName || "customer"}.`, "Site Inspection");
-      toast.success("Inspection created");
-      
-      // Send approval email for walk-in customers
-      if (newInspection.order_type === "walk_in_customer" && createResp.order?._id) {
-        try {
-          await sendWalkInApprovalEmail(createResp.order._id, {
-            customerName: newInspection.customerName,
-            customerEmail: newInspection.customerEmail,
-            contractUrl: newInspection.signed_contract_file,
-          });
-          recordActivity(user, `Sent walk-in approval email for ${newInspection.customerName || "customer"}.`, "Site Inspection");
-          toast.success("Approval email sent to customer");
-        } catch (emailError) {
-          console.error("Failed to send approval email:", emailError);
-          toast("Inspection created, but email sending failed. You can send it manually.", {
-            icon: "⚠️",
-          });
-        }
-      }
-      
+      toast.success("Site inspection created successfully.");
+
       closeNewInspectionModal();
       await fetchSiteInspections();
-      if (newInspection.order_type === "walk_in_customer") {
-        navigate("/transactions", { state: { activeTable: "receipts" } });
-      }
     } catch (err) {
       console.error("Create inspection failed", err);
       toast.error(err?.data?.message || err?.message || "Failed to create inspection.");
@@ -947,8 +1079,14 @@ function SiteInspection() {
   const validateContractOrder = (order) => {
     const errors = [];
     const customerName = order.customer_name || `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim();
+    const isWalkInCustomer = String(order.order_type || order.customerType || "").toLowerCase() === "walk_in_customer"
+      || String(order.order_type || order.customerType || "").toLowerCase() === "walk-in"
+      || String(order.order_type || order.customerType || "").toLowerCase() === "walkin";
+
     if (!customerName) errors.push("Customer name is required.");
-    if (!order.customer_email && !order.customer?.email) errors.push("Customer email is required.");
+    if (!isWalkInCustomer && !order.customer_email && !order.customer?.email) {
+      errors.push("Customer email is required.");
+    }
     if (!order.customer_phone && !order.customer?.phone) errors.push("Customer contact number is required.");
     if (!order.shipping_address) errors.push("Order shipping address is required.");
     if (!Array.isArray(order.items) || order.items.length === 0) errors.push("Order must contain at least one product.");
@@ -986,6 +1124,22 @@ function SiteInspection() {
     return !Number.isNaN(inspectionDate.getTime());
   };
 
+  const getCustomerTypeLabel = (inspection = {}) => {
+    const explicitType = (inspection.customerType || inspection.customer_type || "").toString().trim().toLowerCase();
+    if (explicitType === "online" || explicitType === "online_customer") return "Online Customer";
+    if (explicitType === "walk-in" || explicitType === "walk_in" || explicitType === "walkin" || explicitType === "walk-in_customer" || explicitType === "walk_in_customer") return "Walk-in Customer";
+
+    const hasRegisteredCustomer = Boolean(
+      inspection.customerId ||
+      inspection.customer_id ||
+      inspection.customer?._id ||
+      inspection.customer?.id ||
+      inspection.customer
+    );
+
+    return hasRegisteredCustomer ? "Online Customer" : "Walk-in Customer";
+  };
+
   const generateContractData = (order) => {
     if (!order) return null;
 
@@ -998,6 +1152,7 @@ function SiteInspection() {
     const siteInspectionDate = order.inspection_date ? formatDateToMMDDYYYY(order.inspection_date) : "TBD";
     const projectLocation = order.shipping_address || "N/A";
     const paymentTerms = order.payment_terms || "Standard payment terms apply.";
+    const agreedPaymentDate = order.agreed_payment_date ? formatDateToMMDDYYYY(order.agreed_payment_date) : null;
     const contractTerms = order.contract_terms || "The terms and conditions outlined by ACGC Glass & Aluminum Services apply to this agreement.";
     const totalProjectCost = Number(order.contract_amount || order.total_amount || 0);
     const downPayment = Math.round((totalProjectCost * 0.5) * 100) / 100;
@@ -1039,6 +1194,7 @@ function SiteInspection() {
       totalProjectCost,
       downPayment,
       paymentTerms,
+      agreedPaymentDate,
       contractTerms,
       contractNumber,
       trackingNumber,
@@ -1072,6 +1228,28 @@ function SiteInspection() {
         return;
       }
 
+      const snapshot = buildContractSnapshot(order);
+      const alreadyGenerated = Boolean(order.contractGenerated);
+      const shouldRegenerate = alreadyGenerated && hasContractSnapshotChanged(order);
+
+      if (alreadyGenerated && !shouldRegenerate) {
+        setContractInspection(order);
+        setContractData(generateContractData(order));
+        setContractNeedsRegeneration(false);
+        setShowContractModal(true);
+        toast("Existing contract loaded. No duplicate contract was created.", { icon: "📄" });
+        return;
+      }
+
+      if (alreadyGenerated && shouldRegenerate) {
+        setContractInspection(order);
+        setContractData({ ...generateContractData(order), contractNeedsRegeneration: true, contractSnapshot: snapshot });
+        setContractNeedsRegeneration(true);
+        setShowContractModal(true);
+        toast("Contract details changed since the previous version. Regenerate to create a new contract version.", { icon: "⚠️" });
+        return;
+      }
+
       const contract = generateContractData(order);
       if (!contract) {
         toast.error("Unable to build contract data.");
@@ -1081,6 +1259,8 @@ function SiteInspection() {
       const contractResponse = await generateContract(orderId, {
         contract_terms: order.contract_terms || contract.contractTerms,
         contract_amount: order.contract_amount || contract.totalProjectCost,
+        snapshot,
+        regenerate: false,
       });
       recordActivity(user, `Generated contract for order ${orderId}.`, "Site Inspection");
 
@@ -1089,83 +1269,167 @@ function SiteInspection() {
         ...order,
         ...savedOrder,
         customer: typeof savedOrder.customer === "object" ? savedOrder.customer : order.customer,
-        status: savedOrder.status || "contract_sent",
-        contract_status: savedOrder.contract_status || "sent",
+        status: savedOrder.status || order.status || "site_inspection",
+        contract_status: savedOrder.contract_status || "pending",
         contract_terms: savedOrder.contract_terms || order.contract_terms || contract.contractTerms,
         contract_amount: savedOrder.contract_amount || order.contract_amount || contract.totalProjectCost,
+        contractGenerated: true,
+        contractNeedsRegeneration: false,
+        contractSnapshot: snapshot,
       };
       const generatedContract = generateContractData(generatedOrder) || contract;
 
       const contractEmail = generatedOrder.customer_email || generatedOrder.customer?.email || order.customer_email || order.customer?.email || "";
       if (!contractEmail.trim()) {
-        toast("Contract generated, but no customer email was provided.", { icon: "⚠️" });
+        toast("Contract generated, but no customer email was provided. You can still send it manually later.", { icon: "⚠️" });
       }
 
-      setInspections((prev) => prev.filter((inspection) => (inspection._id || inspection.id) !== orderId));
+      setInspections((prev) => {
+        const existingIndex = prev.findIndex((inspection) => (inspection._id || inspection.id) === orderId);
+        if (existingIndex >= 0) {
+          return prev.map((inspection) => ((inspection._id || inspection.id) === orderId ? { ...inspection, ...generatedOrder } : inspection));
+        }
+        return [generatedOrder, ...prev];
+      });
+
       setViewInspection((prev) => ((prev?._id || prev?.id) === orderId ? null : prev));
       setEditInspection((prev) => (prev?.id === orderId ? null : prev));
       setContractInspection(generatedOrder);
-      setContractData(generatedContract);
+      setContractData({ ...generatedContract, contractNeedsRegeneration: false });
+      setContractNeedsRegeneration(false);
       setShowContractModal(true);
-
-      if (contractEmail.trim()) {
-        try {
-          await new Promise((resolve) => setTimeout(resolve, 150));
-          const contractElement = document.getElementById("contract-content");
-          let contractAttachment;
-          if (contractElement) {
-            const { wrapper, clone } = createContractPrintClone(contractElement);
-            try {
-              await new Promise((resolve) => setTimeout(resolve, 100));
-              const contractImage = await toPng(clone, {
-                cacheBust: true,
-                pixelRatio: 2,
-                backgroundColor: "#ffffff",
-              });
-              const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-              const pdfWidth = pdf.internal.pageSize.getWidth();
-              const pdfHeight = pdf.internal.pageSize.getHeight();
-              const imageProperties = pdf.getImageProperties(contractImage);
-              const imageHeight = (imageProperties.height * pdfWidth) / imageProperties.width;
-              let heightLeft = imageHeight;
-              let position = 0;
-
-              pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
-              heightLeft -= pdfHeight;
-              while (heightLeft > 0) {
-                position -= pdfHeight;
-                pdf.addPage();
-                pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
-                heightLeft -= pdfHeight;
-              }
-
-              const pdfDataUrl = pdf.output("datauristring");
-              contractAttachment = `data:application/pdf;base64,${pdfDataUrl.split(",")[1]}`;
-            } finally {
-              wrapper.remove();
-            }
-          }
-          await sendWalkInApprovalEmail(orderId, {
-            customerName: generatedOrder.customer_name || generatedOrder.customer?.first_name
-              ? `${generatedOrder.customer?.first_name || ""} ${generatedOrder.customer?.last_name || ""}`.trim() || generatedOrder.customer_name
-              : order.customer_name,
-            customerEmail: contractEmail.trim(),
-            contractUrl: generatedOrder.signed_contract_url || order.signed_contract_url || "",
-            contractAttachment,
-          });
-          recordActivity(user, `Emailed contract details for order ${orderId}.`, "Site Inspection");
-          toast.success("Contract PDF emailed to customer");
-        } catch (emailError) {
-          console.error("Contract generated but email delivery failed:", emailError);
-          toast.error(emailError?.data?.message || "Contract generated, but the email could not be sent.");
-        }
-      }
-      toast.success("Contract generated successfully!");
+      toast.success("Contract generated successfully. Use Send to customer when ready.");
     } catch (err) {
       console.error("Generate contract failed", err);
       toast.error(err?.data?.message || err?.message || "Failed to generate contract.");
     } finally {
       setGeneratingId(null);
+    }
+  };
+
+  const handleRegenerateContract = async () => {
+    const orderId = contractInspection?._id || contractInspection?.id;
+    if (!orderId) return;
+
+    try {
+      setGeneratingId(orderId);
+      const { order } = await getAdminOrder(orderId);
+      if (!order) {
+        toast.error("Order not found");
+        return;
+      }
+
+      const snapshot = buildContractSnapshot(order);
+      const contractResponse = await generateContract(orderId, {
+        contract_terms: order.contract_terms || "",
+        contract_amount: order.contract_amount || order.total_amount || 0,
+        snapshot,
+        regenerate: true,
+      });
+
+      const savedOrder = contractResponse?.order || {};
+      const regeneratedOrder = { ...order, ...savedOrder, contractGenerated: true, contractNeedsRegeneration: false, contractSnapshot: snapshot };
+      setContractInspection(regeneratedOrder);
+      setContractData({ ...generateContractData(regeneratedOrder), contractNeedsRegeneration: false, contractSnapshot: snapshot });
+      setContractNeedsRegeneration(false);
+      setInspections((prev) => prev.map((inspection) => ((inspection._id || inspection.id) === orderId ? { ...inspection, ...regeneratedOrder } : inspection)));
+      recordActivity(user, `Regenerated contract version for order ${orderId}.`, "Site Inspection");
+      toast.success("New contract version generated successfully.");
+    } catch (err) {
+      console.error("Regenerate contract failed", err);
+      toast.error(err?.data?.message || err?.message || "Failed to regenerate contract.");
+    } finally {
+      setGeneratingId(null);
+    }
+  };
+
+  const handleDownloadContract = async () => {
+    const contractElement = document.getElementById("contract-content");
+    if (!contractElement) {
+      toast.error("Contract content is not available to download.");
+      return;
+    }
+
+    try {
+      const { wrapper, clone } = createContractPrintClone(contractElement);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const contractImage = await toPng(clone, {
+          cacheBust: true,
+          pixelRatio: 2,
+          backgroundColor: "#ffffff",
+        });
+
+        const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        const imageProperties = pdf.getImageProperties(contractImage);
+        const imageHeight = (imageProperties.height * pdfWidth) / imageProperties.width;
+        let heightLeft = imageHeight;
+        let position = 0;
+
+        pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
+        heightLeft -= pdfHeight;
+        while (heightLeft > 0) {
+          position -= pdfHeight;
+          pdf.addPage();
+          pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
+          heightLeft -= pdfHeight;
+        }
+
+        const downloadName = `ACGC-Contract-${contractInspection?.tracking || contractInspection?._id || "download"}.pdf`;
+        pdf.save(downloadName);
+        toast.success("Contract PDF downloaded.");
+      } finally {
+        wrapper.remove();
+      }
+    } catch (error) {
+      console.error("Download contract failed:", error);
+      toast.error("Unable to download the contract PDF.");
+    }
+  };
+
+  const handleSendToCustomer = async () => {
+    const orderId = contractInspection?._id || contractInspection?.id;
+    if (!orderId) return;
+
+    const customerName = contractInspection?.customer_name || contractInspection?.customer?.first_name
+      ? `${contractInspection?.customer?.first_name || ""} ${contractInspection?.customer?.last_name || ""}`.trim() || contractInspection?.customer_name || "Customer"
+      : contractInspection?.customer_name || "Customer";
+    const customerEmail = (contractInspection?.customer_email || contractInspection?.customer?.email || contractData?.customerEmail || "").trim();
+
+    if (!customerEmail) {
+      toast.error("No customer email is available for this order.");
+      return;
+    }
+
+    try {
+      setSendingCustomerEmail(true);
+
+      await sendWalkInApprovalEmail(orderId, {
+        customerName,
+        customerEmail,
+        contractUrl: contractInspection?.signed_contract_url || "",
+      });
+
+      const updatedOrder = {
+        ...contractInspection,
+        status: "site_inspection",
+        contract_status: "sent",
+        contractStatus: "Sent",
+      };
+
+      setContractInspection(updatedOrder);
+      setContractData((prev) => ({ ...(prev || {}), orderStatus: "site_inspection", status: "sent", rawContractStatus: "sent" }));
+      setInspections((prev) => prev.map((inspection) => ((inspection._id || inspection.id) === orderId ? { ...inspection, status: "site_inspection", contract_status: "sent", contractStatus: "Sent" } : inspection)));
+
+      recordActivity(user, `Sent contract to customer for order ${orderId}.`, "Site Inspection");
+      toast.success("Contract sent to customer");
+    } catch (emailError) {
+      console.error("Contract send failed:", emailError);
+      toast.error(emailError?.data?.message || "The contract could not be sent to the customer.");
+    } finally {
+      setSendingCustomerEmail(false);
     }
   };
 
@@ -1191,6 +1455,8 @@ function SiteInspection() {
   const handleEdit = (orderId) => {
     const inspection = inspections.find((i) => (i._id || i.id) === orderId);
     if (inspection) {
+      const registeredCustomerId = getRegisteredCustomerId(inspection);
+      const isOnlineCustomer = isOnlineCustomerInspection(inspection);
       // Try to extract customer name from multiple sources
       let customerName = "";
       if (inspection.customer?.first_name || inspection.customer?.last_name) {
@@ -1208,6 +1474,9 @@ function SiteInspection() {
       const customerEmail = inspection.customer?.email || inspection.customer_email || "";
       const siteAddress = inspection.shipping_address || inspection.customer?.street_address || formatCustomerAddress(inspection.customer) || "";
       const orderType = inspection.order_type || "online_order";
+      const warrantyPeriodValue = inspection.warranty_period ?? 90;
+      const normalizedWarrantyPeriod = normalizeWarrantyPeriodValue(warrantyPeriodValue);
+      const paymentProof = getCustomerPaymentProof(inspection);
 
       setEditInspection({
         id: orderId,
@@ -1217,17 +1486,34 @@ function SiteInspection() {
         siteAddress,
         order_type: orderType,
         payment_terms: inspection.payment_terms || "",
+        agreed_payment_date: normalizeDateInputValue(inspection.agreed_payment_date),
         inspection_date: normalizeDateInputValue(inspection.inspection_date),
         estimated_installation_date: normalizeDateInputValue(getEstimatedInstallationDate(inspection)),
-        warranty_period: inspection.warranty_period || 90,
-        has_account_on_website: Boolean(inspection.has_account_on_website),
+        warranty_period: normalizedWarrantyPeriod,
+        custom_warranty_days:
+          normalizedWarrantyPeriod === "Custom"
+            ? Number(inspection.custom_warranty_days || inspection.warranty_period) > 0
+              ? Number(inspection.custom_warranty_days || inspection.warranty_period)
+              : 90
+            : 90,
+        has_account_on_website: normalizeWalkInWebsiteAccountState({
+          order_type: orderType,
+          customerType: inspection.customerType,
+          customer_type: inspection.customer_type,
+          has_account_on_website: inspection.has_account_on_website,
+        }) || isOnlineCustomer,
+        isOnlineCustomer,
         downpayment_received: Boolean(inspection.downpayment_received),
         manual_override: inspection.manual_override || "",
         inspection_notes: inspection.inspection_notes || "",
         issues_found: inspection.issues_found || "",
         inspection_status: inspection.inspection_status || "pending",
         items: (inspection.items || []).map((item) => getEditItemFromOrderItem(item)),
-        customerId: inspection.customer?._id || null,
+        customerId: registeredCustomerId || null,
+        payment_proof_amount: paymentProof.amount,
+        payment_proof_file_name: inspection.payment_proof_file_name || inspection.payment_proof_file_url || "",
+        payment_method: paymentProof.paymentMethod,
+        transaction_number: paymentProof.transactionNumber,
       });
     } else {
       // fallback: open an empty editor
@@ -1238,6 +1524,150 @@ function SiteInspection() {
   const handleDelete = (orderId) => {
     // kept for backward compatibility; open confirmation modal
     requestCancel(orderId);
+  };
+
+  const handleManualApprovalFileUpload = async (files) => {
+    if (!files || files.length === 0) {
+      setManualApprovalModal((prev) => ({ ...prev, error: "Please select a signed contract or receipt file." }));
+      return;
+    }
+
+    const file = files[0];
+    const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png"];
+    const fileExtension = "." + file.name.split(".").pop().toLowerCase();
+
+    if (!allowedExtensions.includes(fileExtension)) {
+      setManualApprovalModal((prev) => ({ ...prev, error: "Only PDF, JPG, and PNG files are allowed." }));
+      return;
+    }
+
+    const maxFileSize = 50 * 1024 * 1024;
+    if (file.size > maxFileSize) {
+      setManualApprovalModal((prev) => ({ ...prev, error: "File size must be less than 50 MB." }));
+      return;
+    }
+
+    setManualApprovalModal((prev) => ({ ...prev, uploading: true, error: "" }));
+
+    try {
+      const uploadResp = await uploadFiles([file]);
+      const uploadedFileUrl = uploadResp?.success && uploadResp?.files?.length
+        ? (typeof uploadResp.files[0] === "string" ? uploadResp.files[0] : uploadResp.files[0]?.url || "")
+        : "";
+
+      if (!uploadedFileUrl) {
+        throw new Error("Upload failed");
+      }
+
+      setManualApprovalModal((prev) => ({
+        ...prev,
+        uploadedUrl: uploadedFileUrl,
+        fileName: file.name,
+        uploading: false,
+        error: "",
+      }));
+      toast.success("Signed contract uploaded successfully.");
+    } catch (error) {
+      console.error("Manual approval upload error:", error);
+      setManualApprovalModal((prev) => ({
+        ...prev,
+        uploadedUrl: "",
+        uploading: false,
+        error: error?.message || "Failed to upload the signed contract.",
+      }));
+    }
+  };
+
+  const openManualApprovalModal = (inspection) => {
+    const orderId = inspection?._id || inspection?.id;
+    const orderTracking = inspection?.tracking || inspection?.order_number || inspection?.orderId || `SI-${String((inspection?._id || inspection?.id || "")).slice(-8).toUpperCase()}`;
+    if (!orderId) return;
+
+    setManualApprovalModal({
+      open: true,
+      orderId,
+      tracking: orderTracking,
+      uploadedUrl: "",
+      fileName: "",
+      uploading: false,
+      error: "",
+    });
+  };
+
+  const closeManualApprovalModal = () => {
+    setManualApprovalModal({
+      open: false,
+      orderId: null,
+      tracking: "",
+      uploadedUrl: "",
+      fileName: "",
+      uploading: false,
+      error: "",
+    });
+  };
+
+  const handleCompleteManualApproval = async () => {
+    if (!manualApprovalModal.orderId) return;
+    if (!manualApprovalModal.uploadedUrl) {
+      setManualApprovalModal((prev) => ({ ...prev, error: "Please upload the signed contract or receipt before completing approval." }));
+      return;
+    }
+
+    try {
+      await updateOrderStatus(manualApprovalModal.orderId, {
+        status: "contract_accepted",
+        contract_status: "accepted",
+        contractStatus: "Accepted",
+        acceptance_method: "walk_in_signed_contract",
+        acceptanceMethod: "Walk-in Signed Contract",
+        acceptedByCustomer: false,
+        signed_contract_url: manualApprovalModal.uploadedUrl,
+        contract_signed_date: new Date().toISOString(),
+        inspection_status: "completed",
+        inspection_completed_at: new Date().toISOString(),
+        transactionCreated: true,
+        transactionCreatedAt: new Date().toISOString(),
+      });
+
+      recordActivity(user, `Approved walk-in contract for ${manualApprovalModal.tracking}.`, "Site Inspection");
+      toast.success("Signed contract verified. Order moved to Transactions for admin approval.");
+      closeManualApprovalModal();
+      navigate("/transactions");
+    } catch (error) {
+      console.error("Complete manual approval failed:", error);
+      setManualApprovalModal((prev) => ({
+        ...prev,
+        error: error?.data?.message || error?.message || "Unable to complete manual approval.",
+      }));
+    }
+  };
+
+  const openContractButtonHandler = async (inspection) => {
+    const orderId = inspection?._id || inspection?.id;
+    if (!orderId) return;
+
+    try {
+      const { order } = await getAdminOrder(orderId);
+      if (!order) {
+        toast.error("Order not found");
+        return;
+      }
+
+      if (!order.contractGenerated) {
+        requestGenerateContract(orderId);
+        return;
+      }
+
+      const shouldRegenerate = hasContractSnapshotChanged(order);
+      const contractDataForModal = { ...generateContractData(order), contractNeedsRegeneration: shouldRegenerate };
+      setContractInspection(order);
+      setContractData(contractDataForModal);
+      setContractNeedsRegeneration(shouldRegenerate);
+      setShowContractModal(true);
+    } catch (error) {
+      console.error("Failed to open contract", error);
+      toast.error("Unable to open contract details.");
+    }
   };
 
   const handleCancel = async (orderId) => {
@@ -1339,7 +1769,21 @@ function SiteInspection() {
   };
 
   const handleEditChange = (name, value) => {
-    setEditInspection((prev) => ({ ...prev, [name]: value }));
+    setEditInspection((prev) => {
+      if (prev.isOnlineCustomer && ["customerName", "phone", "siteAddress", "customerEmail", "has_account_on_website", "order_type"].includes(name)) {
+        return prev;
+      }
+
+      if (name === "order_type") {
+        return {
+          ...prev,
+          order_type: value,
+          has_account_on_website: value === "walk_in_customer" ? false : true,
+        };
+      }
+
+      return { ...prev, [name]: value };
+    });
   };
 
   const saveEdit = async () => {
@@ -1361,18 +1805,31 @@ function SiteInspection() {
     setSavingEdit(true);
     try {
       const payload = {
-        customer_name: editInspection.customerName || undefined,
-        customer_email: editInspection.customerEmail || undefined,
-        customer_phone: editInspection.phone || undefined,
+        ...(!editInspection.isOnlineCustomer ? {
+          customer_name: editInspection.customerName || undefined,
+          customer_email: editInspection.customerEmail || undefined,
+          customer_phone: editInspection.phone || undefined,
+          shipping_address: editInspection.siteAddress || undefined,
+          has_account_on_website: Boolean(editInspection.has_account_on_website),
+        } : {
+          has_account_on_website: true,
+        }),
+        manual_override: editInspection.manual_override || "",
         inspection_date: toApiDate(editInspection.inspection_date),
         inspection_notes: editInspection.inspection_notes || undefined,
         issues_found: editInspection.issues_found || undefined,
         inspection_status: editInspection.inspection_date ? "scheduled" : editInspection.inspection_status || undefined,
         estimated_installation_date: toApiDate(editInspection.estimated_installation_date),
-        shipping_address: editInspection.siteAddress || undefined,
         payment_terms: editInspection.payment_terms || undefined,
-        warranty_period: editInspection.warranty_period || 90,
-        has_account_on_website: Boolean(editInspection.has_account_on_website),
+        agreed_payment_date: toApiDate(editInspection.agreed_payment_date),
+        warranty_period:
+          editInspection.warranty_period === "Custom"
+            ? Number(editInspection.custom_warranty_days) || 90
+            : Number(editInspection.warranty_period) || 90,
+        custom_warranty_days:
+          editInspection.warranty_period === "Custom"
+            ? Number(editInspection.custom_warranty_days) || 90
+            : Number(editInspection.custom_warranty_days) || Number(editInspection.warranty_period) || 90,
         downpayment_received: Boolean(editInspection.downpayment_received),
         items: (editInspection.items || []).map((item) => {
           const normalizedProductId = normalizeProductId(item.product_id);
@@ -1410,22 +1867,6 @@ function SiteInspection() {
       const res = await updateOrderInspection(editInspection.id, payload);
       recordActivity(user, `Updated site inspection ${editInspection.id}.`, "Site Inspection");
       toast.success("Inspection saved");
-
-      // Walk-in customers without website accounts can still receive the proposal
-      // at the email entered in the inspection form.
-      if (editInspection.order_type === "walk_in_customer" && editInspection.customerEmail?.trim()) {
-        try {
-          await sendWalkInApprovalEmail(editInspection.id, {
-            customerName: editInspection.customerName,
-            customerEmail: editInspection.customerEmail.trim(),
-          });
-          recordActivity(user, `Sent walk-in approval email for ${editInspection.customerName || "customer"}.`, "Site Inspection");
-          toast.success("Contract details emailed to customer");
-        } catch (emailError) {
-          console.error("Failed to send approval email after edit:", emailError);
-          toast.error(emailError?.data?.message || "Inspection saved, but the contract email could not be sent.");
-        }
-      }
 
       // update local inspections list with returned order
       if (res && res.order) {
@@ -1568,6 +2009,79 @@ function SiteInspection() {
             </div>
           )}
 
+          {manualApprovalModal.open && (
+            <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50 p-4">
+              <div className="w-full max-w-md rounded-[26px] border border-slate-200 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.25)]">
+                <div className="mb-4 flex justify-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 shadow-sm">
+                    <ShieldCheck size={24} />
+                  </div>
+                </div>
+
+                <h3 className="text-center text-[28px] font-black tracking-[-0.04em] text-slate-900">Confirm Manual Approval</h3>
+                <p className="mt-3 text-center text-sm leading-6 text-slate-600">
+                  You are manually approving the contract for <span className="font-semibold text-slate-800">Order {manualApprovalModal.tracking}</span>. Please upload the signed contract or receipt before proceeding.
+                </p>
+
+                <label
+                  className="mt-6 flex min-h-[150px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center transition hover:border-red-300 hover:bg-red-50"
+                  onClick={() => manualApprovalFileInputRef.current?.click()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    handleManualApprovalFileUpload(event.dataTransfer.files);
+                  }}
+                  onDragOver={(event) => event.preventDefault()}
+                >
+                  <input
+                    ref={manualApprovalFileInputRef}
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    className="hidden"
+                    onChange={(event) => {
+                      const files = event.target.files;
+                      handleManualApprovalFileUpload(files);
+                      event.target.value = "";
+                    }}
+                  />
+
+                  {manualApprovalModal.uploadedUrl ? (
+                    <div className="space-y-2 text-center">
+                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                        <ShieldCheck size={20} />
+                      </div>
+                      <p className="text-sm font-semibold text-emerald-700">Signed contract uploaded</p>
+                      <p className="text-xs font-medium text-slate-600 break-all">{manualApprovalModal.fileName || "Selected file"}</p>
+                      <p className="text-xs text-slate-500">Ready for approval</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 text-center">
+                      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-slate-200 text-slate-500">
+                        <FileText size={20} />
+                      </div>
+                      <p className="text-sm font-semibold text-slate-700">Drag &amp; drop signed contract/receipt here, or browse</p>
+                      <p className="text-xs text-slate-500">Supports PDF, PNG, JPG up to 50MB</p>
+                    </div>
+                  )}
+                </label>
+
+                {manualApprovalModal.error && (
+                  <p className="mt-3 text-sm font-medium text-red-600">{manualApprovalModal.error}</p>
+                )}
+
+                <div className="mt-8 flex justify-end gap-3">
+                  <button onClick={closeManualApprovalModal} className="px-4 py-2.5 rounded-xl bg-slate-200 text-slate-700 font-semibold">Cancel</button>
+                  <button
+                    onClick={handleCompleteManualApproval}
+                    className="px-5 py-2.5 rounded-xl bg-red-600 text-white font-bold disabled:cursor-not-allowed disabled:opacity-70"
+                    disabled={manualApprovalModal.uploading || !manualApprovalModal.uploadedUrl}
+                  >
+                    {manualApprovalModal.uploading ? "Uploading..." : "Complete Approval"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <Toaster position="bottom-right" />
 
           {/* SEARCH */}
@@ -1631,9 +2145,9 @@ function SiteInspection() {
 
                 <thead className={darkMode ? "bg-[#0d2033] shadow-inner" : "bg-gradient-to-r from-slate-100 via-slate-50 to-white shadow-inner"}>
                   <tr>
-                    <th className={`w-16 p-4 text-center text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>#</th>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Tracking ID</th>
                     <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Client</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Tracking ID</th>
+                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Customer Type</th>
                     <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Site Address</th>
                     <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Created</th>
                     <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Inspection Date</th>
@@ -1647,13 +2161,13 @@ function SiteInspection() {
                 <tbody>
                   {inspectionsLoading ? (
                     <tr>
-                      <td colSpan={9} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      <td colSpan={11} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                         Loading inspections...
                       </td>
                     </tr>
                   ) : !filteredList.length ? (
                     <tr>
-                      <td colSpan={9} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      <td colSpan={11} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                         No records in this tab.
                       </td>
                     </tr>
@@ -1664,12 +2178,16 @@ function SiteInspection() {
                         : inspection.customer_name || inspection.customer_email || "Customer";
                       const trackingId = inspection.tracking || inspection.order_number || inspection.orderId || `SI-${String((inspection._id || inspection.id || "")).slice(-8).toUpperCase()}`;
                       const phone = inspection.customer?.phone || inspection.customer_phone || "—";
+                      const customerTypeLabel = getCustomerTypeLabel(inspection);
                       const siteAddress = inspection.shipping_address || inspection.siteAddress || inspection.customer?.street_address || "—";
                       const createdDate = inspection.createdAt ? formatDateToMMDDYYYY(inspection.createdAt) : "—";
+                      const createdTime = inspection.createdAt ? new Date(inspection.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
                       const inspectionDate = inspection.inspection_date ? formatDateToMMDDYYYY(inspection.inspection_date) : "—";
                       const installDateValue = getEstimatedInstallationDate(inspection);
                       const installDate = installDateValue ? formatDateToMMDDYYYY(installDateValue) : "—";
-                      const total = Number(inspection.total_amount || inspection.contract_amount || 0);
+                      const total = Number(inspection.total_amount || inspection.contract_amount || 0) || (Array.isArray(inspection.items)
+                        ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0)
+                        : 0);
                       const isScheduled = hasValidInspectionDate(inspection);
                       const isCancelledTab = activeTab === "cancelled";
                       const statusConfig = isCancelledTab
@@ -1704,23 +2222,37 @@ function SiteInspection() {
                               ? "border-t border-slate-700 bg-[#0b2338] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#102d46] hover:shadow-[0_8px_18px_rgba(15,23,42,0.2)]"
                               : "border-t border-slate-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-50 hover:shadow-[0_8px_18px_rgba(15,23,42,0.04)]"}
                         >
-                          <td className={`w-16 p-4 text-center font-bold ${isCancelledTab ? darkMode ? "text-slate-400" : "text-slate-500" : darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                            {(currentPageIndex - 1) * pageSize + index + 1}
+                          <td className="p-4 align-top py-5">
+                            <ProfileAvatar
+                              name={clientName}
+                              email={phone}
+                              compact
+                            />
                           </td>
                           <td className="p-4 align-top py-5">
                             <div className={`text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Tracking</div>
                             <div className={`mt-1 font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{trackingId}</div>
                           </td>
                           <td className="p-4 align-top py-5">
-                            <div className={`font-semibold ${darkMode ? "text-slate-100" : isCancelledTab ? "text-slate-600" : "text-slate-900"}`}>{clientName}</div>
-                            <div className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{phone}</div>
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${customerTypeLabel === "Online Customer"
+                              ? darkMode
+                                ? "border-sky-500/30 bg-sky-500/10 text-sky-200"
+                                : "border-sky-200 bg-sky-50 text-sky-700"
+                              : darkMode
+                                ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                                : "border-amber-200 bg-amber-50 text-amber-700"}`}>
+                              {customerTypeLabel}
+                            </span>
                           </td>
                           <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
                             <div className="max-w-[220px] break-words leading-relaxed">
                               {siteAddress}
                             </div>
                           </td>
-                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{createdDate}</td>
+                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
+                            <div>{createdDate}</div>
+                            {createdTime && <div className={`mt-1 text-xs font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{createdTime}</div>}
+                          </td>
                           <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{inspectionDate}</td>
                           <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{installDate}</td>
                           <td className="p-4 align-top py-5">
@@ -1740,41 +2272,51 @@ function SiteInspection() {
                           <td className="p-4 align-top py-5">
                             <div className="flex items-center justify-center gap-3">
                               <button
-                                className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 ${darkMode ? "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:-translate-y-0.5 hover:border-sky-400 hover:bg-sky-500/20" : isCancelledTab ? "border-blue-200 bg-blue-50 text-blue-700 hover:-translate-y-0.5 hover:border-blue-300 hover:bg-blue-100" : "border-sky-200 bg-sky-50 text-sky-700 hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100"}`}
+                                className={`${actionButtonClass} ${darkMode ? "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:border-sky-400 hover:bg-sky-500/20" : isCancelledTab ? "border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-300 hover:bg-blue-100" : "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:bg-sky-100"}`}
                                 onClick={() => handleView(inspection)}
                                 title="View inspection"
                                 aria-label="View inspection"
                               >
-                                <Eye size={18} />
+                                <Eye size={18} strokeWidth={2.2} className={actionIconClass} />
                               </button>
                               {activeTab !== "cancelled" && (
                                 <button
-                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:-translate-y-0.5 hover:border-amber-400 hover:bg-amber-500/20" : "border-amber-200 bg-amber-50 text-amber-700 hover:-translate-y-0.5 hover:border-amber-300 hover:bg-amber-100"}`}
+                                  className={`${actionButtonClass} ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:border-amber-400 hover:bg-amber-500/20" : "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100"}`}
                                   onClick={() => handleEdit(inspection._id || inspection.id)}
                                   title="Edit inspection"
                                   aria-label="Edit inspection"
                                 >
-                                  <Pencil size={18} />
+                                  <Pencil size={18} strokeWidth={2.2} className={actionIconClass} />
                                 </button>
                               )}
                               {activeTab !== "cancelled" && hasValidInspectionDate(inspection) && (
                                 <button
                                   title="Generate Contract"
                                   aria-label="Generate contract"
-                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-500/20" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100"}`}
-                                  onClick={() => requestGenerateContract(inspection._id || inspection.id)}
+                                  className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400 hover:bg-emerald-500/20" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100"}`}
+                                  onClick={() => openContractButtonHandler(inspection)}
                                   disabled={generatingId === (inspection._id || inspection.id)}
                                 >
                                   {generatingId === (inspection._id || inspection.id) ? (
                                     <span className="text-[10px] font-bold">…</span>
                                   ) : (
-                                    <FileText size={18} />
+                                    <FileText size={18} strokeWidth={2.2} className={actionIconClass} />
                                   )}
+                                </button>
+                              )}
+                              {activeTab !== "cancelled" && (inspection.order_type === "walk_in_customer" || inspection.customerType === "walk-in" || inspection.customerType === "Walk-in Customer" || inspection.customerType === "walk_in_customer") && (
+                                <button
+                                  title="Manual approval"
+                                  aria-label="Manual approval"
+                                  className={`${actionButtonClass} ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:border-amber-400 hover:bg-amber-500/20" : "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100"}`}
+                                  onClick={() => openManualApprovalModal(inspection)}
+                                >
+                                  <ShieldCheck size={18} strokeWidth={2.2} className={actionIconClass} />
                                 </button>
                               )}
                               {activeTab !== "cancelled" ? (
                                 <button
-                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-red-500/30 bg-red-500/10 text-red-200 hover:-translate-y-0.5 hover:border-red-400 hover:bg-red-500/20" : "border-red-200 bg-red-50 text-red-700 hover:-translate-y-0.5 hover:border-red-300 hover:bg-red-100"}`}
+                                  className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-red-500/30 bg-red-500/10 text-red-200 hover:border-red-400 hover:bg-red-500/20" : "border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100"}`}
                                   onClick={() => requestCancel(inspection._id || inspection.id)}
                                   title="Cancel inspection"
                                   aria-label="Cancel inspection"
@@ -1783,21 +2325,21 @@ function SiteInspection() {
                                   {cancellingId === (inspection._id || inspection.id) ? (
                                     <span className="text-[10px] font-bold">…</span>
                                   ) : (
-                                    <XOctagon size={18} />
+                                    <XOctagon size={18} strokeWidth={2.2} className={actionIconClass} />
                                   )}
                                 </button>
                               ) : (
                                 <button
                                   title="Restore inspection"
                                   aria-label="Restore inspection"
-                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-500/20" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100"}`}
+                                  className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400 hover:bg-emerald-500/20" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100"}`}
                                   onClick={() => requestRestore(inspection._id || inspection.id)}
                                   disabled={restoringId === (inspection._id || inspection.id)}
                                 >
                                   {restoringId === (inspection._id || inspection.id) ? (
                                     <span className="text-[10px] font-bold">…</span>
                                   ) : (
-                                    <RotateCcw size={18} />
+                                    <RotateCcw size={18} strokeWidth={2.2} className={actionIconClass} />
                                   )}
                                 </button>
                               )}
@@ -1908,6 +2450,7 @@ function SiteInspection() {
                             })}
                           </div>
                         )}
+                        {errors.customerId && <p className="mt-2 text-xs text-red-500">{errors.customerId}</p>}
                       </div>
 
                       <div className="md:col-span-1">
@@ -1951,7 +2494,7 @@ function SiteInspection() {
                       </div>
 
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date <span className="text-red-400">*</span></label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date <span className="</span>text-red-400"></span></label>
                         <input
                           type="date"
                           className={fieldClass}
@@ -1976,13 +2519,24 @@ function SiteInspection() {
                       <div className="flex flex-wrap items-center gap-3">
                         {[30, 90, "Custom"].map((option) => {
                           const isSelected = option === "Custom"
-                            ? newInspection.warranty_period === "Custom"
+                            ? newInspection.warranty_period === "Custom" || normalizeWarrantyPeriodValue(newInspection.warranty_period) === "Custom"
                             : Number(newInspection.warranty_period) === Number(option);
                           return (
                             <button
                               key={String(option)}
                               type="button"
-                              onClick={() => handleInspectionFieldChange("warranty_period", option === "Custom" ? "Custom" : Number(option))}
+                              onClick={() => {
+                                if (option === "Custom") {
+                                  handleInspectionFieldChange("warranty_period", "Custom");
+                                  setNewInspection((prev) => ({
+                                    ...prev,
+                                    custom_warranty_days: Number(prev.custom_warranty_days) || 90,
+                                  }));
+                                  return;
+                                }
+
+                                handleInspectionFieldChange("warranty_period", Number(option));
+                              }}
                               className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
                                 isSelected
                                   ? "border-red-500 bg-red-600 text-white shadow-sm"
@@ -1996,6 +2550,27 @@ function SiteInspection() {
                           );
                         })}
                       </div>
+
+                      {newInspection.warranty_period === "Custom" && (
+                        <div className="mt-4 max-w-xs">
+                          <label className={`mb-2 block text-[13px] font-bold ${labelClass}`}>
+                            Custom Warranty Days
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={newInspection.custom_warranty_days || ""}
+                            onChange={(e) => {
+                              const nextValue = Number(e.target.value);
+                              handleInspectionFieldChange("custom_warranty_days", Number.isFinite(nextValue) ? nextValue : 0);
+                            }}
+                            className={fieldClass}
+                            placeholder="e.g. 365"
+                          />
+                        </div>
+                      )}
+
                       <p className={`mt-3 text-xs ${mutedTextClass}`}>Coverage starts on the installation date. Used for testing warranty expiry.</p>
                     </div>
                   </section>
@@ -2033,6 +2608,9 @@ function SiteInspection() {
                             No
                           </button>
                         </div>
+                        {newInspection.order_type === "walk_in_customer" && newInspection.has_account_on_website && (
+                          <p className={`mt-2 text-xs ${mutedTextClass}`}>Select the matching registered customer from the Client Name search results to link this walk-in record to My Orders.</p>
+                        )}
                       </div>
 
                       <div>
@@ -2050,6 +2628,46 @@ function SiteInspection() {
                     </div>
 
                   </section>
+
+                  {newInspection.order_type === "walk_in_customer" && (
+                    <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                      <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Signed Hard-Copy Contract</h3>
+                      <p className={`mb-3 text-sm ${mutedTextClass}`}>Upload the signed contract to verify walk-in acceptance and move the completed inspection into Transactions.</p>
+                      <input
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        onChange={(event) => {
+                          handleSignedContractUpload(event.target.files);
+                          event.target.value = "";
+                        }}
+                        disabled={uploadingContractFile}
+                        className={`block w-full text-sm ${darkMode ? "text-slate-200" : "text-slate-700"}`}
+                      />
+                      {newInspection.signed_contract_file && <p className="mt-2 text-sm font-semibold text-emerald-600">Signed contract uploaded</p>}
+                      {uploadingContractFile && <p className={`mt-2 text-xs ${mutedTextClass}`}>Uploading contract...</p>}
+                      {(contractUploadError || errors.signed_contract_file) && <p className="mt-2 text-xs text-red-500">{contractUploadError || errors.signed_contract_file}</p>}
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Contract Number</label>
+                          <input
+                            type="text"
+                            value={newInspection.contract_number}
+                            onChange={(event) => handleInspectionFieldChange("contract_number", event.target.value)}
+                            className={fieldClass}
+                          />
+                        </div>
+                        <div>
+                          <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Date Signed</label>
+                          <input
+                            type="date"
+                            value={newInspection.contract_signed_date}
+                            onChange={(event) => handleInspectionFieldChange("contract_signed_date", event.target.value)}
+                            className={fieldClass}
+                          />
+                        </div>
+                      </div>
+                    </section>
+                  )}
 
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
                     <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Site Details</h3>
@@ -2146,7 +2764,7 @@ function SiteInspection() {
                     <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Payment Information</h3>
                     <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                       <span className="mr-2 text-base">💡</span>
-                      Business Policy: A 50% downpayment is required before project commences.
+                      Business Policy: {isFullPaymentPlan(newInspection.payment_terms) ? "Full payment is required before project commences." : "A 50% downpayment is required before project commences."}
                     </div>
 
                     <div className="grid gap-5 md:grid-cols-2">
@@ -2178,9 +2796,11 @@ function SiteInspection() {
                         </span>
                       </div>
                       <div className={`mt-3 flex items-center justify-between gap-4 border-t pt-3 text-[14px] font-bold ${darkMode ? "border-slate-700 text-red-400" : "border-slate-200 text-red-600"}`}>
-                        <span>50% Downpayment Due</span>
+                        <span>{isFullPaymentPlan(newInspection.payment_terms) ? "Full Payment Due" : "50% Downpayment Due"}</span>
                         <span className={`text-[18px] font-black ${darkMode ? "text-red-400" : "text-red-600"}`}>
-                          {formatCurrency(((Number(newInspection.manual_override) || computeTotals().totalEstimate) * 0.5))}
+                          {isFullPaymentPlan(newInspection.payment_terms)
+                            ? "Paid in Full"
+                            : formatCurrency((Number(newInspection.manual_override) || computeTotals().totalEstimate) * 0.5)}
                         </span>
                       </div>
                     </div>
@@ -2195,11 +2815,36 @@ function SiteInspection() {
                         >
                           <option value="50%_down_payment">50% downpayment, 50% upon completion</option>
                           <option value="full_payment">Full Payment</option>
+                          <option value="installment_3_months">Installment (3 months)</option>
+                          <option value="installment_6_months">Installment (6 months)</option>
+                          <option value="custom_arrangement">Custom Arrangement</option>
                         </select>
+                        {shouldShowAgreedPaymentDate(newInspection.payment_terms) && (
+                          <div className="mt-3">
+                            <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Agreed Payment Date (optional)</label>
+                            <input
+                              type="date"
+                              className={fieldClass}
+                              min={today}
+                              value={newInspection.agreed_payment_date || ""}
+                              onChange={(e) => {
+                                const nextValue = e.target.value;
+                                if (nextValue && isPastDateValue(nextValue)) {
+                                  toast.error("Agreed payment date cannot be in the past.");
+                                  return;
+                                }
+                                handleInspectionFieldChange("agreed_payment_date", nextValue);
+                              }}
+                            />
+                            <p className={`mt-2 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                              Client agreed to pay downpayment on this date.
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Downpayment Received?</label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>{getPaymentReceivedQuestion(newInspection.payment_terms)}</label>
                         <div className={`grid grid-cols-2 overflow-hidden rounded-xl border shadow-sm ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-200 bg-slate-50"}`}>
                           <button
                             type="button"
@@ -2211,7 +2856,7 @@ function SiteInspection() {
                             }`}
                           >
                             <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
-                            Yes, Paid
+                            {isFullPaymentPlan(newInspection.payment_terms) ? "Yes, Received" : "Yes, Paid"}
                           </button>
                           <button
                             type="button"
@@ -2266,22 +2911,20 @@ function SiteInspection() {
             const orderReference = viewInspection.order_number || viewInspection.tracking || viewInspection.contract_number || `SI-ORD-${String(orderId || "NEW").slice(-10).toUpperCase()}`;
             const readinessIssues = [];
             if (!viewInspection.inspection_date) readinessIssues.push("Inspection Date");
-            if (!installDateValue) readinessIssues.push("Estimated Installation Date");
             const inspectionItems = Array.isArray(viewInspection.items) ? viewInspection.items : [];
-            const estimatedTotal = inspectionItems.reduce((sum, item) => {
-              const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
-              const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
-              const lineTotal = Number(item.estimated_price ?? item.total_price ?? qty * unitPrice) || 0;
-              return sum + lineTotal;
-            }, 0);
-            const downPayment = estimatedTotal * 0.5;
-            const balance = estimatedTotal - downPayment;
-            const paymentTermsText = viewInspection.payment_terms === "50%_down_payment"
-              ? "50% downpayment, 50% upon completion"
-              : viewInspection.payment_terms === "full_payment"
-                ? "Full payment"
-                : "50% downpayment, 50% upon completion";
-            const statusBadge = !viewInspection.inspection_date || !installDateValue
+            const estimatedTotal = getInspectionDisplayTotal(
+              viewInspection,
+              inspectionItems.reduce((sum, item) => sum + getInspectionItemTotal(item), 0)
+            );
+            const isFullPaymentMethod = isFullPaymentPlan(viewInspection.payment_terms);
+            const paymentRequiredAmount = isFullPaymentMethod ? estimatedTotal : estimatedTotal * 0.5;
+            const balance = isFullPaymentMethod ? 0 : estimatedTotal - paymentRequiredAmount;
+            const downPayment = paymentRequiredAmount;
+            const paymentReceivedQuestion = getPaymentReceivedQuestion(viewInspection.payment_terms);
+            const paymentStatusLabel = getPaymentStatusLabel(viewInspection.payment_terms);
+            const paymentTermsText = getPaymentTermsLabel(viewInspection.payment_terms);
+            const agreedPaymentDateValue = viewInspection.agreed_payment_date ? formatDateToMMDDYYYY(viewInspection.agreed_payment_date) : null;
+            const statusBadge = !viewInspection.inspection_date
               ? {
                   label: "Needs to be Called",
                   className: darkMode
@@ -2323,7 +2966,7 @@ function SiteInspection() {
                       <button
                         type="button"
                         onClick={() => handleGenerateContract(orderId)}
-                        disabled={!orderId || generatingId === orderId}
+                        disabled={!orderId || generatingId === orderId || readinessIssues.length > 0}
                         className={`inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-600/90 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60`}
                       >
                         <span>✓</span>
@@ -2418,7 +3061,10 @@ function SiteInspection() {
                               const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
                               const unit = item.unit || "in";
                               const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
-                              const lineTotal = Number(item.estimated_price ?? item.total_price ?? qty * unitPrice) || 0;
+                              const explicitLineTotal = Number(item.estimated_price ?? item.total_price ?? 0);
+                              const lineTotal = Number.isFinite(explicitLineTotal) && explicitLineTotal > 0
+                                ? explicitLineTotal
+                                : qty * unitPrice;
 
                               return (
                                 <tr key={`${itemName}-${index}`} className={darkMode ? "border-t border-slate-700 text-slate-200" : "border-t border-slate-200 text-slate-700"}>
@@ -2460,14 +3106,14 @@ function SiteInspection() {
                         <div className="relative h-10 overflow-hidden rounded-lg border border-rose-200 bg-rose-100">
                           <div className="absolute inset-y-0 left-0 w-1/2 bg-rose-200" />
                           <div className="relative flex h-full items-center justify-between px-3 text-sm font-semibold text-rose-700">
-                            <span>50% Downpayment</span>
+                            <span>{isFullPaymentMethod ? "Full Payment" : "50% Downpayment"}</span>
                             <span>{formatCurrency(downPayment)}</span>
                           </div>
                         </div>
 
                         <div className="flex items-center justify-between text-sm font-semibold">
                           <span className={darkMode ? "text-slate-200" : "text-slate-700"}>Balance</span>
-                          <span className={darkMode ? "text-slate-100" : "text-slate-900"}>{formatCurrency(balance)}</span>
+                          <span className={darkMode ? "text-slate-100" : "text-slate-900"}>{isFullPaymentMethod ? "Paid in Full" : formatCurrency(balance)}</span>
                         </div>
 
                         <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4 text-sm text-slate-500">
@@ -2475,8 +3121,15 @@ function SiteInspection() {
                           <span className={darkMode ? "text-slate-300" : "text-slate-600"}>{paymentTermsText}</span>
                         </div>
 
+                        {agreedPaymentDateValue && (
+                          <div className="mt-3 flex items-center justify-between text-sm text-slate-500">
+                            <span className={darkMode ? "text-slate-300" : "text-slate-600"}>Agreed Payment Date (optional)</span>
+                            <span className={darkMode ? "text-slate-200" : "text-slate-700"}>{agreedPaymentDateValue}</span>
+                          </div>
+                        )}
+
                         <div className="mt-3 flex items-center justify-between text-sm">
-                          <span className={darkMode ? "text-slate-300" : "text-slate-600"}>Downpayment Status</span>
+                          <span className={darkMode ? "text-slate-300" : "text-slate-600"}>{paymentStatusLabel}</span>
                           <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] ${downpaymentStatus.className}`}>
                             {downpaymentStatus.label}
                           </span>
@@ -2523,9 +3176,11 @@ function SiteInspection() {
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Name</label>
                         <input
                           type="text"
-                          className={fieldClass}
+                          className={editInspection.isOnlineCustomer ? lockedFieldClass : fieldClass}
                           value={editInspection.customerName || ""}
                           onChange={(e) => handleEditChange("customerName", e.target.value)}
+                          readOnly={Boolean(editInspection.isOnlineCustomer)}
+                          aria-readonly={Boolean(editInspection.isOnlineCustomer)}
                         />
                       </div>
 
@@ -2533,9 +3188,11 @@ function SiteInspection() {
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Number</label>
                         <input
                           type="text"
-                          className={fieldClass}
+                          className={editInspection.isOnlineCustomer ? lockedFieldClass : fieldClass}
                           value={editInspection.phone || ""}
                           onChange={(e) => handleEditChange("phone", e.target.value)}
+                          readOnly={Boolean(editInspection.isOnlineCustomer)}
+                          aria-readonly={Boolean(editInspection.isOnlineCustomer)}
                         />
                       </div>
 
@@ -2543,9 +3200,11 @@ function SiteInspection() {
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Site Address</label>
                         <input
                           type="text"
-                          className={fieldClass}
+                          className={editInspection.isOnlineCustomer ? lockedFieldClass : fieldClass}
                           value={editInspection.siteAddress || ""}
                           onChange={(e) => handleEditChange("siteAddress", e.target.value)}
+                          readOnly={Boolean(editInspection.isOnlineCustomer)}
+                          aria-readonly={Boolean(editInspection.isOnlineCustomer)}
                         />
                       </div>
                     </div>
@@ -2584,6 +3243,66 @@ function SiteInspection() {
                       </div>
                     </div>
 
+                    <div className="mt-6">
+                      <p className={`mb-3 text-[14px] font-bold ${labelClass}`}>Warranty Period</p>
+                      <div className="flex flex-wrap items-center gap-3">
+                        {[30, 90, "Custom"].map((option) => {
+                          const isSelected = option === "Custom"
+                            ? editInspection.warranty_period === "Custom" || normalizeWarrantyPeriodValue(editInspection.warranty_period) === "Custom"
+                            : Number(editInspection.warranty_period) === Number(option);
+                          return (
+                            <button
+                              key={String(option)}
+                              type="button"
+                              onClick={() => {
+                                if (option === "Custom") {
+                                  handleEditChange("warranty_period", "Custom");
+                                  setEditInspection((prev) => ({
+                                    ...prev,
+                                    custom_warranty_days: Number(prev.custom_warranty_days) || 90,
+                                  }));
+                                  return;
+                                }
+
+                                handleEditChange("warranty_period", Number(option));
+                              }}
+                              className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+                                isSelected
+                                  ? "border-red-500 bg-red-600 text-white shadow-sm"
+                                  : darkMode
+                                    ? "border-slate-600 bg-[#122d42] text-slate-200 hover:bg-slate-700"
+                                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              {option === "Custom" ? "Custom" : `${option} Days`}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {editInspection.warranty_period === "Custom" && (
+                        <div className="mt-4 max-w-xs">
+                          <label className={`mb-2 block text-[13px] font-bold ${labelClass}`}>
+                            Custom Warranty Days
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={editInspection.custom_warranty_days || ""}
+                            onChange={(e) => {
+                              const nextValue = Number(e.target.value);
+                              handleEditChange("custom_warranty_days", Number.isFinite(nextValue) ? nextValue : 0);
+                            }}
+                            className={fieldClass}
+                            placeholder="e.g. 365"
+                          />
+                        </div>
+                      )}
+
+                      <p className={`mt-3 text-xs ${mutedTextClass}`}>Coverage starts on the installation date. Used for testing warranty expiry.</p>
+                    </div>
+
                   </section>
 
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
@@ -2595,16 +3314,18 @@ function SiteInspection() {
                         <div className={`grid grid-cols-2 overflow-hidden rounded-xl border shadow-sm ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-200 bg-slate-50"}`}>
                           <button
                             type="button"
+                            disabled={editInspection.isOnlineCustomer}
                             onClick={() => handleEditChange("has_account_on_website", true)}
-                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-100 ${Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
                           >
                             <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
                             Yes
                           </button>
                           <button
                             type="button"
+                            disabled={editInspection.isOnlineCustomer}
                             onClick={() => handleEditChange("has_account_on_website", false)}
-                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${!Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${!Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
                           >
                             <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
                             No
@@ -2616,9 +3337,11 @@ function SiteInspection() {
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Customer Email (optional)</label>
                         <input
                           type="email"
-                          className={fieldClass}
+                          className={editInspection.isOnlineCustomer ? lockedFieldClass : fieldClass}
                           value={editInspection.customerEmail || ""}
                           onChange={(e) => handleEditChange("customerEmail", e.target.value)}
+                          readOnly={Boolean(editInspection.isOnlineCustomer)}
+                          aria-readonly={Boolean(editInspection.isOnlineCustomer)}
                         />
                         <p className={`mt-2 text-xs ${mutedTextClass}`}>Optional — only needed if you plan to email the contract; you can still print it without one.</p>
                       </div>
@@ -2733,8 +3456,84 @@ function SiteInspection() {
 
                     <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                       <span className="mr-2 text-base">💡</span>
-                      Business Policy: A 50% downpayment is required before project commences.
+                      Business Policy: {isFullPaymentPlan(editInspection.payment_terms || "") ? "Full payment is required before project commences." : "A 50% downpayment is required before project commences."}
                     </div>
+
+                    {(() => {
+                      const proof = getCustomerPaymentProof(editInspection);
+                      if (proof.submitted) {
+                        return (
+                          <div className="mb-5 space-y-3">
+                            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-100 shadow-sm">
+                              <p className="font-medium leading-6">
+                                Customer says they paid <span className="font-bold text-white">₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>. Confirm it matches what you received.
+                              </p>
+                              <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">Use this amount</p>
+                            </div>
+
+                            <div>
+                              <div className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-300">PROOF OF PAYMENT</div>
+                              <button
+                                type="button"
+                                className="flex w-full items-center justify-between rounded-xl border border-slate-600 bg-slate-800/80 px-3 py-2.5 text-left text-sm text-slate-200 transition hover:bg-slate-700"
+                              >
+                                <span className="font-medium">View Proof of Payment</span>
+                                <span className="text-slate-400">↗</span>
+                              </button>
+
+                              <div className="mt-3 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 p-3">
+                                <div className="flex items-center justify-between gap-3 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                                  <span>Customer Payment Submissions (1)</span>
+                                  <span>{proof.paymentMethod || "Cash"}</span>
+                                </div>
+
+                                <div className="mt-3 rounded-xl border border-slate-700 bg-slate-800 p-3 shadow-sm">
+                                  <div className="mb-3 flex items-center justify-between gap-3 text-xs text-slate-400">
+                                    <span className="font-semibold text-slate-200">Payment #1</span>
+                                    <span>{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                                  </div>
+
+                                  <div className="rounded-lg border border-slate-600 bg-slate-900/80 p-3">
+                                    <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">Customer declared</div>
+                                    <div className="text-xl font-bold tracking-tight text-white">
+                                      ₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-3 grid gap-2 text-sm text-slate-300">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-medium">Admin recorded</span>
+                                      <span className="font-semibold text-red-400">
+                                        ₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                    </div>
+                                    {proof.transactionNumber && (
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-medium">Transaction</span>
+                                        <span className="font-semibold text-slate-100">{proof.transactionNumber}</span>
+                                      </div>
+                                    )}
+                                    {proof.fileName && (
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-medium">Attachment</span>
+                                        <span className="max-w-[150px] truncate text-right font-semibold text-slate-100" title={proof.fileName}>{proof.fileName}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="mb-5 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-3 text-sm text-slate-400">
+                          <div className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-300">PROOF OF PAYMENT</div>
+                          <p>Customer has not submitted proof of payment yet.</p>
+                        </div>
+                      );
+                    })()}
 
                     <div className="grid gap-5 md:grid-cols-2">
                       <div>
@@ -2765,9 +3564,11 @@ function SiteInspection() {
                         </span>
                       </div>
                       <div className={`mt-3 flex items-center justify-between gap-4 border-t pt-3 text-[14px] font-bold ${darkMode ? "border-slate-700 text-red-400" : "border-slate-200 text-red-600"}`}>
-                        <span>50% Downpayment Due</span>
+                        <span>{isFullPaymentPlan(editInspection.payment_terms || "") ? "Full Payment Due" : "50% Downpayment Due"}</span>
                         <span className={`text-[18px] font-black ${darkMode ? "text-red-400" : "text-red-600"}`}>
-                          {formatCurrency((Number(editInspection.manual_override) || computeEditTotals().totalEstimate) * 0.5)}
+                          {formatCurrency(isFullPaymentPlan(editInspection.payment_terms || "")
+                            ? (Number(editInspection.manual_override) || computeEditTotals().totalEstimate)
+                            : ((Number(editInspection.manual_override) || computeEditTotals().totalEstimate) * 0.5))}
                         </span>
                       </div>
                     </div>
@@ -2780,34 +3581,57 @@ function SiteInspection() {
                           value={editInspection.payment_terms || ""}
                           onChange={(e) => handleEditChange("payment_terms", e.target.value)}
                         >
-                          <option value="">Select Payment Terms</option>
-                          <option value="50%_down_payment">50% Down Payment</option>
+                          <option value="50%_down_payment">50% downpayment, 50% upon completion</option>
                           <option value="full_payment">Full Payment</option>
+                          <option value="installment_3_months">Installment (3 months)</option>
+                          <option value="installment_6_months">Installment (6 months)</option>
+                          <option value="custom_arrangement">Custom Arrangement</option>
                         </select>
+                        {shouldShowAgreedPaymentDate(editInspection.payment_terms || "") && (
+                          <div className="mt-3">
+                            <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Agreed Payment Date (optional)</label>
+                            <input
+                              type="date"
+                              className={fieldClass}
+                              min={today}
+                              value={editInspection.agreed_payment_date || ""}
+                              onChange={(e) => {
+                                const nextValue = e.target.value;
+                                if (nextValue && isPastDateValue(nextValue)) {
+                                  toast.error("Agreed payment date cannot be in the past.");
+                                  return;
+                                }
+                                handleEditChange("agreed_payment_date", nextValue);
+                              }}
+                            />
+                            <p className={`mt-2 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                              Client agreed to pay downpayment on this date.
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Downpayment Received?</label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>{getPaymentReceivedQuestion(editInspection.payment_terms || "")}</label>
                         <div className={`grid grid-cols-2 overflow-hidden rounded-xl border shadow-sm ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-200 bg-slate-50"}`}>
-                        <button
-                          type="button"
-                          onClick={() => handleEditChange("downpayment_received", true)}
-                          className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${editInspection.downpayment_received ? (darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
-                        >
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
-                          Yes, Paid
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleEditChange("downpayment_received", false)}
-                          className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${!editInspection.downpayment_received ? (darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
-                        >
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
-                          Not Yet
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => handleEditChange("downpayment_received", true)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${editInspection.downpayment_received ? (darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                            {isFullPaymentPlan(editInspection.payment_terms || "") ? "Yes, Received" : "Yes, Paid"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleEditChange("downpayment_received", false)}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${!editInspection.downpayment_received ? (darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                          >
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
+                            Not Yet
+                          </button>
+                        </div>
                       </div>
-                    </div>
-
                     </div>
                   </section>
                 </div>
@@ -2839,9 +3663,16 @@ function SiteInspection() {
         {/* Contract Modal */}
         <ContractModal
           isOpen={showContractModal}
-          onClose={() => setShowContractModal(false)}
+          onClose={() => {
+            setShowContractModal(false);
+            setContractNeedsRegeneration(false);
+          }}
           inspection={contractInspection}
           contractData={contractData}
+          onDownload={handleDownloadContract}
+          onSendToCustomer={contractInspection?.order_type === "walk_in_customer" ? undefined : handleSendToCustomer}
+          isSendingToCustomer={sendingCustomerEmail}
+          darkMode={darkMode}
         />
       </div>
     </div>

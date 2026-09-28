@@ -4,10 +4,11 @@ const stageDefinitions = [
   { key: "order_submitted", label: "Order Submitted", assignedTo: "Sales Team" },
   { key: "admin_review", label: "Admin Review", assignedTo: "Admin Team" },
   { key: "site_inspection_scheduled", label: "Site Inspection", assignedTo: "Inspection Team" },
-  { key: "site_inspection_completed", label: "Site Inspection", assignedTo: "Inspection Team" },
-  { key: "contract_created", label: "Contract Sent", assignedTo: "Contract Team" },
-  { key: "contract_sent", label: "Contract Sent", assignedTo: "Contract Team" },
+  { key: "site_inspection_completed", label: "Site Inspection Completed", assignedTo: "Inspection Team" },
+  { key: "contract_created", label: "Contract Created", assignedTo: "Contract Team" },
+  { key: "contract_sent", label: "Contract Sent to Customer", assignedTo: "Contract Team" },
   { key: "contract_accepted", label: "Contract Accepted", assignedTo: "Customer" },
+  { key: "contract_declined", label: "Contract Declined", assignedTo: "Customer" },
   { key: "project_in_progress", label: "Fabrication", assignedTo: "Production Team" },
   { key: "installation_scheduled", label: "Installation", assignedTo: "Installation Team" },
   { key: "installation_completed", label: "Installation", assignedTo: "Installation Team" },
@@ -21,6 +22,7 @@ const getOrderStageScore = (order) => {
   if (order.status === "processing") return 7;
   if (order.status === "contract_accepted") return 6;
   if (order.status === "contract_sent") return 5;
+  if (order.contract_status === "declined") return 6;
   if (order.status === "site_inspection") {
     return order.inspection_status === "completed" ? 3 : 2;
   }
@@ -29,14 +31,8 @@ const getOrderStageScore = (order) => {
   return 0;
 };
 
-const hasContractProgress = (order) =>
-  Boolean(order?.contract_terms) ||
-  order?.contract_status === "sent" ||
-  order?.contract_status === "accepted" ||
-  ["contract_sent", "contract_accepted", "processing", "completed"].includes(order?.status);
-
 const isInspectionCompleted = (order) =>
-  order?.inspection_status === "completed" || hasContractProgress(order);
+  order?.inspection_status === "completed" || Boolean(order?.inspection_completed_at);
 
 const getStageDate = (order, stageKey) => {
   switch (stageKey) {
@@ -47,13 +43,17 @@ const getStageDate = (order, stageKey) => {
     case "site_inspection_scheduled":
       return order.inspection_date || null;
     case "site_inspection_completed":
-      return isInspectionCompleted(order) ? order.inspection_completed_at || order.inspection_date || order.updatedAt || null : null;
+      return isInspectionCompleted(order) ? order.inspection_completed_at || order.updatedAt || null : null;
     case "contract_created":
-      return order.contract_terms ? order.updatedAt || null : null;
+      return order.contractGenerated ? order.contractGeneratedAt || order.updatedAt || null : order.contract_terms ? order.updatedAt || null : null;
     case "contract_sent":
-      return order.contract_status === "sent" || order.status === "contract_sent" ? order.updatedAt || null : null;
+      return ["sent", "accepted", "declined"].includes(order.contract_status) || order.status === "contract_sent"
+        ? order.contractSentAt || order.updatedAt || null
+        : null;
     case "contract_accepted":
-      return order.contract_status === "accepted" || order.status === "contract_accepted" ? order.updatedAt || null : null;
+      return order.contract_status === "accepted" || order.status === "contract_accepted" ? order.acceptedAt || order.contract_signed_date || order.updatedAt || null : null;
+    case "contract_declined":
+      return order.contract_status === "declined" ? order.contractDeclinedAt || order.updatedAt || null : null;
     case "project_in_progress":
       return order.status === "processing" ? order.updatedAt || null : null;
     case "installation_scheduled":
@@ -75,6 +75,7 @@ const getStageNotes = (order, stageKey) => {
   if (stageKey === "contract_created" || stageKey === "contract_sent" || stageKey === "contract_accepted") {
     return order.contract_terms || null;
   }
+  if (stageKey === "contract_declined") return order.contractDeclineReason || "No reason provided.";
   if (stageKey === "project_in_progress") {
     return order.progress != null ? `Current completion: ${order.progress}%` : null;
   }
@@ -91,8 +92,9 @@ const getStageStatus = (order, stepIndex, currentIndex, stageKey) => {
   const inspectionCompleted = isInspectionCompleted(order);
   const inspectionScheduled = order.inspection_status === "scheduled" || order.inspection_status === "completed";
   const hasContractTerms = Boolean(order.contract_terms);
-  const contractSent = order.contract_status === "sent" || order.contract_status === "accepted" || order.status === "contract_sent";
+  const contractSent = order.contract_status === "sent" || order.contract_status === "accepted" || order.contract_status === "declined" || order.status === "contract_sent";
   const contractAccepted = order.contract_status === "accepted" || order.status === "contract_accepted";
+  const contractDeclined = order.contract_status === "declined";
 
   switch (stageKey) {
     case "order_submitted":
@@ -104,11 +106,13 @@ const getStageStatus = (order, stepIndex, currentIndex, stageKey) => {
     case "site_inspection_completed":
       return inspectionCompleted ? "completed" : "pending";
     case "contract_created":
-      return hasContractTerms ? "completed" : "pending";
+      return order.contractGenerated || hasContractTerms ? "completed" : "pending";
     case "contract_sent":
       return contractSent ? "completed" : "pending";
     case "contract_accepted":
       return contractAccepted ? "completed" : "pending";
+    case "contract_declined":
+      return contractDeclined ? "completed" : "pending";
     default:
       if (stepIndex < currentIndex) return "completed";
       if (stepIndex === currentIndex) return "in-progress";
@@ -120,7 +124,10 @@ export const buildOrderTimelineStages = (order) => {
   if (!order) return [];
 
   const currentIndex = getOrderStageScore(order);
-  const baseStages = stageDefinitions.slice(0, 7).map((stage, index) => {
+  const contractOutcomeStage = order.contract_status === "declined"
+    ? stageDefinitions.find((stage) => stage.key === "contract_declined")
+    : stageDefinitions.find((stage) => stage.key === "contract_accepted");
+  const baseStages = [...stageDefinitions.slice(0, 6), contractOutcomeStage].map((stage, index) => {
     const status = getStageStatus(order, index, currentIndex, stage.key);
     return {
       ...stage,
@@ -139,8 +146,7 @@ export const buildOrderTimelineStages = (order) => {
     };
   });
 
-  const contractAccepted =
-    order.contract_status === "accepted" || order.status === "contract_accepted";
+  const contractAccepted = order.contract_status === "accepted" || order.status === "contract_accepted";
   if (!contractAccepted) {
     return baseStages;
   }

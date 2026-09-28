@@ -36,7 +36,7 @@ export const respondToContract = (orderId, payload) =>
   });
 
 export const acceptContract = (orderId) => respondToContract(orderId, { action: "accept" });
-export const declineContract = (orderId) => respondToContract(orderId, { action: "decline" });
+export const declineContract = (orderId, declineReason) => respondToContract(orderId, { action: "decline", declineReason });
 export const respondToInstallationSchedule = (orderId, payload) =>
   apiFetch(`/orders/${orderId}/installation-schedule`, {
     method: "PUT",

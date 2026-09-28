@@ -13,6 +13,7 @@ import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
 import { recordActivity } from "@/lib/activityLog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
+import ProfileAvatar from "../../components/ui/ProfileAvatar";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -641,94 +642,83 @@ function Dashboard() {
 
           </div>
 
-          <section className="mt-6 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_18px_55px_-28px_rgba(15,23,42,0.45)]">
-            <div className="relative overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-6 py-7 text-white lg:px-8">
-              <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full border border-white/10" />
-              <div className="pointer-events-none absolute -right-8 -top-12 h-40 w-40 rounded-full border border-white/10" />
-              <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <section className="mt-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.24em] text-red-300">Portfolio intelligence</p>
-                <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">Order status overview</h2>
-                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
-                  A live view of how orders are moving through your operation.
-                </p>
+                <h2 className="text-2xl font-bold text-gray-900">Recent Transactions</h2>
+                <p className="mt-1 text-sm text-gray-500">Recent activity in the Customer Website</p>
               </div>
-              <div className="flex items-center gap-8 rounded-2xl border border-white/10 bg-white/10 px-6 py-4 shadow-xl shadow-black/10 backdrop-blur-sm">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Total orders</p>
-                  <p className="mt-1 text-3xl font-bold tabular-nums">{orderStatusTotal}</p>
-                </div>
-                <div className="h-10 w-px bg-white/15" />
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Live feed</p>
-                  <p className="mt-1 flex items-center gap-2 text-sm font-semibold text-emerald-300">
-                    <span className="animate-pulse h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
-                    Updated now
-                  </p>
-                </div>
-              </div>
-              </div>
+              <button
+                type="button"
+                onClick={() => navigate("/transactions")}
+                className="text-sm font-semibold text-gray-700 underline decoration-gray-400 underline-offset-4 hover:text-gray-900"
+              >
+                View all
+              </button>
             </div>
 
-            <div className="grid items-center gap-8 border-t border-slate-100 px-6 py-8 md:grid-cols-[minmax(240px,0.8fr)_1fr] lg:px-8">
-              <div className="relative mx-auto h-64 w-64">
-                <div className="absolute inset-5 rounded-full bg-slate-50 shadow-inner" />
-                <svg className="dashboard-pie-chart relative h-full w-full -rotate-90" viewBox="0 0 200 200" role="img" aria-label="Order status distribution">
-                  <defs>
-                    <filter id="pieChartShadow" x="-30%" y="-30%" width="160%" height="160%">
-                      <feDropShadow dx="0" dy="6" stdDeviation="5" floodColor="#0f172a" floodOpacity="0.16" />
-                    </filter>
-                  </defs>
-                  <circle cx="100" cy="100" r={chartRadius} fill="none" stroke="#e2e8f0" strokeWidth="25" />
-                  {orderStatusTotal > 0 && orderStatusGroups.map((group) => {
-                    const targetSegmentLength = (group.value / orderStatusTotal) * chartCircumference;
-                    const segmentLength = targetSegmentLength * chartProgress;
-                    const segment = (
-                      <circle
-                        key={group.label}
-                        className="dashboard-pie-segment"
-                        cx="100"
-                        cy="100"
-                        r={chartRadius}
-                        fill="none"
-                        stroke={group.color}
-                        strokeDasharray={`${segmentLength} ${chartCircumference - segmentLength}`}
-                        strokeDashoffset={-chartOffset * chartProgress}
-                        strokeLinecap="butt"
-                        strokeWidth="25"
-                        filter="url(#pieChartShadow)"
-                      />
-                    );
-                    chartOffset += targetSegmentLength;
-                    return segment;
-                  })}
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-5xl font-bold tracking-tight text-slate-950">{orderStatusTotal}</span>
-                  <span className="mt-1 text-[10px] font-bold uppercase tracking-[0.24em] text-slate-400">Total orders</span>
-                </div>
-              </div>
+            <div className="mt-5 overflow-hidden rounded-2xl border border-gray-200">
+              <table className="min-w-full border-collapse">
+                <thead className="bg-gray-50 text-left text-xs font-bold uppercase tracking-wide text-gray-500">
+                  <tr>
+                    <th className="px-5 py-4">Client</th>
+                    <th className="px-5 py-4">Project</th>
+                    <th className="px-5 py-4">Date</th>
+                    <th className="px-5 py-4">Amount</th>
+                    <th className="px-5 py-4 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 bg-white text-sm text-gray-700">
+                  {orders.length > 0 ? [...orders]
+                    .sort((a, b) => {
+                      const dateA = new Date(a.created_at || a.createdAt || a.updatedAt || 0).getTime();
+                      const dateB = new Date(b.created_at || b.createdAt || b.updatedAt || 0).getTime();
+                      return dateB - dateA;
+                    })
+                    .slice(0, 5)
+                    .map((order) => {
+                      const customerName = order.customer
+                        ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
+                        : order.customer_name || "Customer";
+                      const orderItems = Array.isArray(order.items) ? order.items.filter(Boolean) : [];
+                      const productName = orderItems.length > 1
+                        ? "Batch Order"
+                        : orderItems[0]?.name || orderItems[0]?.product_id?.name || order.product_name || order.project_name || "Project";
+                      const date = order.created_at || order.createdAt || order.date || "";
+                      const formattedDate = date ? new Date(date).toISOString().split("T")[0] : "—";
+                      const statusValue = String(order.status || "pending");
+                      const statusText = titleCase(statusValue);
+                      const badgeClasses =
+                        statusValue.toLowerCase() === "cancelled"
+                          ? "bg-red-100 text-red-700"
+                          : statusValue.toLowerCase() === "completed"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : statusValue.toLowerCase() === "site_inspection" || statusValue.toLowerCase() === "pending"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-rose-100 text-rose-700";
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                {orderStatusGroups.map((group) => {
-                  const percentage = orderStatusTotal ? Math.round((group.value / orderStatusTotal) * 100) : 0;
-                  return (
-                    <div key={group.label} className="group rounded-2xl border border-slate-100 bg-white p-4 shadow-[0_8px_24px_-20px_rgba(15,23,42,0.5)] transition duration-200 hover:-translate-y-0.5 hover:border-slate-200 hover:shadow-md">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${group.softColor} ring-4 ring-slate-50 transition group-hover:ring-slate-100`} />
-                          <span className="truncate text-sm font-semibold text-slate-600">{group.label}</span>
-                        </div>
-                        <span className="text-xs font-bold text-slate-400">{percentage}%</span>
-                      </div>
-                      <div className="mt-3 flex items-end justify-between">
-                        <p className="text-3xl font-bold tracking-tight text-slate-950">{group.value}</p>
-                        <span className="text-xs font-medium text-slate-400">orders</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                      return (
+                        <tr key={order._id || order.id} className="hover:bg-gray-50">
+                          <td className="px-5 py-4"><ProfileAvatar name={customerName} email={order.customer?.email || order.customer_email || ""} compact /></td>
+                          <td className="px-5 py-4 font-bold text-gray-900">{productName}</td>
+                          <td className="px-5 py-4 text-gray-700">{formattedDate}</td>
+                          <td className="px-5 py-4 font-semibold text-gray-900">{formatCurrency(order.total_amount || order.totalAmount || 0)}</td>
+                          <td className="px-5 py-4 text-right">
+                            <span className={`inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold ${badgeClasses}`}>
+                              {statusText}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                    <tr>
+                      <td colSpan="5" className="px-5 py-8 text-center text-sm text-gray-400">
+                        No recent transactions.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </section>
 
@@ -755,7 +745,10 @@ function Dashboard() {
                   const customerName = order.customer
                     ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
                     : "Customer";
-                  const productName = order.items?.[0]?.name || order.items?.[0]?.product_id?.name || "Project";
+                  const orderItems = Array.isArray(order.items) ? order.items.filter(Boolean) : [];
+                  const productName = orderItems.length > 1
+                    ? "Batch Order"
+                    : orderItems[0]?.name || orderItems[0]?.product_id?.name || "Project";
                   const status = titleCase(order.status);
                   return (
                     <button

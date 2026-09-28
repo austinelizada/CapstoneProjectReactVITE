@@ -13,6 +13,7 @@ import toast, { Toaster } from "react-hot-toast";
 import { uploadFiles } from "@/api/uploads";
 import ProgressViewModal from "../../components/ProgressViewModal";
 import ProgressEditModal from "../../components/ProgressEditModal";
+import ProfileAvatar from "../../components/ui/ProfileAvatar";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -155,7 +156,7 @@ function ProgressMonitor() {
         statusFilter === "All"
           ? true
           : statusFilter === "Pending"
-          ? ["Pending", "Installation Reschedule Requested"].includes(project.status)
+          ? ["Pending", "Accepted", "Installation Reschedule Requested"].includes(project.status)
           : statusFilter === "Installation Reschedule Requested"
           ? project.status === "Installation Reschedule Requested"
           : project.status === statusFilter;
@@ -191,8 +192,10 @@ function ProgressMonitor() {
               "approved",
               "admin_review",
               "processing",
+              "contract_accepted",
               "completed",
             ].includes(order.status)
+            || (order.contract_status && order.contract_status.toString().toLowerCase() === "accepted")
           )
           .map((order) => ({
             id: order._id || order.id,
@@ -200,6 +203,7 @@ function ProgressMonitor() {
               order.customer_name ||
               `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim() ||
               "Unknown",
+            clientEmail: order.customer?.email || order.customer_email || "",
             product:
               order.items && order.items.length > 0
                 ? order.items[0].name || order.items[0].category || "Project"
@@ -550,7 +554,6 @@ function ProgressMonitor() {
                 "Cutting",
                 "Fabrication",
                 "Installation",
-                "Installation Reschedule Requested",
                 "Completed",
                 "Delayed",
               ].map((status) => (
@@ -583,7 +586,6 @@ function ProgressMonitor() {
                 <thead className="bg-gray-50">
 
                   <tr>
-                    <th className="w-16 p-4 text-center">No.</th>
                     <th className="p-4 text-left">Client</th>
                     <th className="p-4 text-left">Client Type</th>
                     <th className="p-4 text-left">Product</th>
@@ -599,7 +601,7 @@ function ProgressMonitor() {
                 <tbody>
                   {projectLoading && (
                     <tr>
-                      <td className="p-6 text-center text-gray-500" colSpan={9}>
+                      <td className="p-6 text-center text-gray-500" colSpan={8}>
                         Loading projects...
                       </td>
                     </tr>
@@ -611,12 +613,8 @@ function ProgressMonitor() {
                         key={index}
                         className="border-t hover:bg-gray-50"
                       >
-                        <td className="w-16 p-4 text-center font-semibold text-slate-600">
-                          {firstIndex + index + 1}
-                        </td>
-
                         <td className="p-4">
-                          {project.client}
+                          <ProfileAvatar name={project.client} email={project.clientEmail} />
                         </td>
 
                         <td className="p-4">
@@ -710,7 +708,7 @@ function ProgressMonitor() {
 
                   {!projectLoading && currentProjects.length === 0 && (
                     <tr>
-                      <td className="p-6 text-center text-gray-500" colSpan={9}>
+                      <td className="p-6 text-center text-gray-500" colSpan={8}>
                         No projects found.
                       </td>
                     </tr>

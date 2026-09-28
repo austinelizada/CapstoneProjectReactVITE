@@ -40,7 +40,7 @@ import {
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { getProducts } from "@/api/products";
-import { API_BASE } from "@/api/client";
+import { API_BASE, apiFetch } from "@/api/client";
 import {
   createOrder,
   getOrders,
@@ -241,6 +241,7 @@ function CustomerDashboard() {
     action: null,
     orderId: null,
   });
+  const [contractDeclineReason, setContractDeclineReason] = useState("");
   const [showOrderReviewModal, setShowOrderReviewModal] = useState(false);
   const [showBatchOrderModal, setShowBatchOrderModal] = useState(false);
   const [showBatchOrderConfirmModal, setShowBatchOrderConfirmModal] = useState(false);
@@ -293,6 +294,7 @@ function CustomerDashboard() {
   const [selectedOrderForModal, setSelectedOrderForModal] = useState(null);
   const [contractSummaryExpanded, setContractSummaryExpanded] = useState(true);
   const [contractHistoryTab, setContractHistoryTab] = useState("accepted");
+  const [contractPage, setContractPage] = useState(1);
   const [warrantyHistoryTab, setWarrantyHistoryTab] = useState(null);
 
   const customerContracts = orders.filter((order) => {
@@ -306,6 +308,17 @@ function CustomerDashboard() {
       order.contract_status?.toString().toLowerCase() === "declined"
   );
   const contractsInTab = contractHistoryTab === "rejected" ? rejectedContracts : customerContracts;
+  const CONTRACT_PAGE_SIZE = 5;
+  const contractPageCount = Math.max(1, Math.ceil(contractsInTab.length / CONTRACT_PAGE_SIZE));
+  const safeContractPage = Math.min(Math.max(1, contractPage), contractPageCount);
+  const paginatedContracts = contractsInTab.slice(
+    (safeContractPage - 1) * CONTRACT_PAGE_SIZE,
+    safeContractPage * CONTRACT_PAGE_SIZE
+  );
+
+  useEffect(() => {
+    setContractPage(1);
+  }, [contractHistoryTab, contractsInTab.length]);
 
   // Warranty filtering logic
   const activeWarranties = orders.filter((order) => {
@@ -619,7 +632,7 @@ function CustomerDashboard() {
   const selectedOrderHasContractSummary = Boolean(selectedOrderForModal) && canShowContractForOrder(selectedOrderForModal);
   const selectedOrderCanRespondToContract =
     selectedOrderHasContractSummary &&
-    (selectedOrderStatus === "contract_sent" || selectedOrderContractStatus === "sent") &&
+    (selectedOrderStatus === "contract_sent" || selectedOrderStatus === "site_inspection" || selectedOrderContractStatus === "sent") &&
     !["accepted", "declined"].includes(selectedOrderContractStatus) &&
     !["contract_accepted", "contract_declined", "cancelled"].includes(selectedOrderStatus);
 
@@ -630,6 +643,19 @@ function CustomerDashboard() {
     const lastStage = Array.isArray(order.progress_stages) ? order.progress_stages[order.progress_stages.length - 1] : null;
     if (!lastStage) return true;
     return Boolean(lastStage.completed || lastStage.status === "done" || lastStage.status === "completed");
+  };
+
+  const isCustomerContractAccepted = (order) => {
+    if (!order) return false;
+    const status = String(order.status || "").toLowerCase();
+    const contractStatus = String(order.contract_status || "").toLowerCase();
+    return Boolean(
+      order.acceptedByCustomer === true ||
+      status === "contract_accepted" ||
+      contractStatus === "accepted" ||
+      status === "contract_signed" ||
+      contractStatus === "signed"
+    );
   };
 
   const isOrderReviewEditable = (order) => {
@@ -1478,8 +1504,8 @@ function CustomerDashboard() {
     try {
       const response = await acceptContract(orderId);
       updateLocalOrder(response.order);
-      setContractActionMessage("Contract accepted successfully.");
-      toast.success("Contract accepted successfully.");
+      setContractActionMessage("Contract accepted and signed successfully.");
+      toast.success("Contract accepted and signed successfully.");
       setContractActionOrderId(response.order._id);
       setContractConfirmModal({ open: false, action: null, orderId: null });
       setShowContractModal(false);
@@ -1493,7 +1519,7 @@ function CustomerDashboard() {
     }
   };
 
-  const handleDeclineContract = async (orderId) => {
+  const handleDeclineContract = async (orderId, declineReason) => {
     if (!orderId || contractActionLoading) return;
 
     setContractActionError("");
@@ -1501,12 +1527,12 @@ function CustomerDashboard() {
     setContractActionOrderId(orderId);
     setContractActionLoading(true);
     try {
-      const response = await declineContract(orderId);
+      const response = await declineContract(orderId, declineReason);
       updateLocalOrder(response.order);
       if (selectedOrderForModal?._id === orderId) {
         setSelectedOrderForModal(response.order);
       }
-      setContractActionMessage("Contract declined and order cancelled.");
+      setContractActionMessage("Contract declined. ACGC has received your reason.");
       toast.success("Contract declined successfully.");
       setContractActionOrderId(response.order._id);
       setContractConfirmModal({ open: false, action: null, orderId: null });
@@ -1522,6 +1548,8 @@ function CustomerDashboard() {
   };
 
   const openContractConfirmModal = (action, orderId) => {
+    setContractActionError("");
+    setContractDeclineReason("");
     setContractConfirmModal({
       open: true,
       action,
@@ -1531,6 +1559,7 @@ function CustomerDashboard() {
 
   const closeContractConfirmModal = () => {
     setContractConfirmModal({ open: false, action: null, orderId: null });
+    setContractDeclineReason("");
   };
 
   const handleConfirmContractAction = async () => {
@@ -1538,13 +1567,19 @@ function CustomerDashboard() {
 
     const orderId = contractConfirmModal.orderId;
     const action = contractConfirmModal.action;
+    const declineReason = contractDeclineReason.trim();
+
+    if (action === "decline" && !declineReason) {
+      setContractActionError("Please provide a reason for declining the contract.");
+      return;
+    }
 
     closeContractConfirmModal();
 
     if (action === "accept") {
       await handleAcceptContract(orderId);
     } else if (action === "decline") {
-      await handleDeclineContract(orderId);
+      await handleDeclineContract(orderId, declineReason);
     }
   };
 
@@ -1922,11 +1957,12 @@ function CustomerDashboard() {
     const file = event.target.files && event.target.files[0];
     setPaymentProofForm((prev) => ({
       ...prev,
+      file,
       fileName: file ? file.name : "",
     }));
   };
 
-  const submitPaymentProof = (order) => {
+  const submitPaymentProof = async (order) => {
     const normalizedAmount = Number(String(paymentProofForm.amount).replace(/[^\d.]/g, ""));
 
     if (!paymentProofForm.amount || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
@@ -1939,45 +1975,86 @@ function CustomerDashboard() {
 
     const orderId = order?._id || order?.id || order?.tracking;
 
-    setOrders((prev) =>
-      prev.map((entry) => {
-        const entryId = entry?._id || entry?.id || entry?.tracking;
-        if (entryId === orderId) {
-          return {
-            ...entry,
-            payment_status: "paid",
-            payment_proof_amount: normalizedAmount,
-            payment_proof_file_name: paymentProofForm.fileName || "",
-          };
-        }
-        return entry;
-      })
-    );
+    try {
+      let uploadedFileName = paymentProofForm.fileName || "";
+      let uploadedFileUrl = "";
 
-    if (selectedOrderForModal && (selectedOrderForModal?._id || selectedOrderForModal?.id || selectedOrderForModal?.tracking) === orderId) {
-      setSelectedOrderForModal((prev) =>
-        prev
-          ? {
-              ...prev,
+      if (paymentProofForm.file) {
+        const uploadResult = await uploadFiles([paymentProofForm.file]);
+        const uploadedFile = uploadResult?.files?.[0];
+        uploadedFileName = uploadedFile?.originalName || uploadedFile?.filename || paymentProofForm.fileName || "";
+        uploadedFileUrl = uploadedFile?.url || "";
+      }
+
+      const response = await apiFetch(`/orders/${orderId}/payment-proof`, {
+        method: "PUT",
+        body: JSON.stringify({
+          amount: normalizedAmount,
+          payment_method: "Cash",
+          proof_file_name: uploadedFileName,
+          proof_file_url: uploadedFileUrl,
+        }),
+      });
+
+      const savedOrder = response.order || {
+        ...order,
+        payment_status: "paid",
+        payment_proof_amount: normalizedAmount,
+        payment_proof_file_name: uploadedFileName,
+        payment_proof_file_url: uploadedFileUrl,
+        payment_method: "Cash",
+      };
+
+      setOrders((prev) =>
+        prev.map((entry) => {
+          const entryId = entry?._id || entry?.id || entry?.tracking;
+          if (entryId === orderId) {
+            return {
+              ...entry,
+              ...savedOrder,
               payment_status: "paid",
               payment_proof_amount: normalizedAmount,
-              payment_proof_file_name: paymentProofForm.fileName || "",
-            }
-          : prev
+              payment_proof_file_name: uploadedFileName,
+              payment_proof_file_url: uploadedFileUrl,
+              payment_method: savedOrder.payment_method || "Cash",
+            };
+          }
+          return entry;
+        })
       );
+
+      if (selectedOrderForModal && (selectedOrderForModal?._id || selectedOrderForModal?.id || selectedOrderForModal?.tracking) === orderId) {
+        setSelectedOrderForModal((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...savedOrder,
+                payment_status: "paid",
+                payment_proof_amount: normalizedAmount,
+                payment_proof_file_name: uploadedFileName,
+                payment_proof_file_url: uploadedFileUrl,
+                payment_method: savedOrder.payment_method || "Cash",
+              }
+            : prev
+        );
+      }
+
+      setPaymentProofSuccessByOrder((prev) => ({
+        ...prev,
+        [orderId]: {
+          amount: normalizedAmount,
+          fileName: uploadedFileName,
+        },
+      }));
+
+      toast.success(response.message || "Payment proof submitted successfully.");
+      setPaymentProofOpenOrderId(null);
+      setPaymentProofForm({ amount: "", fileName: "", file: null });
+    } catch (error) {
+      setPaymentProofError(error?.message || "Unable to submit payment proof.");
+    } finally {
+      setPaymentProofLoading(false);
     }
-
-    setPaymentProofSuccessByOrder((prev) => ({
-      ...prev,
-      [orderId]: {
-        amount: normalizedAmount,
-        fileName: paymentProofForm.fileName || "",
-      },
-    }));
-
-    setPaymentProofOpenOrderId(null);
-    setPaymentProofForm({ amount: "", fileName: "" });
-    setPaymentProofLoading(false);
   };
 
   const handleCheckout = () => {
@@ -2270,7 +2347,7 @@ function CustomerDashboard() {
         ? String(order.status).replace(/_/g, " ")
         : "No contract yet";
 
-    const accepted = String(order.contract_status || "").toLowerCase() === "accepted" || order.status === "contract_accepted";
+    const accepted = order.acceptedByCustomer === true || String(order.contract_status || "").toLowerCase() === "accepted" || order.status === "contract_accepted";
 
     return {
       orderNumber: order.tracking || order._id || "N/A",
@@ -2292,8 +2369,10 @@ function CustomerDashboard() {
       downPayment,
       items,
       accepted,
-      acceptanceMethod: accepted ? "Online Acceptance" : null,
-      acceptanceDate: accepted && order.updatedAt ? new Date(order.updatedAt).toLocaleString() : null,
+      acceptanceMethod: accepted ? order.acceptanceMethod || (order.acceptance_method === "walk_in_signed_contract" ? "Walk-in Signed Contract" : "Online Acceptance") : null,
+      acceptanceDate: accepted && (order.acceptedAt || order.contract_signed_date || order.updatedAt)
+        ? new Date(order.acceptedAt || order.contract_signed_date || order.updatedAt).toLocaleString()
+        : null,
       acceptedBy: order.customer?.first_name || order.customer_name || "Customer",
       contractId: order.tracking || order._id || "N/A",
       customerAccountId: order.customer?._id || order.customer || "N/A",
@@ -2314,7 +2393,7 @@ function CustomerDashboard() {
   const contractPreviewData = contractPreviewOrder
     ? buildContractDataFromOrder(contractPreviewOrder)
     : null;
-  const isContractAccepted = contractPreviewOrder?.status === "contract_accepted"
+  const isContractAccepted = contractPreviewOrder?.acceptedByCustomer === true || contractPreviewOrder?.status === "contract_accepted"
     || String(contractPreviewOrder?.contract_status || "").toLowerCase() === "accepted";
 
   const createContractExportClone = () => {
@@ -2658,17 +2737,17 @@ function CustomerDashboard() {
   }
 
   return (
-    <div className={`relative min-h-screen overflow-x-clip bg-[size:42px_42px] ${darkMode
-      ? "bg-slate-950 text-slate-100 [background-image:linear-gradient(rgba(148,163,184,0.07)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.07)_1px,transparent_1px),radial-gradient(circle_at_top_right,rgba(127,29,29,0.24),transparent_34%)]"
-      : "bg-gray-100 text-slate-900 [background-image:linear-gradient(rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(135deg,rgba(255,255,255,0.9),transparent_58%)]"
+    <div className={`admin-theme-shell relative min-h-screen overflow-x-clip ${darkMode
+      ? "admin-theme-dark"
+      : "admin-theme-light"
     }`}>
-      <div className="customer-theme-drawing" aria-hidden="true">
-        <div className="customer-theme-circle customer-theme-circle-top" />
-        <div className="customer-theme-circle customer-theme-circle-top-small" />
-        <div className="customer-theme-circle customer-theme-circle-middle" />
-        <div className="customer-theme-circle customer-theme-circle-middle-small" />
-        <div className="customer-theme-circle customer-theme-circle-bottom" />
-        <div className="customer-theme-circle customer-theme-circle-bottom-small" />
+      <div className="admin-shell-drawing" aria-hidden="true">
+        <div className="admin-shell-circle admin-shell-circle-top" />
+        <div className="admin-shell-circle admin-shell-circle-top-small" />
+        <div className="admin-shell-circle admin-shell-circle-middle" />
+        <div className="admin-shell-circle admin-shell-circle-middle-small" />
+        <div className="admin-shell-circle admin-shell-circle-bottom" />
+        <div className="admin-shell-circle admin-shell-circle-bottom-small" />
       </div>
       <Toaster position="bottom-right" />
       {permissionNotice && (
@@ -2889,12 +2968,19 @@ function CustomerDashboard() {
                           const product = order.items?.[0] || {};
                           const status = String(order.status || "").toLowerCase();
                           const contractStatus = String(order.contract_status || "").toLowerCase();
+                          const isContractReady =
+                            status === "contract_sent" ||
+                            (status === "site_inspection" && contractStatus === "sent") ||
+                            contractStatus === "sent";
                           const notificationDetails = () => {
                             if (contractStatus === "accepted" || status === "contract_accepted") {
                               return { title: "Contract accepted", message: "Your contract has been accepted. Work can now move forward.", color: "text-emerald-600" };
                             }
                             if (contractStatus === "declined" || status === "contract_declined" || status === "cancelled") {
                               return { title: "Order update", message: "Your contract or order was declined or cancelled.", color: "text-red-600" };
+                            }
+                            if (isContractReady) {
+                              return { title: "Contract ready", message: "Review and respond to your project contract.", color: "text-blue-600" };
                             }
 
                             switch (status) {
@@ -2904,8 +2990,6 @@ function CustomerDashboard() {
                                 return { title: "Order under review", message: "Our team is reviewing your project request.", color: "text-amber-600" };
                               case "site_inspection":
                                 return { title: "Site inspection", message: "Your project is ready for site inspection.", color: "text-amber-600" };
-                              case "contract_sent":
-                                return { title: "Contract ready", message: "Review and respond to your project contract.", color: "text-blue-600" };
                               case "fabrication":
                                 return { title: "Fabrication started", message: "Your project is currently being fabricated.", color: "text-indigo-600" };
                               case "installation":
@@ -2917,7 +3001,11 @@ function CustomerDashboard() {
                             }
                           };
                           const details = notificationDetails();
-                          const isContractNotification = ["contract_sent", "contract_accepted"].includes(status) || ["sent", "accepted"].includes(contractStatus);
+                          const hasContractBeenSent =
+                            status === "contract_sent" ||
+                            contractStatus === "sent" ||
+                            (status === "site_inspection" && contractStatus === "sent");
+                          const isContractNotification = hasContractBeenSent || ["contract_accepted"].includes(status) || ["accepted"].includes(contractStatus);
 
                           return (
                             <button
@@ -3055,7 +3143,6 @@ function CustomerDashboard() {
       {activeTab === "home" && (
         <>
           <section className="relative overflow-hidden bg-[#941d24] text-white">
-            <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] [background-size:42px_42px]" />
             <div className="relative mx-auto flex min-h-[360px] max-w-7xl items-center justify-center px-6 py-16 text-center">
               <div className="max-w-2xl">
                 <p className="text-sm font-semibold uppercase tracking-[0.28em] text-red-100">ACGC Services</p>
@@ -4508,7 +4595,7 @@ function CustomerDashboard() {
                         setShowBatchSuccessModal(false);
                         setActiveTab("orders");
                       }}
-                      className="flex-1 rounded-xl border border-red-600 bg-red-700 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-red-900/30 transition hover:bg-red-800"
+                      className="flex-1 rounded-xl border border-red-600 bg-red-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-800"
                     >
                       View Your Orders
                     </button>
@@ -4679,14 +4766,14 @@ function CustomerDashboard() {
             {showOrderSuccessModal && orderSuccessData && (
               <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
                 <div className={`w-full max-w-md rounded-[26px] border p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-transparent bg-white"}`}>
-                  <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full border-2 ${darkMode ? "border-red-800 bg-red-950/50" : "border-red-200 bg-red-50"}`}>
-                    <CheckCircle className={`h-8 w-8 ${darkMode ? "text-red-400" : "text-red-700"}`} />
+                  <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full border-2 ${darkMode ? "border-emerald-700 bg-emerald-950/40" : "border-emerald-200 bg-emerald-50"}`}>
+                    <CheckCircle className={`h-8 w-8 ${darkMode ? "text-emerald-400" : "text-emerald-600"}`} />
                   </div>
 
-                  <h3 className={`mt-5 text-center text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Batch Requests Submitted!</h3>
+                  <h3 className={`mt-5 text-center text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Order Request Submitted!</h3>
 
                   <p className={`mt-4 text-center text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    Thank you! Your architectural order requests have been received. Our estimating team will contact you shortly to schedule your site inspection and finalize quotation blueprints.
+                    Thank you! Your order request has been received. Our estimating team will contact you shortly to confirm the details and finalize the quotation.
                   </p>
 
                   <p className={`mt-5 flex items-center justify-center gap-2 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
@@ -4702,7 +4789,7 @@ function CustomerDashboard() {
                         setOrderSuccessData(null);
                         setActiveTab("orders");
                       }}
-                      className="flex-1 rounded-xl bg-red-700 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-red-200 transition hover:bg-red-800"
+                      className="flex-1 rounded-xl border border-red-500 bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-700"
                     >
                       View Your Orders
                     </button>
@@ -4713,7 +4800,7 @@ function CustomerDashboard() {
                         setOrderSuccessData(null);
                         setActiveTab("products");
                       }}
-                      className={`flex-1 rounded-xl border px-4 py-3 text-sm font-semibold transition ${darkMode ? "border-red-500 bg-slate-900 text-red-300 hover:bg-red-950/50" : "border-red-600 bg-white text-red-700 hover:bg-red-50"}`}
+                      className="flex-1 rounded-xl border border-red-500 bg-transparent px-4 py-3 text-sm font-semibold text-red-400 transition hover:bg-red-950/30"
                     >
                       Continue Browsing
                     </button>
@@ -4786,13 +4873,32 @@ function CustomerDashboard() {
                   const orderItems = Array.isArray(order.items) ? order.items : [];
                   const isOrderExpanded = expandedOrderId === orderId;
                   const orderTotal = getOrderTotalValue(order);
-                  const downpaymentAmount = Number(order.downpayment_amount || order.downpayment || 0) || orderTotal * 0.5;
+                  const recordedPaidAmount = Number(order.paid_amount || order.amount_paid || order.downpayment_amount || order.downpayment || 0) || 0;
+                  const downpaymentAmount = Math.max(recordedPaidAmount, Number(order.downpayment_amount || order.downpayment || 0) || orderTotal * 0.5);
                   const balanceAmount = Math.max(0, orderTotal - downpaymentAmount);
+                  const paymentStatus = (() => {
+                    if (orderTotal > 0 && downpaymentAmount >= orderTotal) {
+                      return { label: "FULLY PAID", className: "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300" };
+                    }
+                    if (downpaymentAmount > 0) {
+                      return { label: "DOWNPAYMENT PAID", className: "border border-violet-500/40 bg-violet-500/10 text-violet-200" };
+                    }
+                    return { label: "PENDING PAYMENT", className: "border border-violet-300/40 bg-violet-200/15 text-violet-200" };
+                  })();
                   const isBatchOrder = orderItems.length > 1;
                   const orderDisplayName = isBatchOrder ? "Batch Order" : product.name || product.product_name || "Project item";
                   const orderDisplayQuantity = isBatchOrder ? `${orderItems.length} items` : product.quantity ? `Qty ${product.quantity}` : "Qty 1";
                   const orderPreviewItems = isBatchOrder ? orderItems.slice(0, 3) : [product];
                   const orderDate = order.updatedAt ? new Date(order.updatedAt).toLocaleDateString() : order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "—";
+                  const hasContractBeenSent =
+                    order.status === "contract_sent" ||
+                    order.contract_status === "sent" ||
+                    (order.status === "site_inspection" && order.contract_status === "sent");
+                  const isContractWaitingForCustomer =
+                    hasContractBeenSent &&
+                    order.order_type !== "walk_in_customer";
+                  const isCustomerAcceptedContract = isCustomerContractAccepted(order);
+                  const isOnlineContractAccepted = order.acceptedByCustomer === true || (order.contract_status === "accepted" && order.acceptance_method === "online");
 
                   return (
                     <div
@@ -4908,6 +5014,30 @@ function CustomerDashboard() {
                             </div>
                           </div>
 
+                          {isContractWaitingForCustomer && (
+                            <section className={`mt-4 rounded-xl border p-4 ${darkMode ? "border-amber-500/30 bg-amber-500/10" : "border-amber-200 bg-amber-50"}`}>
+                              <h4 className={`text-base font-black ${darkMode ? "text-amber-100" : "text-amber-900"}`}>Contract Acceptance</h4>
+                              <p className={`mt-1 text-sm font-bold ${darkMode ? "text-amber-200" : "text-amber-800"}`}>Contract Sent to You</p>
+                              <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Please review the contract details before accepting.</p>
+                              <div className="mt-4 flex flex-wrap gap-2">
+                                <button type="button" onClick={() => openContractModal(order)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100">View Contract</button>
+                                <button type="button" onClick={() => openContractConfirmModal("decline", orderId)} className="rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-50">Decline</button>
+                                <button type="button" onClick={() => openContractConfirmModal("accept", orderId)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700">Accept &amp; Sign Contract</button>
+                              </div>
+                            </section>
+                          )}
+                          {isOnlineContractAccepted && (
+                            <div className={`mt-4 rounded-xl border px-4 py-3 text-sm font-bold ${darkMode ? "border-emerald-700 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                              ✓ Contract Accepted &amp; Signed
+                            </div>
+                          )}
+                          {order.contract_status === "declined" && (
+                            <div className={`mt-4 rounded-xl border p-4 ${darkMode ? "border-red-800 bg-red-950/40" : "border-red-200 bg-red-50"}`}>
+                              <p className={`text-sm font-bold ${darkMode ? "text-red-300" : "text-red-700"}`}>Contract Declined</p>
+                              <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{order.contractDeclineReason || "No reason provided."}</p>
+                            </div>
+                          )}
+
                           <div className={`mt-5 rounded-[18px] border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
                             <div className={`divide-y ${darkMode ? "divide-slate-700" : "divide-slate-200"}`}>
                               {orderItems.map((item, itemIndex) => (
@@ -4943,25 +5073,31 @@ function CustomerDashboard() {
                             </div>
                           </div>
 
-                          <div className="mt-6 grid gap-4 md:grid-cols-3">
+                          <div className="mt-6 grid gap-4 md:grid-cols-4">
                             <div className="flex flex-col gap-2">
                               <span className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Grand total</span>
                               <span className="text-3xl font-black text-red-600">{formatCurrency(orderTotal)}</span>
                             </div>
                             <div className="flex flex-col gap-2">
-                              <span className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Paid</span>
+                              <span className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Downpayment paid</span>
                               <span className="text-3xl font-black text-emerald-600">{formatCurrency(downpaymentAmount)}</span>
                             </div>
                             <div className="flex flex-col gap-2">
                               <span className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Balance</span>
                               <span className={`text-3xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(balanceAmount)}</span>
                             </div>
+                            <div className="flex flex-col gap-2">
+                              <span className={`text-xs font-black uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Site inspection</span>
+                              <span className={`inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-black uppercase tracking-[0.08em] ${paymentStatus.className}`}>
+                                {paymentStatus.label}
+                              </span>
+                            </div>
                           </div>
 
                           <div className="mt-6 grid gap-3 sm:grid-cols-2">
                             {paymentProofSuccessByOrder[orderId] ? (
                               <div className={`rounded-xl border px-4 py-3 text-sm font-medium sm:col-span-2 ${darkMode ? "border-sky-800 bg-sky-950/50 text-sky-200" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
-                                We&apos;ve notified admin that you paid {formatCurrency(paymentProofSuccessByOrder[orderId].amount)}. This is pending confirmation — we&apos;ll notify you here once it&apos;s verified.
+                                We've notified admin that you paid {formatCurrency(paymentProofSuccessByOrder[orderId].amount)}. This is pending confirmation — we'll notify you here once it's verified.
                               </div>
                             ) : paymentProofOpenOrderId === orderId ? (
                               <div className={`sm:col-span-2 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
@@ -5021,19 +5157,21 @@ function CustomerDashboard() {
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => handleOpenPaymentProofForm(orderId)}
-                                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-base font-black text-white transition hover:bg-emerald-700"
+                                onClick={() => isCustomerAcceptedContract && handleOpenPaymentProofForm(orderId)}
+                                disabled={!isCustomerAcceptedContract}
+                                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-base font-black text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-emerald-600"
                               >
-                                I&apos;ve already paid
+                                {isCustomerAcceptedContract ? "I've already paid" : "Awaiting contract sign-off"}
                               </button>
                             )}
 
                             <button
                               type="button"
-                              onClick={() => handleCancelRequest(order)}
-                              className={`w-full rounded-xl border px-4 py-3 text-base font-black transition ${darkMode ? "border-red-500/60 bg-red-500/10 text-red-400 hover:bg-red-500/20" : "border-red-500 bg-transparent text-red-600 hover:bg-red-50"}`}
+                              onClick={() => !isCustomerAcceptedContract && handleCancelRequest(order)}
+                              disabled={isCustomerAcceptedContract}
+                              className={`w-full rounded-xl border px-4 py-3 text-base font-black transition disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-red-500/60 bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:hover:bg-red-500/10" : "border-red-500 bg-transparent text-red-600 hover:bg-red-50 disabled:hover:bg-transparent"}`}
                             >
-                              Cancel request
+                              {isCustomerAcceptedContract ? "Cancel request unavailable" : "Cancel request"}
                             </button>
                           </div>
                         </div>
@@ -5802,21 +5940,29 @@ function CustomerDashboard() {
                   .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
                   .map((order) => {
                     const product = order.items?.[0] || {};
+                    const status = String(order.status || "").toLowerCase();
+                    const contractStatus = String(order.contract_status || "").toLowerCase();
+                    const isContractReady =
+                      status === "contract_sent" ||
+                      (status === "site_inspection" && contractStatus === "sent") ||
+                      contractStatus === "sent";
                     const notificationMessage = () => {
-                      switch (order.status) {
+                      if (isContractReady) {
+                        return "A contract has been sent for your review and acceptance.";
+                      }
+
+                      switch (status) {
                         case "order_submitted":
                           return "Your order has been submitted and is awaiting admin review.";
                         case "admin_review":
                           return "Your order is under admin review.";
                         case "site_inspection":
                           return "Your project site inspection is scheduled.";
-                        case "contract_sent":
-                          return "A contract has been sent for your review and acceptance.";
                         case "contract_accepted":
                           return "Your contract has been accepted. Fabrication is starting soon.";
-                        case "Fabrication":
+                        case "fabrication":
                           return "Your project is currently in fabrication.";
-                        case "Installation":
+                        case "installation":
                           return "Your project installation is in progress.";
                         case "completed":
                           return "Your project has been completed successfully!";
@@ -5830,7 +5976,7 @@ function CustomerDashboard() {
                     const notificationIcon = () => {
                       if (order.status === "completed") return "text-emerald-600";
                       if (order.status === "cancelled") return "text-red-600";
-                      if (["contract_sent", "contract_accepted"].includes(order.status)) return "text-blue-600";
+                      if (isContractReady || ["contract_sent", "contract_accepted"].includes(status) || ["sent", "accepted"].includes(contractStatus)) return "text-blue-600";
                       return "text-amber-600";
                     };
 
@@ -6275,7 +6421,7 @@ function CustomerDashboard() {
                             <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{warrantyStartDate}</td>
                             <td className={`px-6 py-5 align-middle text-sm font-medium text-center ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{warrantyExpiryDate}</td>
                             <td className="px-6 py-5 align-middle text-center">
-                              <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass}`}>{statusLabel}</span>
+                              <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-black leading-tight ${statusClass}`}>{statusLabel}</span>
                             </td>
                             <td className="px-6 py-5 align-middle text-center">
                               <div className="flex flex-wrap justify-center gap-2">
@@ -6300,13 +6446,18 @@ function CustomerDashboard() {
                 <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No {contractHistoryTab === "accepted" ? "accepted" : "rejected"} contracts found yet.</p>
               </div>
             ) : (
-              <div className={`space-y-3 rounded-[28px] border p-3 shadow-[0_18px_45px_rgba(127,29,29,0.08)] sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-red-200 bg-slate-50"}`}>
-                {contractsInTab.map((order) => {
+              <>
+                <div className={`space-y-3 rounded-[28px] border p-3 shadow-[0_18px_45px_rgba(127,29,29,0.08)] sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-red-200 bg-slate-50"}`}>
+                {paginatedContracts.map((order) => {
                   const product = order.items?.[0] || {};
                   const statusLabel = getContractStatusLabel(order);
                   const statusClass = order.contract_status === "accepted" || order.status === "contract_accepted"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : "bg-red-100 text-red-700";
+                    ? darkMode
+                      ? "border border-emerald-400/30 bg-emerald-500/15 text-emerald-300"
+                      : "bg-emerald-100 text-emerald-700"
+                    : darkMode
+                      ? "border border-red-400/30 bg-red-500/15 text-red-300"
+                      : "bg-red-100 text-red-700";
                   const orderDate = order.updatedAt
                     ? new Date(order.updatedAt).toLocaleDateString()
                     : order.createdAt
@@ -6315,7 +6466,7 @@ function CustomerDashboard() {
 
                   return (
                     <article key={order._id || order.tracking} className={`overflow-hidden rounded-[20px] border shadow-[0_8px_18px_rgba(15,23,42,0.04)] transition hover:shadow-[0_10px_24px_rgba(15,23,42,0.08)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                      <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="grid min-w-0 items-center gap-4 p-4 xl:grid-cols-[minmax(0,2.1fr)_minmax(150px,0.8fr)_minmax(150px,0.8fr)_minmax(140px,0.75fr)_auto]">
                         <div className="flex min-w-0 items-center gap-3">
                           <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[12px] border text-lg font-black ${darkMode ? "border-red-900 bg-red-950/50 text-red-300" : "border-red-100 bg-red-50 text-red-700"}`}>
                             <FileText size={21} />
@@ -6326,23 +6477,23 @@ function CustomerDashboard() {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:flex lg:items-center lg:gap-6">
-                          <div>
-                            <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount</p>
-                            <p className="mt-1 text-lg font-black text-red-600">{formatCurrency(order.contract_amount || order.total_amount)}</p>
-                          </div>
-                          <div>
-                            <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Status</p>
-                            <span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-black ${statusClass}`}>{statusLabel}</span>
-                          </div>
-                          <div>
-                            <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Date</p>
-                            <p className={`mt-1 text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{orderDate}</p>
-                          </div>
+                        <div className="min-w-0 text-center xl:text-left">
+                          <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount</p>
+                          <p className="mt-1 text-base font-black text-red-600 sm:text-lg">{formatCurrency(order.contract_amount || order.total_amount)}</p>
                         </div>
 
-                        <div className="flex flex-wrap gap-2 lg:justify-end">
-                          <button type="button" onClick={() => openContractModal(order)} className="rounded-[10px] bg-blue-600 px-3.5 py-2 text-xs font-black text-white transition hover:bg-blue-700">
+                        <div className="min-w-0 text-center xl:text-left">
+                          <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Status</p>
+                          <span className={`mt-1 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-black leading-tight ${statusClass}`}>{statusLabel}</span>
+                        </div>
+
+                        <div className="min-w-0 text-center xl:text-left">
+                          <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Date</p>
+                          <p className={`mt-1 text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{orderDate}</p>
+                        </div>
+
+                        <div className="flex min-w-0 flex-wrap justify-center gap-2 xl:justify-end">
+                          <button type="button" onClick={() => openContractModal(order)} className="rounded-[10px] bg-red-600 px-3.5 py-2 text-xs font-black text-white transition hover:bg-red-700">
                             View Contract
                           </button>
                           <button type="button" onClick={() => setSelectedOrderForModal(order)} className="rounded-[10px] bg-[#101114] px-3.5 py-2 text-xs font-black text-white transition hover:bg-black">
@@ -6353,7 +6504,39 @@ function CustomerDashboard() {
                     </article>
                   );
                 })}
-              </div>
+                </div>
+
+                {contractPageCount > 1 && (
+                  <div className={`mt-4 flex flex-wrap items-center justify-center gap-2 rounded-2xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                    <button
+                      type="button"
+                      onClick={() => setContractPage((page) => Math.max(1, page - 1))}
+                      disabled={safeContractPage === 1}
+                      className={`rounded-xl border px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                    >
+                      Previous
+                    </button>
+                    {Array.from({ length: contractPageCount }, (_, index) => index + 1).map((pageNumber) => (
+                      <button
+                        key={pageNumber}
+                        type="button"
+                        onClick={() => setContractPage(pageNumber)}
+                        className={`h-9 min-w-9 rounded-xl px-2 text-sm font-black transition ${safeContractPage === pageNumber ? "bg-red-600 text-white" : darkMode ? "border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                      >
+                        {pageNumber}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setContractPage((page) => Math.min(contractPageCount, page + 1))}
+                      disabled={safeContractPage === contractPageCount}
+                      className={`rounded-xl border px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -6422,9 +6605,19 @@ function CustomerDashboard() {
               </h2>
               <p className="text-sm text-slate-600 mb-6">
                 {contractConfirmModal.action === "accept"
-                  ? "Are you sure you want to accept this contract? This action cannot be undone."
-                  : "Are you sure you want to decline this contract? This will cancel your order."}
+                  ? "By accepting, you confirm that you reviewed and electronically signed this contract. The completed inspection will move to Transactions for admin approval."
+                  : "Please tell ACGC why you are declining this contract. Your order will remain in the Site Inspection workflow."}
               </p>
+              {contractConfirmModal.action === "decline" && (
+                <textarea
+                  value={contractDeclineReason}
+                  onChange={(event) => setContractDeclineReason(event.target.value)}
+                  placeholder="Reason for declining (required)"
+                  rows={3}
+                  className="mb-3 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-red-500"
+                />
+              )}
+              {contractActionError && <p className="mb-3 text-sm font-semibold text-red-600">{contractActionError}</p>}
               <div className="flex justify-end gap-3">
                 <button
                   onClick={closeContractConfirmModal}
@@ -6434,7 +6627,7 @@ function CustomerDashboard() {
                 </button>
                 <button
                   onClick={handleConfirmContractAction}
-                  disabled={contractActionLoading}
+                    disabled={contractActionLoading || (contractConfirmModal.action === "decline" && !contractDeclineReason.trim())}
                   className={`px-4 py-2 rounded-lg text-white transition disabled:opacity-50 disabled:cursor-not-allowed ${
                     contractConfirmModal.action === "accept"
                       ? "bg-emerald-600 hover:bg-emerald-700"
@@ -6443,9 +6636,9 @@ function CustomerDashboard() {
                 >
                   {contractActionLoading
                     ? contractConfirmModal.action === "accept"
-                      ? "Accepting..."
+                      ? "Signing..."
                       : "Declining..."
-                    : "Confirm"}
+                    : contractConfirmModal.action === "accept" ? "Accept & Sign Contract" : "Confirm Decline"}
                 </button>
               </div>
             </div>

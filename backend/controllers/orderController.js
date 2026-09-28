@@ -1,7 +1,9 @@
 import fs from "fs";
 import path from "path";
+import mongoose from "mongoose";
 import PDFDocument from "pdfkit";
 import Order from "../models/Order.js";
+import User from "../models/User.js";
 import { sendMail } from "../config/mailer.js";
 
 const isWithinReviewEditWindow = (submittedAt) => {
@@ -308,13 +310,16 @@ export const createOrderAsAdmin = async (req, res) => {
       shipping_address, 
       order_type, 
       attachments, 
-      payment_terms, 
+      payment_terms,
+      agreed_payment_date,
       customer_name, 
       customer_phone, 
       customer_email, 
       customer_id,
       has_account_on_website,
       downpayment_received,
+      warranty_period,
+      custom_warranty_days,
       // Walk-in customer fields
       signed_contract_url,
       contract_number,
@@ -328,49 +333,94 @@ export const createOrderAsAdmin = async (req, res) => {
       return res.status(400).json({ success: false, message: "Order items are required" });
     }
 
-    const requiresSignedContract = order_type === "walk_in_customer" && has_account_on_website === true;
+    const normalizedOrderType = order_type === "walk_in_customer" ? "walk_in_customer" : "online_order";
+    const isWalkInCustomer = normalizedOrderType === "walk_in_customer";
 
-    // Walk-in customers only need a signed contract when they have a website account.
-    if (requiresSignedContract && !signed_contract_url) {
-      return res.status(400).json({ success: false, message: "Signed contract is required for walk-in customers with a website account" });
+    if (isWalkInCustomer && !signed_contract_url) {
+      return res.status(400).json({ success: false, message: "A signed hard-copy contract is required for walk-in customers" });
+    }
+
+    if (customer_id && !mongoose.Types.ObjectId.isValid(customer_id)) {
+      return res.status(400).json({ success: false, message: "Customer account ID is invalid" });
+    }
+
+    const linkedCustomer = customer_id
+      ? await User.findOne({ _id: customer_id, role: "customer" }).select("first_name last_name email phone street_address city province zip_code")
+      : null;
+
+    if (customer_id && !linkedCustomer) {
+      return res.status(400).json({ success: false, message: "The selected customer account was not found" });
     }
 
     const sanitizedItems = sanitizeOrderItems(items);
 
     const totalAmountFromItems = sanitizedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
 
-    const overrideAmount = Number(req.body.estimated_cost) || 0;
+    const overrideAmount = [req.body.manual_override, req.body.estimated_cost, req.body.total_amount, req.body.contract_amount]
+      .map(Number)
+      .find((amount) => Number.isFinite(amount) && amount > 0) || 0;
     const total_amount = overrideAmount > 0 ? overrideAmount : totalAmountFromItems;
 
-    const normalizedOrderType = order_type === "walk_in_customer" ? "walk_in_customer" : "online_order";
-    const hasWebsiteAccount = has_account_on_website === true;
+    const hasWebsiteAccount = Boolean(linkedCustomer);
+    const walkInSignedAt = contract_signed_date ? new Date(contract_signed_date) : new Date();
+    const linkedCustomerName = `${linkedCustomer?.first_name || ""} ${linkedCustomer?.last_name || ""}`.trim();
 
     const order = new Order({
-      customer: customer_id || undefined,
-      customer_name: customer_name || "",
-      customer_phone: customer_phone || "",
-      customer_email: customer_email || "",
+      customer: linkedCustomer?._id,
+      customer_name: linkedCustomerName || customer_name || "",
+      customer_phone: linkedCustomer?.phone || customer_phone || "",
+      customer_email: linkedCustomer?.email || customer_email || "",
       items: sanitizedItems,
       total_amount,
-      shipping_address: normalizeAddress(shipping_address || ""),
+      manual_override: Number(req.body.manual_override) || 0,
+      contract_amount: isWalkInCustomer ? total_amount : 0,
+      downpayment_amount: payment_terms === "full_payment" ? total_amount : total_amount * 0.5,
+      shipping_address: normalizeAddress(shipping_address || buildAddressFromUser(linkedCustomer)),
       payment_terms: payment_terms || "",
+      agreed_payment_date: agreed_payment_date ? new Date(agreed_payment_date) : null,
       has_account_on_website: hasWebsiteAccount,
       downpayment_received: Boolean(downpayment_received),
+      warranty_period: warranty_period !== undefined && warranty_period !== null && String(warranty_period).trim() !== ""
+        ? String(warranty_period)
+        : "90",
+      custom_warranty_days: custom_warranty_days !== undefined && custom_warranty_days !== null && Number(custom_warranty_days) > 0
+        ? Number(custom_warranty_days)
+        : null,
       attachments: Array.isArray(attachments) ? attachments : [],
       tracking: generateTrackingNumber(),
       order_type: normalizedOrderType,
-      contract_status: normalizedOrderType === "walk_in_customer" && hasWebsiteAccount ? "accepted" : "pending",
+      contract_status: isWalkInCustomer ? "accepted" : "pending",
       payment_status: "not_paid",
-      status: normalizedOrderType === "walk_in_customer" && hasWebsiteAccount ? "contract_accepted" : "site_inspection",
-      inspection_status: normalizedOrderType === "walk_in_customer" && hasWebsiteAccount ? "completed" : "pending",
+      status: isWalkInCustomer ? "contract_accepted" : "site_inspection",
+      inspection_status: isWalkInCustomer ? "completed" : "pending",
+      inspection_completed_at: isWalkInCustomer ? walkInSignedAt : null,
       inspection_date: inspection_date ? new Date(inspection_date) : null,
       estimated_installation_date: estimated_installation_date ? new Date(estimated_installation_date) : null,
       inspection_notes: inspection_notes || "",
       // Walk-in specific
-      acceptance_method: normalizedOrderType === "walk_in_customer" && hasWebsiteAccount ? "walk_in_signed_contract" : "online",
-      signed_contract_url: hasWebsiteAccount ? (signed_contract_url || "") : "",
-      contract_number: hasWebsiteAccount ? (contract_number || "") : "",
-      contract_signed_date: hasWebsiteAccount && contract_signed_date ? new Date(contract_signed_date) : null,
+      acceptance_method: isWalkInCustomer ? "walk_in_signed_contract" : "online",
+      acceptanceMethod: isWalkInCustomer ? "Walk-in Signed Contract" : "Online",
+      acceptedByCustomer: false,
+      acceptedAt: null,
+      transactionCreated: isWalkInCustomer,
+      transactionCreatedAt: isWalkInCustomer ? new Date() : null,
+      signed_contract_url: isWalkInCustomer ? (signed_contract_url || "") : "",
+      contract_number: isWalkInCustomer ? (contract_number || "") : "",
+      contract_signed_date: isWalkInCustomer ? walkInSignedAt : null,
+      contractStatus: isWalkInCustomer ? "Accepted" : "Not Generated",
+      contractGenerated: isWalkInCustomer,
+      contractId: isWalkInCustomer ? (contract_number || "") : "",
+      contractVersion: isWalkInCustomer ? 1 : 0,
+      currentContractVersion: isWalkInCustomer ? 1 : 0,
+      contractGeneratedAt: isWalkInCustomer ? walkInSignedAt : null,
+      contractHistory: isWalkInCustomer ? [{
+        version: 1,
+        contractId: contract_number || "",
+        generatedAt: walkInSignedAt,
+        status: "Accepted",
+        acceptedAt: walkInSignedAt,
+        acceptanceMethod: "Walk-in Signed Contract",
+      }] : [],
     });
 
     await order.save();
@@ -419,9 +469,11 @@ export const getAdminOrders = async (req, res) => {
     if (status) filter.status = status;
     if (contract_status) filter.contract_status = contract_status;
     if (status === "site_inspection" && !contract_status) {
-      filter.contract_status = "pending";
-      filter.contract_terms = "";
-      filter.contract_amount = { $in: [0, null] };
+      filter.$or = [
+        { contract_status: { $in: ["pending", "sent", "declined", ""] } },
+        { contract_status: { $exists: false } },
+        { contract_status: null },
+      ];
     }
 
     const orders = await Order.find(filter)
@@ -469,6 +521,11 @@ export const updateOrderStatus = async (req, res) => {
       status,
       contract_status,
       payment_status,
+      payment_amount,
+      downpayment_amount,
+      payment_proof_amount,
+      payment_method,
+      transaction_number,
       inspection_notes,
       inspection_date,
       warranty_period,
@@ -476,6 +533,18 @@ export const updateOrderStatus = async (req, res) => {
       warranty_expiry_date,
       warranty_status,
       warranty_terms,
+      custom_warranty_days,
+      signed_contract_url,
+      acceptance_method,
+      acceptanceMethod,
+      contract_number,
+      contract_signed_date,
+      inspection_status,
+      inspection_completed_at,
+      acceptedByCustomer,
+      acceptedAt,
+      transactionCreated,
+      transactionCreatedAt,
     } = req.body;
 
     const order = await Order.findById(orderId);
@@ -494,8 +563,26 @@ export const updateOrderStatus = async (req, res) => {
     if (status) order.status = status;
     if (contract_status) order.contract_status = contract_status;
     if (payment_status) order.payment_status = payment_status;
+    if (downpayment_amount !== undefined) order.downpayment_amount = Number(downpayment_amount) || 0;
+    if (payment_amount !== undefined) order.downpayment_amount = Number(payment_amount) || 0;
+    if (payment_proof_amount !== undefined) order.payment_proof_amount = Number(payment_proof_amount) || 0;
+    if (payment_method !== undefined) order.payment_method = payment_method || order.payment_method || "Cash";
+    if (transaction_number !== undefined) order.transaction_number = transaction_number || "";
     if (inspection_date) order.inspection_date = inspection_date;
     if (inspection_notes) order.inspection_notes = inspection_notes;
+    if (warranty_period !== undefined) order.warranty_period = warranty_period !== null && String(warranty_period).trim() !== "" ? String(warranty_period) : "90";
+    if (custom_warranty_days !== undefined) order.custom_warranty_days = Number(custom_warranty_days) > 0 ? Number(custom_warranty_days) : null;
+    if (signed_contract_url !== undefined) order.signed_contract_url = signed_contract_url || "";
+    if (acceptance_method !== undefined) order.acceptance_method = ["online", "walk_in_signed_contract"].includes(String(acceptance_method)) ? acceptance_method : order.acceptance_method;
+    if (acceptanceMethod !== undefined) order.acceptanceMethod = acceptanceMethod;
+    if (contract_number !== undefined) order.contract_number = contract_number || "";
+    if (contract_signed_date !== undefined) order.contract_signed_date = contract_signed_date ? new Date(contract_signed_date) : null;
+    if (inspection_status !== undefined) order.inspection_status = inspection_status;
+    if (inspection_completed_at !== undefined) order.inspection_completed_at = inspection_completed_at ? new Date(inspection_completed_at) : null;
+    if (acceptedByCustomer !== undefined) order.acceptedByCustomer = Boolean(acceptedByCustomer);
+    if (acceptedAt !== undefined) order.acceptedAt = acceptedAt ? new Date(acceptedAt) : null;
+    if (transactionCreated !== undefined) order.transactionCreated = Boolean(transactionCreated);
+    if (transactionCreatedAt !== undefined) order.transactionCreatedAt = transactionCreatedAt ? new Date(transactionCreatedAt) : null;
     if (warranty_period !== undefined) order.warranty_period = warranty_period;
     if (warranty_start_date !== undefined) order.warranty_start_date = warranty_start_date;
     if (warranty_expiry_date !== undefined) {
@@ -642,7 +729,7 @@ export const getProductReviews = async (req, res) => {
 export const respondToContract = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { action } = req.body;
+    const { action, declineReason = "" } = req.body;
 
     if (!action || !["accept", "decline"].includes(action)) {
       return res.status(400).json({ success: false, message: "Contract action must be accept or decline." });
@@ -660,7 +747,9 @@ export const respondToContract = async (req, res) => {
     const orderStatus = (order.status || "").toString().toLowerCase();
     const contractStatus = (order.contract_status || "").toString().toLowerCase();
     const isAwaitingCustomerResponse =
-      orderStatus === "contract_sent" || contractStatus === "sent";
+      (orderStatus === "contract_sent" || orderStatus === "site_inspection" || contractStatus === "sent") &&
+      !["accepted", "declined"].includes(contractStatus) &&
+      !["contract_accepted", "contract_declined", "cancelled"].includes(orderStatus);
 
     if (action === "accept" && (orderStatus === "contract_accepted" || contractStatus === "accepted")) {
       return res.json({ success: true, order, message: "Contract already accepted." });
@@ -670,12 +759,44 @@ export const respondToContract = async (req, res) => {
       return res.status(400).json({ success: false, message: "Contract cannot be responded to at this stage." });
     }
 
+    if (action === "decline" && !String(declineReason).trim()) {
+      return res.status(400).json({ success: false, message: "Please provide a reason for declining the contract." });
+    }
+
+    if (order.order_type === "walk_in_customer") {
+      return res.status(400).json({ success: false, message: "Walk-in contracts must be verified by an admin." });
+    }
+
     if (action === "accept") {
+      const acceptedAt = new Date();
       order.contract_status = "accepted";
       order.status = "contract_accepted";
+      order.contractStatus = "Accepted";
+      order.acceptance_method = "online";
+      order.acceptanceMethod = "Online";
+      order.acceptedByCustomer = true;
+      order.acceptedAt = acceptedAt;
+      order.contract_signed_date = acceptedAt;
+      order.inspection_status = "completed";
+      order.inspection_completed_at = acceptedAt;
+      if (order.transactionCreated !== true) {
+        order.transactionCreated = true;
+        order.transactionCreatedAt = acceptedAt;
+      }
+      const activeContract = Array.isArray(order.contractHistory)
+        ? order.contractHistory.find((entry) => entry.status === "Current")
+        : null;
+      if (activeContract) {
+        activeContract.status = "Accepted";
+        activeContract.acceptedAt = acceptedAt;
+        activeContract.acceptanceMethod = "Online";
+      }
     } else {
       order.contract_status = "declined";
-      order.status = "cancelled";
+      order.status = "site_inspection";
+      order.contractStatus = "Declined";
+      order.contractDeclineReason = String(declineReason).trim();
+      order.contractDeclinedAt = new Date();
     }
 
     await order.save();
@@ -723,6 +844,45 @@ export const cancelCustomerOrder = async (req, res) => {
   } catch (error) {
     console.error("Cancel customer order error:", error);
     res.status(500).json({ success: false, message: "Unable to cancel order", error: error.message });
+  }
+};
+
+export const submitCustomerPaymentProof = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { amount, payment_method, transaction_number, proof_file_name, proof_file_url } = req.body || {};
+
+    const normalizedAmount = Number(amount);
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      return res.status(400).json({ success: false, message: "Please enter a valid payment amount." });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found." });
+    }
+
+    if (!order.customer || order.customer.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Not authorized to update payment proof for this order." });
+    }
+
+    order.payment_status = "paid";
+    order.payment_proof_amount = normalizedAmount;
+    order.payment_proof_file_name = proof_file_name || order.payment_proof_file_name || "";
+    order.payment_proof_file_url = proof_file_url || order.payment_proof_file_url || "";
+    order.payment_method = payment_method || order.payment_method || "Cash";
+    order.transaction_number = transaction_number || order.transaction_number || "";
+
+    await order.save();
+
+    res.json({
+      success: true,
+      message: "Payment proof submitted successfully.",
+      order,
+    });
+  } catch (error) {
+    console.error("Submit customer payment proof error:", error);
+    res.status(500).json({ success: false, message: "Unable to submit payment proof", error: error.message });
   }
 };
 
@@ -885,7 +1045,7 @@ export const updateOrderInspection = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, items, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, manual_override } = req.body;
+    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, manual_override, warranty_period, custom_warranty_days } = req.body;
 
     updateData = {
       status: "site_inspection",
@@ -909,8 +1069,17 @@ export const updateOrderInspection = async (req, res) => {
     if (issues_found !== undefined) updateData.issues_found = issues_found;
     if (shipping_address !== undefined) updateData.shipping_address = normalizeAddress(shipping_address || "");
     if (payment_terms !== undefined) updateData.payment_terms = payment_terms || "";
+    if (agreed_payment_date !== undefined) {
+      const parsedAgreedDate = agreed_payment_date ? new Date(agreed_payment_date) : null;
+      if (agreed_payment_date && Number.isNaN(parsedAgreedDate.getTime())) {
+        return res.status(400).json({ success: false, message: "Agreed payment date must be a valid date." });
+      }
+      updateData.agreed_payment_date = parsedAgreedDate;
+    }
     if (has_account_on_website !== undefined) updateData.has_account_on_website = Boolean(has_account_on_website);
     if (downpayment_received !== undefined) updateData.downpayment_received = Boolean(downpayment_received);
+    if (warranty_period !== undefined) updateData.warranty_period = warranty_period !== null && String(warranty_period).trim() !== "" ? String(warranty_period) : "90";
+    if (custom_warranty_days !== undefined) updateData.custom_warranty_days = Number(custom_warranty_days) > 0 ? Number(custom_warranty_days) : null;
     if (manual_override !== undefined) updateData.manual_override = Number(manual_override) || 0;
     if (customer_name !== undefined) updateData.customer_name = customer_name || "";
     if (customer_email !== undefined) updateData.customer_email = customer_email || "";
@@ -927,11 +1096,29 @@ export const updateOrderInspection = async (req, res) => {
       updateData.total_amount = Number(total_amount) || 0;
     }
 
-    const order = await Order.findById(orderId);
+    const order = await Order.findById(orderId).populate(
+      "customer",
+      "first_name last_name email phone street_address city province zip_code"
+    );
 
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
+
+    const registeredCustomer = order.customer?._id ? order.customer : null;
+    if (registeredCustomer) {
+      const registeredName = `${registeredCustomer.first_name || ""} ${registeredCustomer.last_name || ""}`.trim();
+      updateData.customer_name = registeredName || order.customer_name || "";
+      updateData.customer_email = registeredCustomer.email || "";
+      updateData.customer_phone = registeredCustomer.phone || "";
+      updateData.has_account_on_website = true;
+      updateData.shipping_address = normalizeAddress(order.shipping_address || buildAddressFromUser(registeredCustomer));
+    }
+
+    const updatedTotalAmount = total_amount !== undefined ? Number(total_amount) || 0 : order.total_amount;
+    const updatedPaymentTerms = payment_terms !== undefined ? payment_terms : order.payment_terms;
+    updateData.contract_amount = updatedTotalAmount;
+    updateData.downpayment_amount = updatedPaymentTerms === "full_payment" ? updatedTotalAmount : updatedTotalAmount * 0.5;
 
     Object.assign(order, updateData);
     await order.save();
@@ -1138,18 +1325,50 @@ export const generateContract = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { contract_terms, contract_amount } = req.body;
+    const { contract_terms, contract_amount, snapshot, regenerate = false } = req.body;
 
     const order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    order.contract_status = "sent";
+    const version = regenerate
+      ? Number(order.currentContractVersion || order.contractVersion || 0) + 1
+      : Number(order.currentContractVersion || order.contractVersion || 0) || 1;
+
+    const nextContractId = order.contractId || `ACGC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
+    const history = Array.isArray(order.contractHistory) ? order.contractHistory.map((entry) => ({
+      ...entry,
+      status: entry.status === "Current" ? "Superseded" : entry.status,
+    })) : [];
+
+    history.push({
+      version,
+      contractId: nextContractId,
+      generatedAt: new Date(),
+      status: "Current",
+      snapshot: snapshot || order.contractSnapshot || {},
+    });
+
+    order.contractGenerated = true;
+    order.contractId = nextContractId;
+    order.contractVersion = version;
+    order.currentContractVersion = version;
+    order.contractGeneratedAt = new Date();
+    order.contractNeedsRegeneration = false;
+    order.contractStatus = "Created";
+    order.contractSnapshot = snapshot || order.contractSnapshot || {};
+    order.contractHistory = history;
+    order.contract_status = "pending";
+    order.contractSentAt = null;
     order.contract_terms = contract_terms || "";
     order.contract_amount = Number(contract_amount) || order.total_amount;
-    order.inspection_status = "completed";
-    order.status = "contract_sent";
+    order.downpayment_amount = order.payment_terms === "full_payment" ? order.contract_amount : order.contract_amount * 0.5;
+    order.inspection_status = order.inspection_status || "pending";
+
+    if (order.status === "contract_sent") {
+      order.status = "site_inspection";
+    }
 
     await order.save();
 
@@ -1175,7 +1394,9 @@ export const sendWalkInApprovalEmail = async (req, res) => {
     }
 
     const customerEmailValue = (customerEmail || order.customer_email || "").trim();
-    if (!customerEmailValue) {
+    const isWalkInCustomer = String(order.order_type || "") === "walk_in_customer";
+
+    if (!isWalkInCustomer && !customerEmailValue) {
       return res.status(400).json({ success: false, message: "Customer email is required" });
     }
 
@@ -1278,18 +1499,28 @@ ACGC Site Inspection Team
     }
 
     try {
-      await sendMail({
-        from: fromAddress,
-        to: customerEmailValue,
-        subject: "ACGC Site Inspection Contract Details",
-        text: textBody,
-        html: htmlBody,
-        attachments: attachments.length > 0 ? attachments : undefined,
-      });
+      if (customerEmailValue) {
+        await sendMail({
+          from: fromAddress,
+          to: customerEmailValue,
+          subject: "ACGC Site Inspection Contract Details",
+          text: textBody,
+          html: htmlBody,
+          attachments: attachments.length > 0 ? attachments : undefined,
+        });
+      }
+
+      order.contract_status = "sent";
+      order.contractStatus = "Sent";
+      order.contractSentAt = new Date();
+      order.status = "site_inspection";
+      await order.save();
 
       res.json({
         success: true,
-        message: "Approval email sent successfully",
+        message: isWalkInCustomer
+          ? "Walk-in approval processed successfully"
+          : "Approval email sent successfully",
       });
     } catch (emailError) {
       console.error("Approval email send failed:", emailError);

@@ -138,6 +138,10 @@ const OrderSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    agreed_payment_date: {
+      type: Date,
+      default: null,
+    },
     has_account_on_website: {
       type: Boolean,
       default: false,
@@ -158,6 +162,30 @@ const OrderSchema = new mongoose.Schema(
       type: Number,
       required: true,
       default: 0,
+    },
+    payment_proof_amount: {
+      type: Number,
+      default: 0,
+    },
+    payment_proof_file_name: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    payment_proof_file_url: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    payment_method: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    transaction_number: {
+      type: String,
+      trim: true,
+      default: "",
     },
     status: {
       type: String,
@@ -210,6 +238,10 @@ const OrderSchema = new mongoose.Schema(
       type: String,
       enum: ["pending", "scheduled", "completed", "failed"],
       default: "pending",
+    },
+    inspection_completed_at: {
+      type: Date,
+      default: null,
     },
     inspection_date: {
       type: Date,
@@ -318,10 +350,103 @@ const OrderSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    downpayment_amount: {
+      type: Number,
+      default: 0,
+    },
+    contractGenerated: {
+      type: Boolean,
+      default: false,
+    },
+    contractId: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    contractVersion: {
+      type: Number,
+      default: 0,
+    },
+    currentContractVersion: {
+      type: Number,
+      default: 0,
+    },
+    contractGeneratedAt: {
+      type: Date,
+      default: null,
+    },
+    contractNeedsRegeneration: {
+      type: Boolean,
+      default: false,
+    },
+    contractStatus: {
+      type: String,
+      trim: true,
+      default: "Not Generated",
+    },
+    contractSentAt: {
+      type: Date,
+      default: null,
+    },
+    contractDeclineReason: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    contractDeclinedAt: {
+      type: Date,
+      default: null,
+    },
+    acceptedByCustomer: {
+      type: Boolean,
+      default: false,
+    },
+    acceptanceMethod: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    acceptedAt: {
+      type: Date,
+      default: null,
+    },
+    transactionCreated: {
+      type: Boolean,
+      default: false,
+    },
+    transactionCreatedAt: {
+      type: Date,
+      default: null,
+    },
+    contractSnapshot: {
+      type: Object,
+      default: {},
+    },
+    contractHistory: {
+      type: [
+        new mongoose.Schema(
+          {
+            version: { type: Number, default: 1 },
+            contractId: { type: String, trim: true, default: "" },
+            generatedAt: { type: Date, default: null },
+            status: { type: String, trim: true, default: "Current" },
+            acceptedAt: { type: Date, default: null },
+            acceptanceMethod: { type: String, trim: true, default: "" },
+            snapshot: { type: Object, default: {} },
+          },
+          { _id: false }
+        )
+      ],
+      default: [],
+    },
     warranty_period: {
       type: String,
       trim: true,
       default: "",
+    },
+    custom_warranty_days: {
+      type: Number,
+      default: null,
     },
     warranty_start_date: {
       type: Date,

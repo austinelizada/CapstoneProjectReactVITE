@@ -15,6 +15,7 @@ import {
   submitOrderReview,
   respondToContract,
   cancelCustomerOrder,
+  submitCustomerPaymentProof,
   respondToInstallationSchedule,
   sendWalkInApprovalEmail,
 } from "../controllers/orderController.js";
@@ -26,6 +27,7 @@ router.post("/", authMiddleware, roleMiddleware("customer"), permissionMiddlewar
 router.get("/track/:tracking", authMiddleware, permissionMiddleware("can_track_products"), trackOrder);
 router.put("/:orderId/contract", authMiddleware, roleMiddleware("customer"), respondToContract);
 router.put("/:orderId/cancel", authMiddleware, roleMiddleware("customer"), cancelCustomerOrder);
+router.put("/:orderId/payment-proof", authMiddleware, roleMiddleware("customer"), submitCustomerPaymentProof);
 router.put("/:orderId/installation-schedule", authMiddleware, respondToInstallationSchedule);
 router.put("/:orderId/review", authMiddleware, roleMiddleware("customer"), permissionMiddleware("can_upload_feedback"), submitOrderReview);
 router.get("/reviews/product/:productId", authMiddleware, permissionMiddleware("can_upload_feedback"), getProductReviews);

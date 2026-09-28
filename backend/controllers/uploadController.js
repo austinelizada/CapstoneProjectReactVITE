@@ -33,7 +33,7 @@ const fileFilter = (req, file, cb) => {
 export const uploadMiddleware = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 },
 });
 
 const cleanupFiles = async (files = []) => {
@@ -68,8 +68,8 @@ export const uploadImages = async (req, res) => {
     if (error instanceof multer.MulterError) {
       const message =
         error.code === "LIMIT_FILE_SIZE"
-          ? "File size exceeds 5MB limit"
-          : "Invalid file type: only JPEG, PNG, WEBP, and GIF are allowed";
+          ? "File size exceeds 50MB limit"
+          : "Invalid file type: only PDF, JPEG, PNG, WEBP, and GIF are allowed";
       return res.status(400).json({ success: false, message });
     }
     res.status(500).json({ success: false, message: "Unable to upload images", error: error.message });

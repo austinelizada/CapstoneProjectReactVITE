@@ -29,6 +29,15 @@ function Sidebar({ isOpen }) {
     logout();
   };
 
+  const handleLogoClick = () => {
+    if (window.location.pathname === "/dashboard") {
+      window.location.reload();
+      return;
+    }
+
+    window.location.assign("/dashboard");
+  };
+
   return (
     <>
       <aside
@@ -44,11 +53,16 @@ function Sidebar({ isOpen }) {
         <div className={`pointer-events-none absolute -bottom-12 right-24 h-28 w-28 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
 
         {/* LOGO */}
-        <div className={`relative z-10 flex items-center gap-1 border-b p-4 ${darkMode ? "border-red-200/10" : "border-slate-300/80"}`}>
+        <button
+          type="button"
+          onClick={handleLogoClick}
+          className="relative z-10 flex w-full cursor-pointer items-center gap-1 border-b p-4 text-left transition-none"
+          aria-label="Go to dashboard"
+        >
           <img
             src={logo}
             alt="ACGC Logo"
-            className="w-14 h-12 object-contain"
+            className="h-12 w-14 object-contain"
           />
 
           <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
@@ -60,7 +74,7 @@ function Sidebar({ isOpen }) {
               Aluminum & Glass Services
             </p>
           </div>
-        </div>
+        </button>
 
         {/* MENU */}
         <nav className="p-1 space-y-4 gap-1 mt-4 px-2 flex flex-col">
