@@ -463,11 +463,14 @@ export const getAdminOrders = async (req, res) => {
       return res.status(403).json({ success: false, message: "Admin access required" });
     }
 
-    const { status, contract_status } = req.query;
+    const { status, contract_status, payment_proof_submitted } = req.query;
     const filter = {};
 
     if (status) filter.status = status;
     if (contract_status) filter.contract_status = contract_status;
+    if (payment_proof_submitted === "true") {
+      filter.payment_proof_submitted_at = { $exists: true, $ne: null };
+    }
     if (status === "site_inspection" && !contract_status) {
       filter.$or = [
         { contract_status: { $in: ["pending", "sent", "declined", ""] } },
@@ -868,6 +871,7 @@ export const submitCustomerPaymentProof = async (req, res) => {
 
     order.payment_status = "paid";
     order.payment_proof_amount = normalizedAmount;
+    order.payment_proof_submitted_at = new Date();
     order.payment_proof_file_name = proof_file_name || order.payment_proof_file_name || "";
     order.payment_proof_file_url = proof_file_url || order.payment_proof_file_url || "";
     order.payment_method = payment_method || order.payment_method || "Cash";
@@ -1154,7 +1158,7 @@ export const updateOrderProgress = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { progress, status, installation_date, stages, proof_images } = req.body;
+    const { progress, status, installation_date, estimated_installation_date, stages, proof_images } = req.body;
 
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
@@ -1180,6 +1184,14 @@ export const updateOrderProgress = async (req, res) => {
     if (installation_date) {
       // store as inspection_date for compatibility with existing schema
       order.inspection_date = installation_date;
+    }
+
+    if (estimated_installation_date !== undefined) {
+      const parsedInstallationDate = estimated_installation_date ? new Date(estimated_installation_date) : null;
+      if (parsedInstallationDate && Number.isNaN(parsedInstallationDate.getTime())) {
+        return res.status(400).json({ success: false, message: "Estimated installation date must be a valid date." });
+      }
+      order.estimated_installation_date = parsedInstallationDate;
     }
 
     if (Array.isArray(stages)) {
@@ -1418,7 +1430,11 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       : "N/A";
     const siteAddress = order.shipping_address || "N/A";
     const paymentTerms = order.payment_terms || "50% downpayment, 50% upon completion";
-    const warrantyPeriod = order.warranty_period ? `${order.warranty_period} days` : "90 days";
+    const warrantyPeriod = order.warranty_period === "No Warranty"
+      ? "No Warranty"
+      : order.warranty_period
+        ? `${order.warranty_period} days`
+        : "90 days";
     const inspectionNotes = order.inspection_notes || "No additional site notes provided.";
     const contractLink = contractUrl || order.signed_contract_url || "";
     const fromAddress = process.env.EMAIL_FROM || "ACGC Site Inspection <no-reply@acgc.com>";

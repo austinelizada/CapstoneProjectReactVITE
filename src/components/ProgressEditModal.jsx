@@ -15,7 +15,6 @@ const focusableSelectors = [
 const PARENT_STAGE_DEFINITIONS = [
   { key: "cutting", name: "Cutting" },
   { key: "fabrication", name: "Fabrication" },
-  { key: "installation_scheduling", name: "Installation Scheduling" },
   { key: "installation", name: "Installation" },
 ];
 
@@ -1012,68 +1011,22 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                   </div>
                 </div>
 
-                {stage.key !== "installation_scheduling" && (
-                  <div className="grid gap-4 mt-5 md:grid-cols-2">
-                    <label className="text-sm text-gray-600 block">
-                      Stage State
-                      <select
-                        className="mt-2 w-full border p-2 rounded-lg"
-                        value={stage.status}
-                        disabled={!stageEditable}
-                        onChange={(e) => handleStageStatusChange(stageIndex, e.target.value)}
-                      >
-                        <option value="in_progress">In Progress</option>
-                        <option value="delayed">Delayed</option>
-                        <option value="done">Done</option>
-                      </select>
-                    </label>
-                  </div>
-                )}
+                <div className="grid gap-4 mt-5 md:grid-cols-2">
+                  <label className="text-sm text-gray-600 block">
+                    Stage State
+                    <select
+                      className="mt-2 w-full border p-2 rounded-lg"
+                      value={stage.status}
+                      disabled={!stageEditable}
+                      onChange={(e) => handleStageStatusChange(stageIndex, e.target.value)}
+                    >
+                      <option value="in_progress">In Progress</option>
+                      <option value="delayed">Delayed</option>
+                      <option value="done">Done</option>
+                    </select>
+                  </label>
+                </div>
 
-                {stage.key === "installation_scheduling" && (
-                  <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="grid gap-4 mt-4 sm:grid-cols-2">
-                      <label className="text-sm text-gray-600 block">
-                        Proposed Installation Date
-                        <input
-                          type="date"
-                          min={getTodayIso()}
-                          className="mt-2 w-full border p-2 rounded-lg"
-                          value={stage.proposedInstallationDate ? stage.proposedInstallationDate.toISOString().slice(0, 10) : ""}
-                          disabled={!stageEditable}
-                          onChange={(e) => updateStage(stageIndex, { proposedInstallationDate: e.target.value ? new Date(e.target.value) : null })}
-                        />
-                      </label>
-                      <label className="text-sm text-gray-600 block">
-                        Proposed Installation Time
-                        <input
-                          type="time"
-                          className="mt-2 w-full border p-2 rounded-lg"
-                          value={stage.proposedInstallationTime || ""}
-                          disabled={!stageEditable}
-                          onChange={(e) => updateStage(stageIndex, { proposedInstallationTime: e.target.value })}
-                        />
-                      </label>
-                    </div>
-                    <div className="mt-4">
-                      <label className="text-sm text-gray-600 block">Remarks / Notes</label>
-                      <textarea
-                        className="mt-2 w-full border p-2 rounded-lg min-h-[100px]"
-                        value={stage.schedulingNotes || ''}
-                        disabled={!stageEditable}
-                        onChange={(e) => updateStage(stageIndex, { schedulingNotes: e.target.value })}
-                      />
-                    </div>
-                    {stage.completed && stage.saved && stage.proposedInstallationDate && stage.proposedInstallationTime && (
-                      <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-700">
-                        Installation schedule proposed for {formatDateToMMDDYYYY(stage.proposedInstallationDate)} at {stage.proposedInstallationTime}.
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {stage.key !== "installation_scheduling" && (
-                  <>
                     <div className="mt-5 border rounded-2xl border-dashed border-slate-200 bg-white p-4">
                       <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                         <UploadCloud />
@@ -1414,9 +1367,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                         </div>
                       )}
                     </div>
-                  </>
-                )}
-
+                
                 <div className="mt-5 flex justify-end gap-3">
                   {!stage.completed && (
                     <button

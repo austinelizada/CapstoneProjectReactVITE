@@ -3,6 +3,7 @@ import {
   isSiteInspectionVisible,
   getInspectionDisplayTotal,
   isOnlineCustomerInspection,
+  buildWarrantyPayload,
   normalizeWalkInWebsiteAccountState,
   normalizeWarrantyPeriodValue,
   requiresSignedContractForWalkIn,
@@ -199,9 +200,19 @@ describe("normalizeWarrantyPeriodValue", () => {
     expect(normalizeWarrantyPeriodValue("90")).toBe(90);
   });
 
-  it("treats only custom warranty values as custom entries", () => {
+  it("preserves no-warranty and custom warranty selections", () => {
+    expect(normalizeWarrantyPeriodValue("No Warranty")).toBe("No Warranty");
     expect(normalizeWarrantyPeriodValue("Custom")).toBe("Custom");
     expect(normalizeWarrantyPeriodValue(45)).toBe("Custom");
     expect(normalizeWarrantyPeriodValue(0)).toBe(90);
+  });
+});
+
+describe("buildWarrantyPayload", () => {
+  it("preserves No Warranty instead of converting it to the 90-day default", () => {
+    expect(buildWarrantyPayload("No Warranty", 90)).toEqual({
+      warranty_period: "No Warranty",
+      custom_warranty_days: null,
+    });
   });
 });

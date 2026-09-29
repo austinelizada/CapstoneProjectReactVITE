@@ -16,6 +16,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { getActivityStorageKey, readActivityLog } from "@/lib/activityLog";
 import { getAdminOrder } from "@/api/orders";
+import { formatDateTimeToMMMDDYYYY } from "@/lib/dateUtils";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -760,7 +761,7 @@ function AdminProfile() {
                                         : "Project"}
                                   </span>
                                   <span className="text-gray-500">
-                                    {new Date(activity.createdAt).toLocaleString()}
+                                    {formatDateTimeToMMMDDYYYY(activity.createdAt)}
                                   </span>
                                   <span className="font-semibold uppercase tracking-wide text-gray-400">
                                     Page: {activity.page || "Admin"}

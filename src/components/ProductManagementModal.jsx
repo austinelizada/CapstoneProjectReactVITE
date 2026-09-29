@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, Plus, Search, Pencil, Trash2 } from 'lucide-react';
 import * as catalogApi from '@/api/catalog';
+import { formatDateToMMMDDYYYY } from '@/lib/dateUtils';
 
 const getCatalogText = (value, fallback = '') => {
   if (value === null || value === undefined) return fallback;
@@ -280,7 +281,7 @@ export default function ProductManagementModal({ open, show, onClose, onChange }
                         <tr key={getCatalogText(it._id || it.id || it.name, `${tab}-${idx}`)} className="hover:bg-gray-50">
                           <td className="px-3 py-2">{(page-1)*perPage + idx + 1}</td>
                           <td className="px-3 py-2 font-medium text-gray-700">{getCatalogText(it.name || it.type || it.variant || it.template_name, 'Untitled')}</td>
-                          <td className="px-3 py-2 text-gray-500">{it.createdAt || it.created_at || it.created ? new Date(it.createdAt || it.created_at || it.created).toLocaleDateString() : '-'}</td>
+                          <td className="px-3 py-2 text-gray-500">{formatDateToMMMDDYYYY(it.createdAt || it.created_at || it.created) || '-'}</td>
                           <td className="px-3 py-2 text-right">
                             <button type="button" onClick={()=>setEditing(it)} className="rounded-lg p-2 text-gray-600 transition hover:bg-gray-100 hover:text-red-600"><Pencil size={14}/></button>
                             <button type="button" onClick={()=>requestDelete(it)} className="ml-1 rounded-lg p-2 text-gray-600 transition hover:bg-gray-100 hover:text-red-600"><Trash2 size={14}/></button>

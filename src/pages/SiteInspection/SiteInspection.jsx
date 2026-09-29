@@ -24,7 +24,7 @@ import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
-import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
+import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { recordActivity } from "@/lib/activityLog";
@@ -87,7 +87,7 @@ const normalizeWorkflowValue = (value) =>
   (value || "").toString().trim().toLowerCase();
 
 export const normalizeWarrantyPeriodValue = (value, fallback = 90) => {
-  if (value === "Custom") return "Custom";
+  if (value === "Custom" || value === "No Warranty") return value;
 
   const numericValue = Number(value);
   if (Number.isFinite(numericValue) && numericValue > 0) {
@@ -99,6 +99,23 @@ export const normalizeWarrantyPeriodValue = (value, fallback = 90) => {
   }
 
   return fallback;
+};
+
+export const buildWarrantyPayload = (warrantyPeriod, customWarrantyDays) => {
+  if (warrantyPeriod === "No Warranty") {
+    return { warranty_period: "No Warranty", custom_warranty_days: null };
+  }
+
+  const warrantyDays = warrantyPeriod === "Custom"
+    ? Number(customWarrantyDays) || 90
+    : Number(warrantyPeriod) || 90;
+
+  return {
+    warranty_period: warrantyDays,
+    custom_warranty_days: warrantyPeriod === "Custom"
+      ? warrantyDays
+      : Number(customWarrantyDays) || Number(warrantyPeriod) || 90,
+  };
 };
 
 const normalizeProductId = (productId) => {
@@ -703,14 +720,7 @@ function SiteInspection() {
       estimation_mode: "auto",
       inspection_date: toApiDate(payload.inspection_date),
       estimated_installation_date: toApiDate(payload.estimated_installation_date),
-      warranty_period:
-        payload.warranty_period === "Custom"
-          ? Number(payload.custom_warranty_days) || 90
-          : Number(payload.warranty_period) || 90,
-      custom_warranty_days:
-        payload.warranty_period === "Custom"
-          ? Number(payload.custom_warranty_days) || 90
-          : Number(payload.custom_warranty_days) || Number(payload.warranty_period) || 90,
+      ...buildWarrantyPayload(payload.warranty_period, payload.custom_warranty_days),
       has_account_on_website: Boolean(payload.has_account_on_website),
       manual_override: payload.manual_override || "",
       total_amount: computedTotal,
@@ -1822,14 +1832,7 @@ function SiteInspection() {
         estimated_installation_date: toApiDate(editInspection.estimated_installation_date),
         payment_terms: editInspection.payment_terms || undefined,
         agreed_payment_date: toApiDate(editInspection.agreed_payment_date),
-        warranty_period:
-          editInspection.warranty_period === "Custom"
-            ? Number(editInspection.custom_warranty_days) || 90
-            : Number(editInspection.warranty_period) || 90,
-        custom_warranty_days:
-          editInspection.warranty_period === "Custom"
-            ? Number(editInspection.custom_warranty_days) || 90
-            : Number(editInspection.custom_warranty_days) || Number(editInspection.warranty_period) || 90,
+        ...buildWarrantyPayload(editInspection.warranty_period, editInspection.custom_warranty_days),
         downpayment_received: Boolean(editInspection.downpayment_received),
         items: (editInspection.items || []).map((item) => {
           const normalizedProductId = normalizeProductId(item.product_id);
@@ -2180,11 +2183,11 @@ function SiteInspection() {
                       const phone = inspection.customer?.phone || inspection.customer_phone || "—";
                       const customerTypeLabel = getCustomerTypeLabel(inspection);
                       const siteAddress = inspection.shipping_address || inspection.siteAddress || inspection.customer?.street_address || "—";
-                      const createdDate = inspection.createdAt ? formatDateToMMDDYYYY(inspection.createdAt) : "—";
+                      const createdDate = formatDateToMMMDDYYYY(inspection.createdAt) || "—";
                       const createdTime = inspection.createdAt ? new Date(inspection.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
-                      const inspectionDate = inspection.inspection_date ? formatDateToMMDDYYYY(inspection.inspection_date) : "—";
+                      const inspectionDate = formatDateToMMMDDYYYY(inspection.inspection_date) || "—";
                       const installDateValue = getEstimatedInstallationDate(inspection);
-                      const installDate = installDateValue ? formatDateToMMDDYYYY(installDateValue) : "—";
+                      const installDate = formatDateToMMMDDYYYY(installDateValue) || "—";
                       const total = Number(inspection.total_amount || inspection.contract_amount || 0) || (Array.isArray(inspection.items)
                         ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0)
                         : 0);
@@ -2516,11 +2519,13 @@ function SiteInspection() {
 
                     <div className="mt-6">
                       <p className={`mb-3 text-[14px] font-bold ${labelClass}`}>Warranty Period</p>
-                      <div className="flex flex-wrap items-center gap-3">
-                        {[30, 90, "Custom"].map((option) => {
+                      <div className="grid max-w-[286px] grid-cols-3 gap-2">
+                        {["No Warranty", 30, 90, "Custom"].map((option) => {
                           const isSelected = option === "Custom"
                             ? newInspection.warranty_period === "Custom" || normalizeWarrantyPeriodValue(newInspection.warranty_period) === "Custom"
-                            : Number(newInspection.warranty_period) === Number(option);
+                            : option === "No Warranty"
+                              ? newInspection.warranty_period === "No Warranty"
+                              : Number(newInspection.warranty_period) === Number(option);
                           return (
                             <button
                               key={String(option)}
@@ -2535,9 +2540,9 @@ function SiteInspection() {
                                   return;
                                 }
 
-                                handleInspectionFieldChange("warranty_period", Number(option));
+                                handleInspectionFieldChange("warranty_period", option === "No Warranty" ? option : Number(option));
                               }}
-                              className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+                              className={`${option === "Custom" ? "col-span-3 min-h-[46px]" : "min-h-[68px]"} w-full rounded-xl border px-3 py-2 text-sm font-bold transition ${
                                 isSelected
                                   ? "border-red-500 bg-red-600 text-white shadow-sm"
                                   : darkMode
@@ -2545,7 +2550,7 @@ function SiteInspection() {
                                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
                               }`}
                             >
-                              {option === "Custom" ? "Custom" : `${option} Days`}
+                              {option === "Custom" || option === "No Warranty" ? option : `${option} Days`}
                             </button>
                           );
                         })}
@@ -2923,6 +2928,11 @@ function SiteInspection() {
             const paymentReceivedQuestion = getPaymentReceivedQuestion(viewInspection.payment_terms);
             const paymentStatusLabel = getPaymentStatusLabel(viewInspection.payment_terms);
             const paymentTermsText = getPaymentTermsLabel(viewInspection.payment_terms);
+            const warrantyPeriod = viewInspection.warranty_period === "No Warranty"
+              ? "No Warranty"
+              : `${viewInspection.warranty_period === "Custom"
+                ? Number(viewInspection.custom_warranty_days) || 90
+                : Number(viewInspection.warranty_period) || 90} days`;
             const agreedPaymentDateValue = viewInspection.agreed_payment_date ? formatDateToMMDDYYYY(viewInspection.agreed_payment_date) : null;
             const statusBadge = !viewInspection.inspection_date
               ? {
@@ -3121,6 +3131,11 @@ function SiteInspection() {
                           <span className={darkMode ? "text-slate-300" : "text-slate-600"}>{paymentTermsText}</span>
                         </div>
 
+                        <div className="flex items-center justify-between text-sm">
+                          <span className={darkMode ? "text-slate-300" : "text-slate-600"}>Warranty Period</span>
+                          <span className={darkMode ? "font-semibold text-slate-100" : "font-semibold text-slate-800"}>{warrantyPeriod}</span>
+                        </div>
+
                         {agreedPaymentDateValue && (
                           <div className="mt-3 flex items-center justify-between text-sm text-slate-500">
                             <span className={darkMode ? "text-slate-300" : "text-slate-600"}>Agreed Payment Date (optional)</span>
@@ -3245,11 +3260,13 @@ function SiteInspection() {
 
                     <div className="mt-6">
                       <p className={`mb-3 text-[14px] font-bold ${labelClass}`}>Warranty Period</p>
-                      <div className="flex flex-wrap items-center gap-3">
-                        {[30, 90, "Custom"].map((option) => {
+                      <div className="grid max-w-[286px] grid-cols-3 gap-2">
+                        {["No Warranty", 30, 90, "Custom"].map((option) => {
                           const isSelected = option === "Custom"
                             ? editInspection.warranty_period === "Custom" || normalizeWarrantyPeriodValue(editInspection.warranty_period) === "Custom"
-                            : Number(editInspection.warranty_period) === Number(option);
+                            : option === "No Warranty"
+                              ? editInspection.warranty_period === "No Warranty"
+                              : Number(editInspection.warranty_period) === Number(option);
                           return (
                             <button
                               key={String(option)}
@@ -3264,9 +3281,9 @@ function SiteInspection() {
                                   return;
                                 }
 
-                                handleEditChange("warranty_period", Number(option));
+                                handleEditChange("warranty_period", option === "No Warranty" ? option : Number(option));
                               }}
-                              className={`rounded-xl border px-4 py-2 text-sm font-bold transition ${
+                              className={`${option === "Custom" ? "col-span-3 min-h-[46px]" : "min-h-[68px]"} w-full rounded-xl border px-3 py-2 text-sm font-bold transition ${
                                 isSelected
                                   ? "border-red-500 bg-red-600 text-white shadow-sm"
                                   : darkMode
@@ -3274,7 +3291,7 @@ function SiteInspection() {
                                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
                               }`}
                             >
-                              {option === "Custom" ? "Custom" : `${option} Days`}
+                              {option === "Custom" || option === "No Warranty" ? option : `${option} Days`}
                             </button>
                           );
                         })}
@@ -3490,7 +3507,7 @@ function SiteInspection() {
                                 <div className="mt-3 rounded-xl border border-slate-700 bg-slate-800 p-3 shadow-sm">
                                   <div className="mb-3 flex items-center justify-between gap-3 text-xs text-slate-400">
                                     <span className="font-semibold text-slate-200">Payment #1</span>
-                                    <span>{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                                    <span>{formatDateToMMMDDYYYY(new Date())}</span>
                                   </div>
 
                                   <div className="rounded-lg border border-slate-600 bg-slate-900/80 p-3">

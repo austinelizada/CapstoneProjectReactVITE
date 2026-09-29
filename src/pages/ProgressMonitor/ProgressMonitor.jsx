@@ -3,11 +3,10 @@ import {
   Search,
   Eye,
   Pencil,
-  X,
 } from "lucide-react";
 
 import { getAdminOrders, updateOrderProgress, updateOrderStatus } from "@/api/orders";
-import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
+import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getProgressColor } from "@/lib/utils";
 import toast, { Toaster } from "react-hot-toast";
 import { uploadFiles } from "@/api/uploads";
@@ -45,23 +44,24 @@ const formatOrderStatus = (status, contractStatus) => {
 
 const getProjectStatus = (order) => {
   if (hasDelayedStage(order.progress_stages)) return "Delayed";
-
-  const scheduleStages = Array.isArray(order.progress_stages)
-    ? order.progress_stages.filter((stage) =>
-        ["installation_scheduling", "installation_scheduled", "installation_agreement"].includes(
-          (stage.key || "").toString().toLowerCase()
-        )
-      )
-    : [];
-  const scheduleStage = [...scheduleStages].reverse().find((stage) =>
-    ["accepted", "reschedule_requested"].includes(stage.customerResponse)
-  ) || scheduleStages.slice(-1)[0] || null;
-
-  if (scheduleStage?.customerResponse === "reschedule_requested") {
-    return "Installation Reschedule Requested";
-  }
-
   return formatOrderStatus(order.status, order.contract_status);
+};
+
+const getStageProgressColor = (project) => {
+  const status = String(project?.status || "").toLowerCase();
+
+  if (status === "completed") return "bg-emerald-500";
+  if (status === "installation") return "bg-sky-500";
+  if (status === "fabrication" || status === "processing") return "bg-amber-500";
+  if (status === "cutting") return "bg-orange-500";
+  if (status === "delayed") return "bg-rose-500";
+  if (status === "accepted") return "bg-violet-500";
+  if (status === "pending") return "bg-slate-400";
+
+  const progress = Number(project?.progress) || 0;
+  if (progress >= 70) return "bg-emerald-500";
+  if (progress >= 31) return "bg-amber-500";
+  return "bg-red-500";
 };
 
 const mapProgressFromStatus = (status, progress) => {
@@ -87,21 +87,66 @@ const formatClientType = (order) => {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
-const hasFinalStageCompleted = (stages = []) =>
-  Array.isArray(stages) &&
-  stages.length > 0 &&
-  stages[stages.length - 1].completed === true;
+const buildProjectRows = (order) => {
+  const orderId = order?._id || order?.id || "unknown-order";
+  const items = Array.isArray(order?.items) && order.items.length > 0 ? order.items.filter(Boolean) : [null];
 
-const canCancelProject = (project) => {
-  const progress = Number(project.progress) || 0;
-  const status = String(project.status || "").toLowerCase();
+  return items.map((item, index) => {
+    const itemName =
+      item?.name ||
+      item?.product_name ||
+      item?.product_id?.name ||
+      item?.category ||
+      order?.product_name ||
+      order?.project_name ||
+      "Project";
 
-  if (progress >= 100) return false;
-  if (status === "completed") return false;
-  if (status === "cancelled") return false;
-  if (hasFinalStageCompleted(project.stages)) return false;
+    const customerName =
+      order.customer_name ||
+      `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim() ||
+      "Unknown";
 
-  return true;
+    return {
+      id: item?._id || item?.id || `${orderId}-item-${index}`,
+      orderId,
+      client: customerName,
+      clientEmail: order.customer?.email || order.customer_email || "",
+      product: itemName,
+      clientType: formatClientType(order),
+      inspection: formatDateToMMMDDYYYY(order.inspection_date) ||
+        (order.inspection_status && order.inspection_status !== "pending"
+          ? order.inspection_status.charAt(0).toUpperCase() + order.inspection_status.slice(1)
+          : "TBD"),
+      installation: formatDateToMMMDDYYYY(order.estimated_installation_date) || "TBD",
+      estimated_installation_date: order.estimated_installation_date,
+      progress: mapProgressFromStatus(order.status, order.progress),
+      stages: order.progress_stages || [],
+      status: getProjectStatus(order),
+      statusKey: order.status,
+      contract_status: order.contract_status,
+      payment_status: order.payment_status,
+      inspection_status: order.inspection_status,
+      inspection_date: order.inspection_date,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+      contract_terms: order.contract_terms,
+      rawOrder: order,
+      itemIndex: index,
+    };
+  });
+};
+
+const isSameProjectRow = (currentProject, targetProject) => {
+  if (!currentProject || !targetProject) return false;
+
+  if (currentProject.id && targetProject.id && currentProject.id === targetProject.id) {
+    return true;
+  }
+
+  return (
+    currentProject.orderId === targetProject.orderId &&
+    currentProject.itemIndex === targetProject.itemIndex
+  );
 };
 
 function ProgressMonitor() {
@@ -156,9 +201,7 @@ function ProgressMonitor() {
         statusFilter === "All"
           ? true
           : statusFilter === "Pending"
-          ? ["Pending", "Accepted", "Installation Reschedule Requested"].includes(project.status)
-          : statusFilter === "Installation Reschedule Requested"
-          ? project.status === "Installation Reschedule Requested"
+          ? ["Pending", "Accepted"].includes(project.status)
           : project.status === statusFilter;
 
       return matchSearch && matchStatus;
@@ -197,41 +240,7 @@ function ProgressMonitor() {
             ].includes(order.status)
             || (order.contract_status && order.contract_status.toString().toLowerCase() === "accepted")
           )
-          .map((order) => ({
-            id: order._id || order.id,
-            client:
-              order.customer_name ||
-              `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim() ||
-              "Unknown",
-            clientEmail: order.customer?.email || order.customer_email || "",
-            product:
-              order.items && order.items.length > 0
-                ? order.items[0].name || order.items[0].category || "Project"
-                : "Project",
-            clientType: formatClientType(order),
-            inspection:
-              order.inspection_status && order.inspection_status !== "pending"
-                ? order.inspection_status.charAt(0).toUpperCase() + order.inspection_status.slice(1)
-                : order.inspection_date
-                ? formatDateToMMDDYYYY(order.inspection_date)
-                : "TBD",
-            installation:
-              order.inspection_date
-                ? formatDateToMMDDYYYY(order.inspection_date)
-                : "TBD",
-            progress: mapProgressFromStatus(order.status, order.progress),
-            stages: order.progress_stages || [],
-            status: getProjectStatus(order),
-            statusKey: order.status,
-            contract_status: order.contract_status,
-            payment_status: order.payment_status,
-            inspection_status: order.inspection_status,
-            inspection_date: order.inspection_date,
-            createdAt: order.createdAt,
-            updatedAt: order.updatedAt,
-            contract_terms: order.contract_terms,
-            rawOrder: order,
-          }));
+          .flatMap((order) => buildProjectRows(order));
         setProjectList(projects);
       } catch (error) {
         console.error("Failed to load progress monitor projects", error);
@@ -268,15 +277,16 @@ function ProgressMonitor() {
         });
       }
 
-      if (updatedProject.id) {
-        const response = await updateOrderProgress(updatedProject.id, {
+      const targetOrderId = updatedProject.orderId || updatedProject.id;
+      if (targetOrderId) {
+        const response = await updateOrderProgress(targetOrderId, {
           progress: updatedProject.progress,
           status: updatedProject.status,
-          installation_date: updatedProject.installation,
+          estimated_installation_date: updatedProject.installation,
           stages: updatedProject.stages,
           proof_images: [],
         });
-        recordActivity(user, `Updated progress for project ${updatedProject.id}.`, "Progress Monitor");
+        recordActivity(user, `Updated progress for project ${targetOrderId}.`, "Progress Monitor");
 
         if (response?.order) {
           const savedOrder = response.order;
@@ -288,6 +298,7 @@ function ProgressMonitor() {
             payment_status: savedOrder.payment_status,
             inspection_status: savedOrder.inspection_status,
             inspection_date: savedOrder.inspection_date,
+            estimated_installation_date: savedOrder.estimated_installation_date,
             createdAt: savedOrder.createdAt,
             updatedAt: savedOrder.updatedAt,
             contract_terms: savedOrder.contract_terms,
@@ -300,7 +311,11 @@ function ProgressMonitor() {
       }
 
       setProjectList((items) =>
-        items.map((item) => (item.id === updatedProject.id ? updatedProject : item))
+        items.map((item) =>
+          isSameProjectRow(item, updatedProject)
+            ? { ...item, ...updatedProject, id: item.id || updatedProject.id, orderId: item.orderId || updatedProject.orderId }
+            : item
+        )
       );
       setSelectedProject(updatedProject);
     } catch (err) {
@@ -311,25 +326,27 @@ function ProgressMonitor() {
 
   const handleTimelineOrderChange = (savedOrder) => {
     if (!savedOrder) return;
+    const orderId = savedOrder._id || savedOrder.id || selectedProject?.orderId || selectedProject?.id;
     const updatedProject = {
       ...(selectedProject || {}),
-      id: savedOrder._id || savedOrder.id || selectedProject?.id,
+      id: selectedProject?.id || orderId,
+      orderId,
       client:
         savedOrder.customer_name ||
         `${savedOrder.customer?.first_name || ""} ${savedOrder.customer?.last_name || ""}`.trim() ||
         selectedProject?.client ||
         "Unknown",
       product:
-        savedOrder.items && savedOrder.items.length > 0
+        selectedProject?.product ||
+        (savedOrder.items && savedOrder.items.length > 0
           ? savedOrder.items[0].name || savedOrder.items[0].category || "Project"
-          : selectedProject?.product || "Project",
-      inspection:
-        savedOrder.inspection_status && savedOrder.inspection_status !== "pending"
+          : "Project"),
+      inspection: formatDateToMMMDDYYYY(savedOrder.inspection_date) ||
+        (savedOrder.inspection_status && savedOrder.inspection_status !== "pending"
           ? savedOrder.inspection_status.charAt(0).toUpperCase() + savedOrder.inspection_status.slice(1)
-          : savedOrder.inspection_date
-          ? formatDateToMMDDYYYY(savedOrder.inspection_date)
-          : "TBD",
-      installation: savedOrder.inspection_date ? formatDateToMMDDYYYY(savedOrder.inspection_date) : "TBD",
+          : "TBD"),
+      installation: formatDateToMMMDDYYYY(savedOrder.estimated_installation_date) || "TBD",
+      estimated_installation_date: savedOrder.estimated_installation_date,
       progress: mapProgressFromStatus(savedOrder.status, savedOrder.progress),
       stages: savedOrder.progress_stages || [],
       progress_stages: savedOrder.progress_stages || [],
@@ -346,13 +363,13 @@ function ProgressMonitor() {
     };
 
     setProjectList((items) =>
-      items.map((item) => (item.id === updatedProject.id ? updatedProject : item))
+      items.map((item) =>
+        isSameProjectRow(item, updatedProject)
+          ? { ...item, ...updatedProject, id: item.id || updatedProject.id, orderId }
+          : item
+      )
     );
     setSelectedProject(updatedProject);
-  };
-
-  const requestCancel = (orderId) => {
-    setCancelConfirm({ open: true, id: orderId });
   };
 
   const closeCancelModal = () => setCancelConfirm({ open: false, id: null });
@@ -361,7 +378,7 @@ function ProgressMonitor() {
     const orderId = cancelConfirm.id;
     setCancelConfirm({ open: false, id: null });
     if (!orderId) return;
-    const prev = projectList.find((p) => p.id === orderId);
+    const prev = projectList.find((p) => (p.orderId || p.id) === orderId && p.itemIndex === selectedProject?.itemIndex);
     const prevStatus = prev?.statusKey || prev?.status || null;
     try {
       setCancellingId(orderId);
@@ -371,7 +388,7 @@ function ProgressMonitor() {
         const saved = res.order;
         setProjectList((prevList) =>
           prevList.map((p) =>
-            p.id === orderId
+            isSameProjectRow(p, prev)
               ? {
                   ...p,
                   rawOrder: saved,
@@ -443,7 +460,7 @@ function ProgressMonitor() {
         ), { duration: 6000 });
       } else {
         // fallback: mark locally
-        setProjectList((prevList) => prevList.map((p) => (p.id === orderId ? { ...p, status: "Cancelled", statusKey: "cancelled" } : p)));
+        setProjectList((prevList) => prevList.map((p) => (isSameProjectRow(p, prev) ? { ...p, status: "Cancelled", statusKey: "cancelled" } : p)));
         toast((t) => (
           <div className="flex items-center justify-between gap-4">
             <div>Order cancelled</div>
@@ -458,7 +475,7 @@ function ProgressMonitor() {
                         const restored = undoRes.order;
                         setProjectList((prevList) =>
                           prevList.map((p) =>
-                            p.id === orderId
+                            (p.orderId || p.id) === orderId
                               ? {
                                   ...p,
                                   rawOrder: restored,
@@ -589,8 +606,8 @@ function ProgressMonitor() {
                     <th className="p-4 text-left">Client</th>
                     <th className="p-4 text-left">Client Type</th>
                     <th className="p-4 text-left">Product</th>
-                    <th className="p-4 text-left">Inspection</th>
-                    <th className="p-4 text-left">Installation</th>
+                    <th className="p-4 text-left">Site Inspection</th>
+                    <th className="p-4 text-left">Est. Installation</th>
                     <th className="p-4 text-left">Progress</th>
                     <th className="p-4 text-left">Status</th>
                     <th className="p-4 text-center">Actions</th>
@@ -637,10 +654,10 @@ function ProgressMonitor() {
 
                           <div className="w-full bg-gray-200 rounded-full h-3">
                             {(() => {
-                              const progressColor = getProgressColor(project.progress);
+                              const progressColor = getStageProgressColor(project);
                               return (
                                 <div
-                                  className={`h-3 rounded-full ${progressColor.bar}`}
+                                  className={`h-3 rounded-full ${progressColor}`}
                                   style={{
                                     width: `${project.progress}%`,
                                   }}
@@ -681,20 +698,6 @@ function ProgressMonitor() {
                                 className="bg-yellow-100 text-yellow-600 p-2 rounded-lg"
                               >
                                 <Pencil size={18} />
-                              </button>
-                            )}
-
-                            {canCancelProject(project) && (
-                              <button
-                                onClick={() => {
-                                  setSelectedProject(project);
-                                  requestCancel(project.id);
-                                }}
-                                disabled={cancellingId === project.id}
-                                className={`p-2 rounded-lg ${cancellingId === project.id ? "bg-red-200 text-red-300" : "bg-red-100 text-red-600"}`}
-                                title="Cancel project"
-                              >
-                                <X size={18} />
                               </button>
                             )}
 

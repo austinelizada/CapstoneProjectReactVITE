@@ -20,7 +20,7 @@ import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
 import { getAdminOrders, acceptContract, declineContract, updateOrderStatus } from "@/api/orders";
-import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, getTodayIso, isTodayOrFuture, isSameOrAfter } from "@/lib/dateUtils";
+import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY, getTodayIso, isTodayOrFuture, isSameOrAfter } from "@/lib/dateUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
@@ -432,6 +432,14 @@ function Transactions() {
     setContractPreviewOrder(order);
     setContractPreviewData(data);
     setShowContractModal(true);
+  };
+
+  const openReadOnlyContract = (order) => {
+    if (!order) return;
+    setContractPreviewOrder(order);
+    setContractPreviewData(buildContractDataFromOrder(order));
+    setShowContractModal(false);
+    setShowFullContractModal(true);
   };
 
   const openEditPaymentModal = (order) => {
@@ -1043,7 +1051,7 @@ function Transactions() {
                         <div className={previewCardClass}>
                           <div className={`mb-3 flex items-center justify-between gap-3 text-sm ${secondaryTextClass}`}>
                             <span className={darkMode ? "font-semibold text-slate-100" : "font-semibold text-slate-700"}>Payment #1</span>
-                            <span className={tertiaryTextClass}>{new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                            <span className={tertiaryTextClass}>{formatDateToMMMDDYYYY(new Date())}</span>
                           </div>
 
                           <div className={`grid gap-2 text-sm sm:grid-cols-[1fr_auto] sm:items-end ${secondaryTextClass}`}>
@@ -1317,11 +1325,14 @@ function Transactions() {
                   {currentData.map((order, index) => {
                     const now = new Date();
                     const customerName = order.customer_name || (order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : "N/A");
-                    const projectName = order.items && order.items.length > 0 ? (order.items[0].name || `${order.items.length} item(s)`) : "N/A";
+                    const productLabel = Array.isArray(order.items) && order.items.length > 0
+                      ? (order.items.length > 1 ? "Batch Order" : (order.items[0].name || order.items[0].product_name || "Project"))
+                      : "N/A";
+                    const projectName = productLabel;
                     const amountVal = order.contract_amount || order.total_amount || 0;
                     const paidAmount = Number(order.payment_amount || order.downpayment_amount || (order.downpayment_received ? amountVal * 0.5 : 0));
                     const amount = `₱${Number(amountVal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                    const inspectionLabel = order.items && order.items.length > 0 ? (order.items[0].name || `${order.items.length} item(s)`) : "N/A";
+                    const inspectionLabel = productLabel;
                     const orderType = order.order_type === "walk_in_customer" ? "Walk-in" : "Website Order";
                     const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
                     const installDate = order.estimated_installation_date ? formatDateToMMDDYYYY(order.estimated_installation_date) : "—";
@@ -1369,6 +1380,7 @@ function Transactions() {
                             <td className="p-4">
                               <div className="flex flex-wrap justify-center gap-2">
                                 <button title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>
+                                <button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button>
                                 <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
                               </div>
                             </td>
@@ -1403,7 +1415,7 @@ function Transactions() {
                                 </div>
                               )}
                             </td>
-                            <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "receipts" && canReviewTransaction(order) && (<><button title="Approve Transaction" onClick={() => openTransactionConfirm("approve", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><Check size={18} /></button><button title="Cancel Transaction" onClick={() => openTransactionConfirm("reject", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><XCircle size={20} /></button></>)}{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button><button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button> </div></td>
+                            <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "receipts" && canReviewTransaction(order) && (<><button title="Approve Transaction" onClick={() => openTransactionConfirm("approve", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><Check size={18} /></button><button title="Cancel Transaction" onClick={() => openTransactionConfirm("reject", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><XCircle size={20} /></button></>)}{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button><button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button><button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button> </div></td>
                           </>
                         )}
 
@@ -1477,12 +1489,13 @@ function Transactions() {
             const previewWarrantyExpiry = contractPreviewOrder.warranty_expiry_date || contractPreviewOrder.warrantyExpiryDate || contractPreviewOrder.warranty_end_date || contractPreviewOrder.warranty_end || getWarrantyExpiry(contractPreviewOrder) || derivedWarrantyExpiry;
             const warrantyPeriodText = contractPreviewOrder.warranty_period || (contractPreviewOrder.warranty_period_value ? `${contractPreviewOrder.warranty_period_value}-day warranty` : `${warrantyDays}-day warranty`);
             const remainingWarrantyDays = Math.max(0, Math.ceil((new Date(previewWarrantyExpiry) - new Date()) / (1000 * 60 * 60 * 24)));
-            const formattedStart = new Date(savedWarrantyStart).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-            const formattedExpiry = new Date(previewWarrantyExpiry).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+            const formattedStart = formatDateToMMMDDYYYY(savedWarrantyStart);
+            const formattedExpiry = formatDateToMMMDDYYYY(previewWarrantyExpiry);
             const contractNo = contractPreviewOrder.contract_number || contractPreviewOrder.contractId || contractPreviewOrder.tracking || contractPreviewOrder._id || "N/A";
             const createdDate = contractPreviewOrder.createdAt || contractPreviewOrder.updatedAt || contractPreviewOrder.contract_date || new Date();
-            const inspectionDate = contractPreviewOrder.inspection_date ? new Date(contractPreviewOrder.inspection_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "TBD";
+            const inspectionDate = formatDateToMMMDDYYYY(contractPreviewOrder.inspection_date) || "TBD";
             const paymentTermsText = contractPreviewOrder.payment_terms || "50% downpayment, 50% upon completion";
+            const previewItems = Array.isArray(contractPreviewOrder.items) ? contractPreviewOrder.items : [];
 
             return (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1555,17 +1568,19 @@ function Transactions() {
                       MEASUREMENTS &amp; PROGRESS MATRIX
                     </h3>
 
-                    {(contractPreviewOrder.items || []).length > 0 ? (
-                      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px]">
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="font-semibold text-slate-800">{contractPreviewOrder.items[0].name || "Item"}</div>
-                          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                            Completed
-                          </span>
-                        </div>
-                        <div className="mt-1 text-slate-600">
-                          Size: {contractPreviewOrder.items[0].width || "—"}W x {contractPreviewOrder.items[0].height || "—"}H | Qty: {contractPreviewOrder.items[0].quantity || 1} | Base Rate: ₱{Number(contractPreviewOrder.items[0].unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/sqft
-                        </div>
+                    {previewItems.length > 0 ? (
+                      <div className="space-y-2">
+                        {previewItems.map((item, index) => {
+                          const itemName = item.name || item.product_name || `Item ${index + 1}`;
+                          return (
+                            <div key={`${itemName}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px]">
+                              <div className="font-semibold text-slate-800">{itemName}</div>
+                              <div className="mt-1 text-slate-600">
+                                Size: {item.width || "—"}W x {item.height || "—"}H | Qty: {item.quantity || 1} | Base Rate: ₱{Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/sqft
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] text-slate-600">
@@ -1629,7 +1644,7 @@ function Transactions() {
                           </div>
                           <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
                             <span className="text-slate-600">Date Created</span>
-                            <span className="font-semibold text-slate-800">{new Date(createdDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                            <span className="font-semibold text-slate-800">{formatDateToMMMDDYYYY(createdDate)}</span>
                           </div>
                           <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
                             <span className="text-slate-600">Inspection Date</span>

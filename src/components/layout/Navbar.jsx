@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Menu, Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck } from "lucide-react";
+import { Menu, Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send } from "lucide-react";
 import { getAdminOrders } from "@/api/orders";
 import { formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
@@ -81,15 +81,18 @@ function NotificationMenu() {
 
   useEffect(() => {
     let active = true;
+    let hasFetched = false;
 
     const fetchNotifications = async () => {
-      setLoading(true);
+      if (!hasFetched) setLoading(true);
       try {
-        const [newOrders, inspections, accepted, declined] = await Promise.all([
+        const [newOrders, inspections, accepted, declined, sentContracts, paymentSubmissions] = await Promise.all([
           getAdminOrders({ status: "order_submitted" }),
           getAdminOrders({ status: "site_inspection" }),
           getAdminOrders({ contract_status: "accepted" }),
           getAdminOrders({ contract_status: "declined" }),
+          getAdminOrders({ contract_status: "sent" }),
+          getAdminOrders({ payment_proof_submitted: "true" }),
         ]);
 
         const readNotificationIds = getReadNotificationIds();
@@ -104,7 +107,9 @@ function NotificationMenu() {
             path: "/dashboard",
             date: order.createdAt,
           })),
-          ...(inspections.orders || []).map((order) => ({
+          ...(inspections.orders || [])
+            .filter((order) => !["sent", "declined"].includes(String(order.contract_status || "").toLowerCase()))
+            .map((order) => ({
             id: `${order._id}-inspection`,
             title: "Inspection needs attention",
             message: `${order.tracking || "A project"} is ready for site inspection.`,
@@ -134,6 +139,35 @@ function NotificationMenu() {
             path: `/site-inspection?view=${order._id || order.id || order.tracking}`,
             date: order.updatedAt || order.createdAt,
           })),
+          ...(sentContracts.orders || []).map((order) => ({
+            id: `${order._id}-contract-sent-${new Date(order.contractSentAt || order.updatedAt || order.createdAt).getTime()}`,
+            title: "Contract sent",
+            message: `Contract for ${order.tracking || "a project"} was sent to the customer.`,
+            icon: Send,
+            color: "text-sky-600",
+            category: "sent",
+            path: `/site-inspection?view=${order._id || order.id || order.tracking}`,
+            date: order.contractSentAt || order.updatedAt || order.createdAt,
+          })),
+          ...(paymentSubmissions.orders || []).map((order) => {
+            const customerName = `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim()
+              || order.customer_name
+              || "Customer";
+            const orderNumber = order.tracking || order.order_number || order.orderNumber || order._id;
+            const amount = Number(order.payment_proof_amount || order.payment_amount || 0)
+              .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+            return {
+              id: `${order._id}-payment-submitted-${new Date(order.payment_proof_submitted_at).getTime()}`,
+              title: "Customer Reported a Payment",
+              message: `${customerName} says they paid ₱${amount} for order ${orderNumber}. Please confirm.`,
+              icon: CreditCard,
+              color: "text-emerald-600",
+              category: "payments",
+              path: "/transactions",
+              date: order.payment_proof_submitted_at,
+            };
+          }),
         ]
           .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
           .slice(0, 8)
@@ -144,13 +178,16 @@ function NotificationMenu() {
         console.error("Failed to load admin notifications:", error);
         if (active) setNotifications([]);
       } finally {
+        hasFetched = true;
         if (active) setLoading(false);
       }
     };
 
     fetchNotifications();
+    const refreshInterval = window.setInterval(fetchNotifications, 30000);
     return () => {
       active = false;
+      window.clearInterval(refreshInterval);
     };
   }, []);
 
@@ -164,6 +201,8 @@ function NotificationMenu() {
     ["inspections", "Inspections"],
     ["accepted", "Accepted"],
     ["declined", "Declined"],
+    ["sent", "Sent"],
+    ["payments", "Payments"],
   ];
 
   const openNotification = (notification) => {

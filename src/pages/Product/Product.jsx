@@ -14,6 +14,7 @@ import * as catalogApi from '@/api/catalog';
 import ProductManagementModal from '@/components/ProductManagementModal';
 import { API_BASE } from "@/api/client";
 import { getProductReviews } from "@/api/orders";
+import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -1265,7 +1266,7 @@ function Products() {
                             </div>
                             <div>
                               <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Submitted</p>
-                              <p className="mt-2 font-semibold text-slate-900">{review.submittedAt ? new Date(review.submittedAt).toLocaleDateString() : review.createdAt ? new Date(review.createdAt).toLocaleDateString() : "—"}</p>
+                              <p className="mt-2 font-semibold text-slate-900">{formatDateToMMMDDYYYY(review.submittedAt || review.createdAt) || "—"}</p>
                             </div>
                           </div>
 

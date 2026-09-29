@@ -6,6 +6,7 @@ import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { getProducts } from "@/api/products";
 import { getProductReviews } from "@/api/orders";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
+import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 
 function ProductReviews() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -195,7 +196,7 @@ function ProductReviews() {
                           </div>
                           <div>
                             <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Submitted</p>
-                            <p className="mt-2 font-semibold text-slate-900">{review.submittedAt ? new Date(review.submittedAt).toLocaleDateString() : "—"}</p>
+                            <p className="mt-2 font-semibold text-slate-900">{formatDateToMMMDDYYYY(review.submittedAt) || "—"}</p>
                           </div>
                         </div>
 

@@ -9,7 +9,7 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import { getOrders, getAdminOrders, getAdminOrder, updateOrderStatus } from "@/api/orders";
-import { formatDateToMMDDYYYY } from "@/lib/dateUtils";
+import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { recordActivity } from "@/lib/activityLog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
@@ -482,11 +482,7 @@ function Dashboard() {
   const chartRadius = 78;
   const chartCircumference = 2 * Math.PI * chartRadius;
   let chartOffset = 0;
-  const dashboardDate = currentDateTime.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const dashboardDate = formatDateToMMMDDYYYY(currentDateTime);
   const dashboardTime = currentDateTime.toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",

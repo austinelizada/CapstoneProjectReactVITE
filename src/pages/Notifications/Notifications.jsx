@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getAdminOrders } from "@/api/orders";
-import { Bell } from "lucide-react";
+import { Bell, CreditCard, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
@@ -14,13 +14,38 @@ export default function Notifications() {
     const fetch = async () => {
       setLoading(true);
       try {
-        const [acceptedResp, declinedResp] = await Promise.all([
+        const [acceptedResp, declinedResp, sentResp, paymentResp] = await Promise.all([
           getAdminOrders({ contract_status: "accepted" }),
           getAdminOrders({ contract_status: "declined" }),
+          getAdminOrders({ contract_status: "sent" }),
+          getAdminOrders({ payment_proof_submitted: "true" }),
         ]);
         const items = [
           ...(acceptedResp.orders || []).map((o) => ({ ...o, notificationType: "accepted", read: false })),
           ...(declinedResp.orders || []).map((o) => ({ ...o, notificationType: "declined", read: false })),
+          ...(sentResp.orders || []).map((o) => ({
+            ...o,
+            updatedAt: o.contractSentAt || o.updatedAt,
+            notificationType: "sent",
+            read: false,
+          })),
+          ...(paymentResp.orders || []).map((o) => {
+            const customerName = `${o.customer?.first_name || ""} ${o.customer?.last_name || ""}`.trim()
+              || o.customer_name
+              || "Customer";
+            const orderNumber = o.tracking || o.order_number || o.orderNumber || o._id;
+            const amount = Number(o.payment_proof_amount || o.payment_amount || 0)
+              .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+            return {
+              ...o,
+              updatedAt: o.payment_proof_submitted_at,
+              notificationType: "payment",
+              title: "Customer Reported a Payment",
+              message: `${customerName} says they paid ₱${amount} for order ${orderNumber}. Please confirm.`,
+              read: false,
+            };
+          }),
         ].sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
         setNotifications(items);
       } catch (err) {
@@ -53,19 +78,31 @@ export default function Notifications() {
             <div className="space-y-3">
               {notifications.map((n) => (
                 <button
-                  key={n._id || n.tracking}
-                  onClick={() => navigate(`/site-inspection?view=${n._id || n.id || n.tracking}`)}
+                  key={`${n._id || n.tracking}-${n.notificationType}`}
+                  onClick={() => n.notificationType === "payment" ? navigate("/transactions") : navigate(`/site-inspection?view=${n._id || n.id || n.tracking}`)}
                   className={`w-full text-left p-3 rounded-xl border hover:bg-gray-50 flex gap-3 ${n.read ? "bg-white" : "bg-slate-50"}`}
                 >
                   <div className="flex-shrink-0">
-                    <Bell size={18} className={n.notificationType === "accepted" ? "text-emerald-600" : "text-red-600"} />
+                    {n.notificationType === "payment" ? (
+                      <CreditCard size={18} className="text-emerald-600" />
+                    ) : n.notificationType === "sent" ? (
+                      <Send size={18} className="text-sky-600" />
+                    ) : (
+                      <Bell size={18} className={n.notificationType === "accepted" ? "text-emerald-600" : "text-red-600"} />
+                    )}
                   </div>
                   <div className="flex-1">
                     <div className="flex justify-between items-center">
-                      <div className="font-semibold text-slate-900">{n.tracking}</div>
+                      <div className="font-semibold text-slate-900">{n.notificationType === "payment" ? n.title : n.tracking}</div>
                       <div className="text-xs text-slate-400">{formatDateTimeToMMDDYYYY(n.updatedAt || n.createdAt)}</div>
                     </div>
-                    <div className="text-sm text-slate-600 mt-1">{n.notificationType === "accepted" ? `Customer accepted the contract for ₱${Number(n.contract_amount || n.total_amount || 0).toLocaleString()}` : "Customer declined the contract"}</div>
+                    <div className="text-sm text-slate-600 mt-1">{n.notificationType === "payment"
+                      ? n.message
+                      : n.notificationType === "accepted"
+                      ? `Customer accepted the contract for ₱${Number(n.contract_amount || n.total_amount || 0).toLocaleString()}`
+                      : n.notificationType === "sent"
+                          ? "Contract sent to customer for review"
+                          : "Customer declined the contract"}</div>
                   </div>
                 </button>
               ))}

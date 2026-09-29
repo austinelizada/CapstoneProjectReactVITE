@@ -1,6 +1,7 @@
 import { FileText, X } from "lucide-react";
 import logo from "@/assets/images/ACGCLOGO1.png";
 import approvedStamp from "@/assets/approved.png";
+import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 
 function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, darkMode = false }) {
   if (!isOpen || !inspection || !contractData) return null;
@@ -33,12 +34,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
 
   const formatDate = (value, fallback = "N/A") => {
     if (!value) return fallback;
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
+    return formatDateToMMMDDYYYY(value) || value;
   };
 
   const orderStatus = String(contractData.orderStatus || inspection.status || contractData.status || "").toLowerCase();
@@ -49,14 +45,16 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const actionsAllowed = Boolean(onAccept || onDecline) && isAwaitingCustomerResponse && !isAccepted && !isWalkInCustomer;
   const totalAmount = Number(contractData.totalProjectCost || inspection.total_amount || 0);
   const downPayment = Number(contractData.downPayment || totalAmount * 0.5);
-  const hasCustomWarranty = inspection.warranty_period === "Custom" || (
+  const isNoWarranty = inspection.warranty_period === "No Warranty";
+  const hasCustomWarranty = !isNoWarranty && (inspection.warranty_period === "Custom" || (
     Number.isFinite(Number(inspection.warranty_period)) &&
     Number(inspection.warranty_period) > 0 &&
     ![30, 90].includes(Number(inspection.warranty_period))
-  );
+  ));
   const warrantyPeriod = hasCustomWarranty
     ? Number(inspection.custom_warranty_days || inspection.warranty_period || 90)
     : Number(inspection.warranty_period ?? inspection.custom_warranty_days ?? 90) || 90;
+  const warrantyPeriodLabel = isNoWarranty ? "No Warranty" : `${warrantyPeriod} days`;
   const inspectionDate = contractData.siteInspectionDate || formatDate(inspection.inspection_date, "TBD");
   const installationDate = formatDate(inspection.estimated_installation_date, "TBD");
   const customerName = contractData.customerName || inspection.customer_name || "Customer";
@@ -68,7 +66,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const isFullPaymentMethod = String(inspection.payment_terms || "").trim() === "full_payment";
   const paymentReceivedLabel = isFullPaymentMethod ? "Full Payment Amount" : "50% Downpayment Required";
   const balanceLabel = isFullPaymentMethod ? "Balance" : "Balance Upon Completion";
-  const agreedPaymentDate = contractData.agreedPaymentDate || (inspection.agreed_payment_date ? new Date(inspection.agreed_payment_date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : null);
+  const agreedPaymentDate = contractData.agreedPaymentDate || formatDate(inspection.agreed_payment_date, null);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-1.5">
@@ -152,7 +150,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
               <p><span className="font-bold">Inspection Date:</span> {inspectionDate}</p>
               <p><span className="font-bold">Est. Install Date:</span> {installationDate}</p>
               <p><span className="font-bold">Client Type:</span> {inspection.order_type === "walk_in_customer" ? "Walk-in" : "Online"}</p>
-              <p><span className="font-bold">Warranty:</span> {warrantyPeriod} days</p>
+              <p><span className="font-bold">Warranty:</span> {warrantyPeriodLabel}</p>
             </div>
           </section>
 
@@ -206,8 +204,17 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
           <section className="mt-5">
             <h2 className={`${sectionLabelClass} border-b ${darkMode ? "border-slate-600" : "border-slate-200"} pb-2`}>Warranty</h2>
             <div className={`${minorPanelClass} mt-3`}>
-              <span className="mr-2">🛡️</span>
-              <span className="font-bold">{warrantyPeriod}-Day Warranty:</span> ACGC Glass &amp; Aluminum Services provides a {warrantyPeriod}-day warranty on installed products and workmanship starting from the installation date.
+              {isNoWarranty ? (
+                <>
+                  <span className="mr-2">ℹ️</span>
+                  <span className="font-bold">No Warranty:</span> This project does not include warranty coverage.
+                </>
+              ) : (
+                <>
+                  <span className="mr-2">🛡️</span>
+                  <span className="font-bold">{warrantyPeriod}-Day Warranty:</span> ACGC Glass &amp; Aluminum Services provides a {warrantyPeriod}-day warranty on installed products and workmanship starting from the installation date.
+                </>
+              )}
             </div>
             <div className="mt-3 rounded border border-yellow-300/60 bg-yellow-400/95 px-3 py-2 text-[10px] font-black text-slate-900 shadow-sm">⚠ 50% downpayment is required to start the project based on the stated policy.</div>
           </section>
