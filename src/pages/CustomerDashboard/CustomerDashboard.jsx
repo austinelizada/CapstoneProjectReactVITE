@@ -5112,8 +5112,15 @@ function CustomerDashboard() {
                             </section>
                           )}
                           {isOnlineContractAccepted && (
-                            <div className={`mt-4 rounded-xl border px-4 py-3 text-sm font-bold ${darkMode ? "border-emerald-700 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
-                              ✓ Contract Accepted &amp; Signed
+                            <div className={`mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-bold ${darkMode ? "border-emerald-700 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                              <span>✓ Contract Accepted &amp; Signed</span>
+                              <button
+                                type="button"
+                                onClick={() => openContractModal(order)}
+                                className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${darkMode ? "border-emerald-600 text-emerald-200 hover:bg-emerald-900/50" : "border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50"}`}
+                              >
+                                View Contract
+                              </button>
                             </div>
                           )}
                           {order.contract_status === "declined" && (
