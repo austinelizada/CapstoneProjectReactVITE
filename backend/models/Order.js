@@ -171,6 +171,10 @@ const OrderSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    payment_proof_confirmed_at: {
+      type: Date,
+      default: null,
+    },
     payment_proof_file_name: {
       type: String,
       trim: true,

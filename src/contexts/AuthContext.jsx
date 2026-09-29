@@ -173,10 +173,7 @@ export function AuthProvider({ children }) {
 
   const register = async (payload) => {
     setAuthError("");
-    const response = await registerApi(payload);
-    setToken(response.token);
-    const userProfile = normalizeAndPersistUser(response.user);
-    return { ...response, user: userProfile };
+    return registerApi(payload);
   };
 
   const createAdmin = async (payload) => {

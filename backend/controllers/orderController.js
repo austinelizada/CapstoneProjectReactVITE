@@ -527,6 +527,7 @@ export const updateOrderStatus = async (req, res) => {
       payment_amount,
       downpayment_amount,
       payment_proof_amount,
+      payment_proof_confirmed_at,
       payment_method,
       transaction_number,
       inspection_notes,
@@ -569,6 +570,9 @@ export const updateOrderStatus = async (req, res) => {
     if (downpayment_amount !== undefined) order.downpayment_amount = Number(downpayment_amount) || 0;
     if (payment_amount !== undefined) order.downpayment_amount = Number(payment_amount) || 0;
     if (payment_proof_amount !== undefined) order.payment_proof_amount = Number(payment_proof_amount) || 0;
+    if (payment_proof_confirmed_at !== undefined) {
+      order.payment_proof_confirmed_at = payment_proof_confirmed_at ? new Date(payment_proof_confirmed_at) : null;
+    }
     if (payment_method !== undefined) order.payment_method = payment_method || order.payment_method || "Cash";
     if (transaction_number !== undefined) order.transaction_number = transaction_number || "";
     if (inspection_date) order.inspection_date = inspection_date;
@@ -872,6 +876,7 @@ export const submitCustomerPaymentProof = async (req, res) => {
     order.payment_status = "paid";
     order.payment_proof_amount = normalizedAmount;
     order.payment_proof_submitted_at = new Date();
+    order.payment_proof_confirmed_at = null;
     order.payment_proof_file_name = proof_file_name || order.payment_proof_file_name || "";
     order.payment_proof_file_url = proof_file_url || order.payment_proof_file_url || "";
     order.payment_method = payment_method || order.payment_method || "Cash";

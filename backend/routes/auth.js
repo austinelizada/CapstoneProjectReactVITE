@@ -1,9 +1,11 @@
 import express from "express";
 import jwt from "jsonwebtoken";
+import { createHash, randomBytes, randomInt } from "crypto";
 import User from "../models/User.js";
 import Admin from "../models/Admin.js";
 import SystemSetting from "../models/SystemSetting.js";
 import { authMiddleware, roleMiddleware } from "../middleware/auth.js";
+import { sendMail } from "../config/mailer.js";
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -64,6 +66,40 @@ const buildAddressFromRequest = (reqBody) => {
 
 const router = express.Router();
 const systemSettingClients = new Set();
+const hashVerificationToken = (token) => createHash("sha256").update(token).digest("hex");
+
+const sendVerificationEmail = async (user, token) => {
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+  const verificationUrl = `${frontendUrl}/verify-email?token=${encodeURIComponent(token)}`;
+
+  await sendMail({
+    from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
+    to: user.email,
+    subject: "Verify your ACGC email address",
+    text: `Hello ${user.first_name}, verify your ACGC account here: ${verificationUrl}`,
+    html: `
+      <p>Hello ${user.first_name},</p>
+      <p>Verify your ACGC account by clicking the link below:</p>
+      <p><a href="${verificationUrl}">Verify my email address</a></p>
+      <p>This link expires in 24 hours.</p>
+    `,
+  });
+};
+
+const sendPasswordResetCode = async (account, code) => {
+  await sendMail({
+    from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
+    to: account.email,
+    subject: "Your ACGC password reset code",
+    text: `Your ACGC password reset code is ${code}. It expires in 15 minutes.`,
+    html: `
+      <p>Hello ${account.first_name},</p>
+      <p>Your ACGC password reset code is:</p>
+      <p style="font-size: 28px; font-weight: 700; letter-spacing: 8px;">${code}</p>
+      <p>This code expires in 15 minutes. If you did not request this, you can ignore this email.</p>
+    `,
+  });
+};
 
 const broadcastSystemSettings = (maintenanceMode) => {
   const payload = `data: ${JSON.stringify({ maintenance_mode: maintenanceMode === true })}\n\n`;
@@ -212,36 +248,28 @@ router.post("/register", async (req, res) => {
       province: province || "",
       zip_code: zip_code || "",
       role: "customer",
+      email_verified: false,
+      email_verification_token: hashVerificationToken(randomBytes(32).toString("hex")),
+      email_verification_expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
     await user.save();
 
-    const token = jwt.sign(
-      { id: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "7d" }
-    );
+    const verificationToken = randomBytes(32).toString("hex");
+    user.email_verification_token = hashVerificationToken(verificationToken);
+    await user.save();
+
+    try {
+      await sendVerificationEmail(user, verificationToken);
+    } catch (mailError) {
+      await User.deleteOne({ _id: user._id });
+      throw new Error(`Unable to send verification email: ${mailError.message}`);
+    }
 
     res.status(201).json({
       success: true,
-      message: "User registered successfully",
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        username: user.username,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        role: user.role,
-        phone: user.phone,
-        street_address: user.street_address,
-        city: user.city,
-        province: user.province,
-        zip_code: user.zip_code,
-        access_permissions: user.access_permissions,
-        created_at: user.createdAt,
-        updated_at: user.updatedAt,
-      },
+      message: "Registration successful. Check your email to verify your account.",
+      email: user.email,
     });
   } catch (error) {
     console.error("Register error:", error);
@@ -250,6 +278,135 @@ router.post("/register", async (req, res) => {
       message: "Error registering user",
       error: error.message,
     });
+  }
+});
+
+/**
+ * GET /api/auth/verify-email
+ * Verify a customer email address with a one-time token.
+ */
+router.get("/verify-email", async (req, res) => {
+  try {
+    const token = String(req.query.token || "").trim();
+    if (!token) {
+      return res.status(400).json({ success: false, message: "Verification token is required." });
+    }
+
+    const user = await User.findOne({
+      email_verification_token: hashVerificationToken(token),
+      email_verification_expires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: "This verification link is invalid or expired." });
+    }
+
+    user.email_verified = true;
+    user.email_verification_token = null;
+    user.email_verification_expires = null;
+    await user.save();
+
+    return res.json({ success: true, message: "Email verified successfully. You can now log in." });
+  } catch (error) {
+    console.error("Email verification error:", error);
+    return res.status(500).json({ success: false, message: "Unable to verify email." });
+  }
+});
+
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required." });
+    }
+
+    const admin = await Admin.findOne({ email });
+    const user = admin ? null : await User.findOne({ email });
+    const account = admin || user;
+
+    if (account) {
+      const code = String(randomInt(100000, 1000000));
+      account.password_reset_code = hashVerificationToken(code);
+      account.password_reset_expires = new Date(Date.now() + 15 * 60 * 1000);
+      await account.save();
+      await sendPasswordResetCode(account, code);
+    }
+
+    return res.json({
+      success: true,
+      message: "If an account exists for that email, a verification code has been sent.",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    return res.status(500).json({ success: false, message: "Unable to send the reset code." });
+  }
+});
+
+router.post("/verify-reset-code", async (req, res) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const code = String(req.body?.code || "").trim();
+    const admin = await Admin.findOne({
+      email,
+      password_reset_code: hashVerificationToken(code),
+      password_reset_expires: { $gt: new Date() },
+    });
+    const user = admin ? null : await User.findOne({
+      email,
+      password_reset_code: hashVerificationToken(code),
+      password_reset_expires: { $gt: new Date() },
+    });
+    const account = admin || user;
+
+    if (!account) {
+      return res.status(400).json({ success: false, message: "The code is invalid or expired." });
+    }
+
+    const resetToken = jwt.sign(
+      { id: account._id, model: admin ? "admin" : "user", purpose: "password-reset" },
+      process.env.JWT_SECRET || "your-secret-key",
+      { expiresIn: "10m" },
+    );
+    return res.json({ success: true, resetToken });
+  } catch (error) {
+    console.error("Verify reset code error:", error);
+    return res.status(500).json({ success: false, message: "Unable to verify the reset code." });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { resetToken, password } = req.body || {};
+    if (!resetToken || !password || password.length < 8) {
+      return res.status(400).json({ success: false, message: "A valid reset token and password of at least 8 characters are required." });
+    }
+
+    const payload = jwt.verify(resetToken, process.env.JWT_SECRET || "your-secret-key");
+    if (payload.purpose !== "password-reset") {
+      return res.status(400).json({ success: false, message: "Invalid password reset token." });
+    }
+
+    const Model = payload.model === "admin" ? Admin : User;
+    const account = await Model.findById(payload.id);
+    if (!account) {
+      return res.status(400).json({ success: false, message: "Account not found." });
+    }
+
+    if (await account.comparePassword(password)) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot reuse your previous password. Please choose a new password.",
+      });
+    }
+
+    account.password = password;
+    account.password_reset_code = null;
+    account.password_reset_expires = null;
+    await account.save();
+    return res.json({ success: true, message: "Password reset successfully. You can now log in." });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return res.status(400).json({ success: false, message: "The reset session is invalid or expired." });
   }
 });
 
@@ -539,6 +696,13 @@ router.post("/login", async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Your account has been deactivated",
+      });
+    }
+
+    if (source === "user" && user.email_verification_token && user.email_verified !== true) {
+      return res.status(403).json({
+        success: false,
+        message: "Please verify your email address before logging in.",
       });
     }
 

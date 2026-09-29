@@ -3,6 +3,7 @@ import ForgotPassword from "./pages/ForgotPassword/ForgotPassword";
 import LandingPage from "./pages/LandingPage/LandingPage";
 import Login from "./pages/Login/Login";
 import Signup from "./pages/Signup/Signup";
+import VerifyEmail from "./pages/VerifyEmail/VerifyEmail";
 import Dashboard from "./pages/Dashboard/Dashboard";
 import TrackOrder from "./pages/TrackOrder/TrackOrder";
 import SiteInspection from "./pages/SiteInspection/SiteInspection";
@@ -80,6 +81,7 @@ function AppRoutes() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route
             path="/dashboard"

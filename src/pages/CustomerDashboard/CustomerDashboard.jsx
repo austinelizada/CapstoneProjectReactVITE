@@ -30,8 +30,6 @@ import {
   StarHalf,
   Clock3,
   Wrench,
-  Sun,
-  Moon,
   ArrowLeft,
   X,
   ClipboardList,
@@ -199,12 +197,7 @@ function CustomerDashboard() {
   const canShowRatings = accountPermissions.show_ratings_homepage && !accountPermissions.view_only_access;
 
   const [activeTab, setActiveTab] = useState("home");
-  const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const savedTheme = localStorage.getItem("acgc-dark-mode");
-    if (savedTheme !== null) return savedTheme === "true";
-    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  });
+  const darkMode = false;
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -2768,12 +2761,6 @@ function CustomerDashboard() {
     deliveryConfirmForm.street_address.trim()
   );
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("acgc-dark-mode", String(darkMode));
-    }
-  }, [darkMode]);
-
   const cartQuantity = cartItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
   const showFeaturedSection = activeTab === "home";
   const sectionTextClass = darkMode ? "text-slate-100" : "text-slate-900";
@@ -2845,37 +2832,6 @@ function CustomerDashboard() {
           </button>
 
           <div className="flex flex-wrap items-center gap-1.5 md:gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const nextMode = !darkMode;
-                setDarkMode(nextMode);
-                toast.success(nextMode ? "Night mode enabled" : "Day mode enabled", {
-                  position: "top-center",
-                  duration: 1800,
-                });
-              }}
-              className={`relative inline-flex h-10 w-[128px] shrink-0 items-center rounded-full border p-1 transition-all duration-500 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500/40 ${
-                darkMode
-                  ? "border-black bg-black text-white hover:bg-slate-950"
-                  : "border-slate-300 bg-slate-200 text-slate-950 hover:bg-slate-300"
-              }`}
-              aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
-              aria-pressed={darkMode}
-            >
-              <span className={`absolute inset-y-1 flex w-[84px] items-center justify-center gap-1 text-[8px] font-black uppercase tracking-[0.06em] transition-all duration-500 ease-in-out ${
-                darkMode ? "left-[40px] text-white" : "left-1 text-slate-950"
-              }`}>
-                {darkMode ? "Night Mode" : "Day Mode"}
-              </span>
-              <span className={`relative z-10 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-white shadow-sm transition-all duration-500 ease-in-out ${
-                darkMode
-                  ? "translate-x-0 border-slate-300 text-sky-400"
-                  : "translate-x-[86px] border-slate-200 text-amber-500"
-              }`}>
-                {darkMode ? <Moon size={18} strokeWidth={1.8} /> : <Sun size={18} strokeWidth={1.8} />}
-              </span>
-            </button>
             <button
               onClick={() => setActiveTab("cart")}
               className={`order-1 relative p-2.5 text-sm font-semibold transition ${
@@ -5088,7 +5044,19 @@ function CustomerDashboard() {
                                 {order.tracking || order._id || "—"} · {orderDate}
                               </p>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+                              {isOnlineContractAccepted && (
+                                <div className={`inline-flex max-w-full flex-wrap items-center justify-start gap-3 rounded-xl border px-4 py-3 text-sm font-bold ${darkMode ? "border-emerald-700/60 bg-emerald-950/20 text-emerald-300" : "border-emerald-200/70 bg-emerald-50/40 text-emerald-700"}`}>
+                                  <span>✓ Contract Accepted &amp; Signed</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => openContractModal(order)}
+                                    className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${darkMode ? "border-emerald-600 text-emerald-200 hover:bg-emerald-900/50" : "border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50"}`}
+                                  >
+                                    View Contract
+                                  </button>
+                                </div>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => setSelectedOrderForModal(order)}
@@ -5110,18 +5078,6 @@ function CustomerDashboard() {
                                 <button type="button" onClick={() => openContractConfirmModal("accept", orderId)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700">Accept &amp; Sign Contract</button>
                               </div>
                             </section>
-                          )}
-                          {isOnlineContractAccepted && (
-                            <div className={`mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-bold ${darkMode ? "border-emerald-700 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
-                              <span>✓ Contract Accepted &amp; Signed</span>
-                              <button
-                                type="button"
-                                onClick={() => openContractModal(order)}
-                                className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${darkMode ? "border-emerald-600 text-emerald-200 hover:bg-emerald-900/50" : "border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50"}`}
-                              >
-                                View Contract
-                              </button>
-                            </div>
                           )}
                           {order.contract_status === "declined" && (
                             <div className={`mt-4 rounded-xl border p-4 ${darkMode ? "border-red-800 bg-red-950/40" : "border-red-200 bg-red-50"}`}>

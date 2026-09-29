@@ -7,14 +7,9 @@ import {
   Pencil,
   Trash2,
   X,
-  Settings,
-  Star,
 } from "lucide-react";
 import * as catalogApi from '@/api/catalog';
-import ProductManagementModal from '@/components/ProductManagementModal';
 import { API_BASE } from "@/api/client";
-import { getProductReviews } from "@/api/orders";
-import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -298,61 +293,6 @@ function Products() {
   const [productNamesList, setProductNamesList] = useState(PRODUCT_NAMES);
   const [categoryOptionsList, setCategoryOptionsList] = useState(CATEGORY_OPTIONS);
   const [variantsList, setVariantsList] = useState(VARIANTS);
-  const [showProductManagementModal, setShowProductManagementModal] = useState(false);
-  const [activeProductPageTab, setActiveProductPageTab] = useState("products");
-  const [selectedReviewProductId, setSelectedReviewProductId] = useState("");
-  const [reviews, setReviews] = useState([]);
-  const [reviewsLoading, setReviewsLoading] = useState(false);
-  const [reviewError, setReviewError] = useState("");
-
-  const selectedReviewProduct = products.find(
-    (product) => String(product._id || product.id) === selectedReviewProductId
-  ) || null;
-
-  const openReviewTab = () => {
-    setActiveProductPageTab("reviews");
-    if (!selectedReviewProductId && products.length > 0) {
-      setSelectedReviewProductId(products[0]._id || products[0].id);
-    }
-  };
-
-  useEffect(() => {
-    if (activeProductPageTab !== "reviews") return;
-    if (!selectedReviewProductId) {
-      setReviews([]);
-      setReviewError("");
-      return;
-    }
-
-    let active = true;
-
-    const loadReviews = async () => {
-      setReviewsLoading(true);
-      setReviewError("");
-      try {
-        const response = await getProductReviews(selectedReviewProductId);
-        if (!active) return;
-        setReviews(response.reviews || []);
-      } catch (err) {
-        if (!active) return;
-        setReviewError(err.data?.message || err.message || "Unable to load reviews.");
-        setReviews([]);
-      } finally {
-        if (active) setReviewsLoading(false);
-      }
-    };
-
-    loadReviews();
-
-    return () => {
-      active = false;
-    };
-  }, [activeProductPageTab, selectedReviewProductId]);
-
-  useEffect(() => {
-    if (activeProductPageTab !== "reviews" || selectedReviewProductId || products.length === 0) return;
-    setSelectedReviewProductId(products[0]._id || products[0].id);
-  }, [activeProductPageTab, selectedReviewProductId, products]);
 
   const reloadCatalogLists = async () => {
     try {
@@ -371,38 +311,6 @@ function Products() {
     } catch (e) {
       console.error("Failed to load catalog lists", e);
     }
-  };
-
-  const handleCatalogRefresh = (detail = {}) => {
-    reloadCatalogLists();
-
-    if (!showModal) return;
-
-    setNewProduct((prev) => {
-      const next = { ...prev };
-      const kind = detail?.tab || detail?.kind;
-      const item = detail?.item || {};
-
-      if (kind === "categories" && item.name) {
-        next.category = prev.category || item.name;
-      }
-
-      if (kind === "types" && item.name && !prev.product_type) {
-        next.product_type = item.name;
-      }
-
-      if (kind === "names" && item.name) {
-        next.product_type = prev.product_type || item.product_type || "";
-        next.product_name = prev.product_name || item.name;
-      }
-
-      if (kind === "variants" && item.name) {
-        next.product_name = prev.product_name || item.product_name || "";
-        next.variant = prev.variant || item.name;
-      }
-
-      return next;
-    });
   };
 
   useEffect(() => {
@@ -944,8 +852,7 @@ function Products() {
           />
 
           {/* FILTERS */}
-          {activeProductPageTab === "products" && (
-            <div className="bg-white rounded-3xl shadow mt-6 p-6">
+          <div className="bg-white rounded-3xl shadow mt-6 p-6">
 
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="relative flex-1">
@@ -975,26 +882,6 @@ function Products() {
                       Add Product
                     </button>
 
-                    <button
-                      onClick={() => setShowProductManagementModal(true)}
-                      disabled={!isAdmin}
-                      className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold transition ${isAdmin ? "bg-white text-red-600 border border-red-600 hover:bg-red-50" : "bg-gray-300 cursor-not-allowed"}`}
-                    >
-                      <Settings size={18} className="mr-2" />
-                      Product Management
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={openReviewTab}
-                      disabled={!isAdmin}
-                      className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold transition ${isAdmin ? "bg-white text-red-600 border border-red-600 hover:bg-red-50" : "bg-gray-300 cursor-not-allowed"}`}
-                    >
-                      <Star size={18} className="mr-2" />
-                      Reviews
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1045,12 +932,9 @@ function Products() {
               </div>
 
             </div>
-          )}
 
           {/* PRODUCTS */}
 
-          {activeProductPageTab === "products" ? (
-            <>
               <div className="mt-6">
                 {currentProducts.length === 0 ? (
                   <div className="bg-white rounded-3xl p-10 shadow text-center">
@@ -1170,132 +1054,6 @@ function Products() {
                   </button>
                 </div>
               </div>
-            </>
-          ) : (
-            <div className="mt-6 bg-white rounded-3xl p-6 shadow-sm">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                <div>
-                  <h2 className="text-2xl font-semibold text-slate-900">Product Reviews</h2>
-                  <p className="mt-2 text-sm text-slate-500">View customer reviews for purchases tied to your product catalog.</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setActiveProductPageTab("products")}
-                    className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    Back to Products
-                  </button>
-                  {reviewsLoading && (
-                    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-4 py-2 text-sm text-slate-700">
-                      <Loader2 size={18} className="animate-spin" /> Loading reviews
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-6 xl:grid-cols-[320px_1fr]">
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
-                  <label className="block text-sm font-semibold text-slate-700">Choose product</label>
-                  <select
-                    value={selectedReviewProductId}
-                    onChange={(e) => setSelectedReviewProductId(e.target.value)}
-                    className="mt-3 w-full rounded-3xl border border-slate-200 bg-white py-3 px-4 text-sm text-slate-900 shadow-sm"
-                  >
-                    <option value="">Select a product</option>
-                    {products.map((product) => (
-                      <option key={product._id || product.id} value={product._id || product.id}>
-                        {product.product_name || product.name || "Unnamed product"}
-                      </option>
-                    ))}
-                  </select>
-
-                  <div className="mt-6 grid gap-4">
-                    <div className="rounded-3xl border border-slate-200 bg-white p-4">
-                      <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Total Reviews</p>
-                      <p className="mt-2 text-lg font-semibold text-slate-900">{selectedReviewProduct ? reviews.length : "—"}</p>
-                    </div>
-                    <div className="rounded-3xl border border-slate-200 bg-white p-4">
-                      <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Average Rating</p>
-                      <p className="mt-2 flex items-center gap-2 text-lg font-semibold text-slate-900">
-                        {selectedReviewProduct ? (reviews.length ? (reviews.reduce((sum, review) => sum + (review.rating || 0), 0) / reviews.length).toFixed(1) : "0.0") : "—"}
-                        <span className="text-amber-500"><Star size={16} /></span>
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  {reviewError && (
-                    <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                      {reviewError}
-                    </div>
-                  )}
-
-                  {!selectedReviewProduct && (
-                    <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
-                      Select a product to view its reviews.
-                    </div>
-                  )}
-
-                  {selectedReviewProduct && !reviewsLoading && reviews.length === 0 && (
-                    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
-                      No reviews found for this product.
-                    </div>
-                  )}
-
-                  {selectedReviewProduct && reviews.length > 0 && (
-                    <div className="space-y-4">
-                      {reviews.map((review) => (
-                        <div key={`${review.orderId}-${review.submittedAt || review._id || Math.random()}`} className="rounded-3xl border border-slate-200 p-6">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                              <p className="text-sm text-slate-500">Customer</p>
-                              <p className="mt-1 font-semibold text-slate-900">{review.customerName || review.customer || "Anonymous"}</p>
-                            </div>
-                            <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-700">
-                              <span>{Array.from({ length: review.rating || 0 }).map((_, index) => (<Star key={index} size={14} />))}</span>
-                              <span>{(review.rating || 0).toFixed(1)}</span>
-                            </div>
-                          </div>
-
-                          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Title</p>
-                              <p className="mt-2 font-semibold text-slate-900">{review.title || "No title provided"}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Submitted</p>
-                              <p className="mt-2 font-semibold text-slate-900">{formatDateToMMMDDYYYY(review.submittedAt || review.createdAt) || "—"}</p>
-                            </div>
-                          </div>
-
-                          <div className="mt-4">
-                            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Comment</p>
-                            <p className="mt-2 text-sm leading-6 text-slate-700">{review.comment || review.feedback || "No comment provided."}</p>
-                          </div>
-
-                          {review.photos?.length > 0 && (
-                            <div className="mt-4 grid grid-cols-2 gap-3">
-                              {review.photos.map((photo, index) => (
-                                <img
-                                  key={index}
-                                  src={photo}
-                                  alt={`Review photo ${index + 1}`}
-                                  className="h-28 w-full rounded-3xl object-cover"
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
         </main>
       </div>
 
@@ -1648,14 +1406,6 @@ function Products() {
             </div>
           </div>
         </div>
-      )}
-
-      {showProductManagementModal && (
-        <ProductManagementModal
-          open={showProductManagementModal}
-          onClose={() => setShowProductManagementModal(false)}
-          onChange={handleCatalogRefresh}
-        />
       )}
 
     </div>

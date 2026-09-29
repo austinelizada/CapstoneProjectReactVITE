@@ -60,6 +60,14 @@ const AdminSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    password_reset_code: {
+      type: String,
+      default: null,
+    },
+    password_reset_expires: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -80,6 +88,8 @@ AdminSchema.methods.comparePassword = async function (password) {
 AdminSchema.methods.toJSON = function () {
   const admin = this.toObject();
   delete admin.password;
+  delete admin.password_reset_code;
+  delete admin.password_reset_expires;
   return admin;
 };
 

@@ -101,7 +101,15 @@ function AdminProfile() {
         }),
       );
       const ordersById = new Map(orderResults);
-      const resolvedActivityLog = storedActivityLog.map((activity) => {
+      const missingOrderIds = new Set(
+        orderResults.filter(([, order]) => !order).map(([orderId]) => orderId),
+      );
+      const resolvedActivityLog = storedActivityLog
+        .filter((activity) => {
+          const orderId = activity.description.match(/[a-f0-9]{24}/i)?.[0];
+          return !missingOrderIds.has(orderId);
+        })
+        .map((activity) => {
         const orderId = activity.description.match(/[a-f0-9]{24}/i)?.[0];
         const order = orderId ? ordersById.get(orderId) : null;
         if (!order) return activity;
@@ -187,7 +195,7 @@ function AdminProfile() {
           };
         }
         return activity;
-      });
+        });
 
       localStorage.setItem(getActivityStorageKey(user), JSON.stringify(resolvedActivityLog));
       if (!cancelled) {

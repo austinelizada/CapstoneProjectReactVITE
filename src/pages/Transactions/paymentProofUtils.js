@@ -31,3 +31,5 @@ export const getCustomerPaymentProof = (order) => {
     transactionNumber: order.transaction_number || order.transactionNumber || "",
   };
 };
+
+export const isPaymentProofConfirmed = (order) => Boolean(order?.payment_proof_confirmed_at);

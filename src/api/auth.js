@@ -5,6 +5,27 @@ export const register = (payload) => apiFetch("/auth/register", {
   body: JSON.stringify(payload),
 });
 
+export const verifyEmail = (token) =>
+  apiFetch(`/auth/verify-email?token=${encodeURIComponent(token)}`);
+
+export const requestPasswordReset = (email) =>
+  apiFetch("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+
+export const verifyPasswordResetCode = (email, code) =>
+  apiFetch("/auth/verify-reset-code", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
+  });
+
+export const resetPassword = (resetToken, password) =>
+  apiFetch("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ resetToken, password }),
+  });
+
 export const login = (payload) => apiFetch("/auth/login", {
   method: "POST",
   body: JSON.stringify(payload),

@@ -65,6 +65,26 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    email_verified: {
+      type: Boolean,
+      default: false,
+    },
+    email_verification_token: {
+      type: String,
+      default: null,
+    },
+    email_verification_expires: {
+      type: Date,
+      default: null,
+    },
+    password_reset_code: {
+      type: String,
+      default: null,
+    },
+    password_reset_expires: {
+      type: Date,
+      default: null,
+    },
     access_permissions: {
       can_request_orders: { type: Boolean, default: true },
       can_estimate_pricing: { type: Boolean, default: true },
@@ -96,6 +116,10 @@ UserSchema.methods.comparePassword = async function (password) {
 UserSchema.methods.toJSON = function () {
   const user = this.toObject();
   delete user.password;
+    delete user.email_verification_token;
+    delete user.email_verification_expires;
+    delete user.password_reset_code;
+    delete user.password_reset_expires;
   return user;
 };
 

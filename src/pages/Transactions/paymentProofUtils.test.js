@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getCustomerPaymentProof } from "@/pages/Transactions/paymentProofUtils";
+import { getCustomerPaymentProof, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
 
 describe("getCustomerPaymentProof", () => {
   it("detects submitted proof and prefers customer proof fields", () => {
@@ -35,5 +35,15 @@ describe("getCustomerPaymentProof", () => {
       paymentMethod: "Cash",
       transactionNumber: "",
     });
+  });
+});
+
+describe("isPaymentProofConfirmed", () => {
+  it("returns true after an admin confirmation timestamp is saved", () => {
+    expect(isPaymentProofConfirmed({ payment_proof_confirmed_at: "2026-09-29T12:00:00.000Z" })).toBe(true);
+  });
+
+  it("returns false while proof is unconfirmed", () => {
+    expect(isPaymentProofConfirmed({ payment_proof_submitted_at: "2026-09-29T12:00:00.000Z" })).toBe(false);
   });
 });

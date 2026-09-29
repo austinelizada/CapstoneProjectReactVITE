@@ -6,7 +6,7 @@ import {
   CheckCircle,
   Eye,
   Pencil,
-  Check,
+  Lock,
   X,
   Info,
   XCircle,
@@ -25,7 +25,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
-import { getCustomerPaymentProof } from "./paymentProofUtils";
+import { getCustomerPaymentProof, isPaymentProofConfirmed } from "./paymentProofUtils";
 
 function Transactions() {
   const { user } = useAuth();
@@ -84,14 +84,6 @@ function Transactions() {
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [processingOrderId, setProcessingOrderId] = useState(null);
-  const [confirmModal, setConfirmModal] = useState({
-    open: false,
-    action: "",
-    order: null,
-  });
-
   const [showContractModal, setShowContractModal] = useState(false);
   const [showFullContractModal, setShowFullContractModal] = useState(false);
   const [contractPreviewOrder, setContractPreviewOrder] = useState(null);
@@ -108,19 +100,6 @@ function Transactions() {
   const [warrantyExpiryDate, setWarrantyExpiryDate] = useState("");
   const [warrantySaving, setWarrantySaving] = useState(false);
   const today = getTodayIso();
-
-  const canReviewTransaction = (order) => {
-    const contractStatus = (order.contract_status || "").toString().toLowerCase();
-    const orderStatus = (order.status || "").toString().toLowerCase();
-    const acceptanceMethod = (order.acceptance_method || "").toString().toLowerCase();
-    
-    // Online: contract_status === "accepted" && status === "contract_accepted"
-    // Walk-in: contract_status === "accepted" && acceptance_method === "walk_in_signed_contract"
-    return contractStatus === "accepted" && (
-      orderStatus === "contract_accepted" || 
-      acceptanceMethod === "walk_in_signed_contract"
-    );
-  };
 
   const isCompletedProject = (order) => {
     const status = (order.status || "").toString().toLowerCase();
@@ -292,14 +271,6 @@ function Transactions() {
     }
   };
 
-  const openTransactionConfirm = (action, order) => {
-    setConfirmModal({ open: true, action, order });
-  };
-
-  const closeTransactionConfirm = () => {
-    setConfirmModal({ open: false, action: "", order: null });
-  };
-
   const updateOrderLocally = (orderId, patch) => {
     setOrders((prev) =>
       prev.map((order) =>
@@ -308,77 +279,6 @@ function Transactions() {
           : order
       )
     );
-  };
-
-  const handleApproveTransaction = async (orderId) => {
-    setActionLoading(true);
-    setProcessingOrderId(orderId);
-    try {
-      const order = orders.find(
-        (o) => o._id === orderId || o.id === orderId
-      );
-      const status = (order?.contract_status || "").toString().toLowerCase();
-      if (status !== "accepted") {
-        toast.error("Only contracts with status 'Accepted' can be approved.");
-        return;
-      }
-      // Use admin endpoint to change order status (admin has permission)
-      // contract_status must match schema enums (pending, sent, accepted, declined)
-      const response = await updateOrderStatus(orderId, { status: "approved", contract_status: "accepted" });
-      recordActivity(user, `Approved transaction ${orderId}.`, "Transactions");
-      const updated = response?.order || {};
-      const now = new Date().toISOString();
-      updateOrderLocally(orderId, {
-        ...updated,
-        contract_status: updated.contract_status || "accepted",
-        approved_at: updated.approved_at || now,
-        status: updated.status || "approved",
-      });
-      toast.success("Transaction approved successfully. Project has been moved to Progress Monitor.");
-    } catch (error) {
-      console.error("Approve transaction failed", error);
-      toast.error(error?.data?.message || error?.message || "Unable to approve transaction.");
-    } finally {
-      setActionLoading(false);
-      setProcessingOrderId(null);
-      closeTransactionConfirm();
-    }
-  };
-
-  const handleRejectTransaction = async (orderId) => {
-    setActionLoading(true);
-    setProcessingOrderId(orderId);
-    try {
-      // Use admin endpoint to mark contract as declined/cancelled
-      const response = await updateOrderStatus(orderId, { contract_status: "declined", status: "cancelled" });
-      recordActivity(user, `Cancelled transaction ${orderId}.`, "Transactions");
-      const updated = response?.order || {};
-      const now = new Date().toISOString();
-      updateOrderLocally(orderId, {
-        ...updated,
-        contract_status: updated.contract_status || "declined",
-        rejected_at: updated.rejected_at || now,
-        status: updated.status || "cancelled",
-      });
-      toast.success("Transaction cancelled successfully.");
-    } catch (error) {
-      console.error("Cancel transaction failed", error);
-      toast.error(error?.data?.message || error?.message || "Unable to cancel transaction.");
-    } finally {
-      setActionLoading(false);
-      setProcessingOrderId(null);
-      closeTransactionConfirm();
-    }
-  };
-
-  const handleConfirmTransactionAction = async () => {
-    if (!confirmModal.order || !confirmModal.action) return;
-    const orderId = confirmModal.order._id || confirmModal.order.id;
-    if (confirmModal.action === "approve") {
-      await handleApproveTransaction(orderId);
-    } else if (confirmModal.action === "reject") {
-      await handleRejectTransaction(orderId);
-    }
   };
 
   const buildContractDataFromOrder = (order) => {
@@ -492,6 +392,9 @@ function Transactions() {
         payment_status: isFullyPaid ? "paid" : "not_paid",
         payment_method: editPaymentMethod,
         transaction_number: editPaymentTransactionNumber || editPaymentOrder.transaction_number || "",
+        ...(editPaymentOrder.payment_proof_submitted_at
+          ? { payment_proof_confirmed_at: new Date().toISOString() }
+          : {}),
       };
 
       const response = await updateOrderStatus(orderId, payload);
@@ -1379,9 +1282,13 @@ function Transactions() {
                             </td>
                             <td className="p-4">
                               <div className="flex flex-wrap justify-center gap-2">
-                                <button title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>
+                                <button type="button" title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
+                                {isPaymentProofConfirmed(order) ? (
+                                  <button type="button" title="Payment proof confirmed" aria-label="Payment proof confirmed" disabled className="p-2 rounded-lg bg-slate-100 text-slate-400 cursor-not-allowed"><Lock size={18} /></button>
+                                ) : (
+                                  <button type="button" title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>
+                                )}
                                 <button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button>
-                                <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
                               </div>
                             </td>
                           </>
@@ -1415,7 +1322,30 @@ function Transactions() {
                                 </div>
                               )}
                             </td>
-                            <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "receipts" && canReviewTransaction(order) && (<><button title="Approve Transaction" onClick={() => openTransactionConfirm("approve", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><Check size={18} /></button><button title="Cancel Transaction" onClick={() => openTransactionConfirm("reject", order)} disabled={processingOrderId === (order._id || order.id)} className="p-2 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 transition disabled:opacity-60 disabled:cursor-not-allowed"><XCircle size={20} /></button></>)}{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button><button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button><button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button> </div></td>
+                            <td className="p-4">
+                              <div className="flex flex-wrap justify-center gap-2">
+                                {activeTable === "projects" && canCreateWarranty(order) && (
+                                  <button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition">
+                                    <ShieldCheck size={20} />
+                                  </button>
+                                )}
+                                <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition">
+                                  <Eye size={18} />
+                                </button>
+                                {isPaymentProofConfirmed(order) ? (
+                                  <button type="button" title="Payment proof confirmed" aria-label="Payment proof confirmed" disabled className="p-2 rounded-lg bg-slate-100 text-slate-400 cursor-not-allowed">
+                                    <Lock size={18} />
+                                  </button>
+                                ) : (
+                                  <button type="button" title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition">
+                                    <Pencil size={18} />
+                                  </button>
+                                )}
+                                <button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition">
+                                  <FileText size={18} />
+                                </button>
+                              </div>
+                            </td>
                           </>
                         )}
 
@@ -1786,49 +1716,6 @@ function Transactions() {
                     className={`rounded-2xl px-5 py-3 text-white transition ${warrantySaving ? "bg-amber-300" : "bg-amber-600 hover:bg-amber-700"}`}
                   >
                     {warrantySaving ? "Saving..." : "Create Warranty"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {confirmModal.open && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center">
-              <div className="absolute inset-0 bg-black/40" onClick={closeTransactionConfirm} />
-              <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-xl">
-                <h2 className="text-2xl font-bold text-slate-900 mb-4">
-                  {confirmModal.action === "approve" ? "Approve Transaction" : "Cancel Transaction"}
-                </h2>
-                <p className="text-sm text-slate-600 leading-6">
-                  {confirmModal.action === "approve"
-                    ? "Are you sure you want to approve this contract/receipt? This action will mark the transaction as approved and proceed to the next stage of the workflow."
-                    : "Are you sure you want to cancel this contract/receipt? This action will stop the current transaction process."}
-                </p>
-                <div className="mt-6 flex justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={closeTransactionConfirm}
-                    className="rounded-2xl px-4 py-2 bg-gray-100 text-slate-700 hover:bg-gray-200 transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmTransactionAction}
-                    disabled={actionLoading}
-                    className={`rounded-2xl px-4 py-2 disabled:opacity-60 disabled:cursor-not-allowed transition ${
-                      confirmModal.action === "reject"
-                        ? "bg-red-600 text-white hover:bg-red-700"
-                        : "bg-green-600 text-white hover:bg-green-700"
-                    }`}
-                  >
-                    {actionLoading
-                      ? confirmModal.action === "approve"
-                        ? "Approving..."
-                        : "Rejecting..."
-                      : confirmModal.action === "approve"
-                        ? "Confirm Approve"
-                        : "Confirm"}
                   </button>
                 </div>
               </div>
