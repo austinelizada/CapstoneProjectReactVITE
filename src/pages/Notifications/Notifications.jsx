@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getAdminOrders } from "@/api/orders";
 import { Bell, CreditCard, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
+import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 
 export default function Notifications() {
@@ -94,7 +94,9 @@ export default function Notifications() {
                   <div className="flex-1">
                     <div className="flex justify-between items-center">
                       <div className="font-semibold text-slate-900">{n.notificationType === "payment" ? n.title : n.tracking}</div>
-                      <div className="text-xs text-slate-400">{formatDateTimeToMMDDYYYY(n.updatedAt || n.createdAt)}</div>
+                      <div className="text-xs text-slate-400" title={formatDateTimeToMMDDYYYY(n.updatedAt || n.createdAt) || undefined}>
+                        {formatTimeAgo(n.updatedAt || n.createdAt)}
+                      </div>
                     </div>
                     <div className="text-sm text-slate-600 mt-1">{n.notificationType === "payment"
                       ? n.message

@@ -7,8 +7,10 @@ import {
   Pencil,
   FileText,
   ShieldCheck,
-  XOctagon,
+  Ban,
   RotateCcw,
+  ClipboardList,
+  X,
 } from "lucide-react";
 import toast, { Toaster } from 'react-hot-toast';
 import { toPng } from "html-to-image";
@@ -292,6 +294,7 @@ function SiteInspection() {
   const [activeTab, setActiveTab] = useState("site");
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [newInspection, setNewInspection] = useState(getDefaultInspection());
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
@@ -331,13 +334,14 @@ function SiteInspection() {
     }).format(Number(value || 0));
 
   const modalShellClass = darkMode
-    ? "border border-slate-700 bg-[#071d2d] text-slate-100 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
-    : "border border-slate-200 bg-white text-slate-900 shadow-[0_20px_60px_rgba(15,23,42,0.12)]";
+    ? "border border-slate-700/80 bg-[#071d2d] text-slate-100 shadow-[0_28px_100px_rgba(0,0,0,0.55)] ring-1 ring-white/5"
+    : "border border-slate-200 bg-white text-slate-900 shadow-[0_28px_80px_rgba(15,23,42,0.18)] ring-1 ring-slate-950/5";
   const modalHeaderClass = darkMode ? "border-b border-slate-700 bg-[#0b2338]" : "border-b border-slate-200 bg-slate-50";
-  const modalSectionClass = darkMode ? "border border-slate-700 bg-[#0f2438]" : "border border-slate-200 bg-white";
+  const modalSectionClass = darkMode ? "border border-slate-700 bg-[#0f2438] shadow-sm shadow-black/10" : "border border-slate-200 bg-white shadow-sm";
+  const modalSectionTitleClass = `mb-4 border-b pb-3 text-xs font-bold uppercase tracking-[0.14em] ${darkMode ? "border-slate-700 text-red-300" : "border-slate-200 text-red-700"}`;
   const fieldClass = darkMode
-    ? "w-full rounded-xl border border-slate-600 bg-[#122d42] px-3 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-400 focus:border-red-500"
-    : "w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-red-500";
+    ? "min-h-11 w-full rounded-lg border border-slate-600 bg-[#122d42] px-3 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-400 focus:border-red-400 focus:ring-2 focus:ring-red-500/20"
+    : "min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-red-500 focus:ring-2 focus:ring-red-100";
   const lockedFieldClass = darkMode
     ? "w-full cursor-not-allowed rounded-xl border border-slate-600 bg-slate-800 px-3 py-3 text-sm text-slate-300 shadow-inner outline-none placeholder:text-slate-500"
     : "w-full cursor-not-allowed rounded-xl border border-slate-300 bg-slate-200 px-3 py-3 text-sm text-slate-600 shadow-inner outline-none placeholder:text-slate-400";
@@ -393,14 +397,11 @@ function SiteInspection() {
     today.setHours(0, 0, 0, 0);
     return Number.isNaN(inputDate.getTime()) ? false : inputDate < today;
   };
-  const actionButtonClass = darkMode
-    ? "inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-[0_10px_24px_rgba(15,23,42,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(15,23,42,0.28)]"
-    : "inline-flex h-9 w-9 items-center justify-center rounded-xl border shadow-[0_10px_24px_rgba(15,23,42,0.10)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(15,23,42,0.14)]";
-  const actionIconClass = "drop-shadow-[0_1px_1px_rgba(255,255,255,0.35)]";
+  const actionButtonClass = "inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2";
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, searchQuery, cancelledInspections.length, inspections.length]);
+  }, [activeTab, searchQuery, statusFilter, cancelledInspections.length, inspections.length]);
 
   const fetchSiteInspections = async () => {
     setInspectionsLoading(true);
@@ -510,14 +511,49 @@ function SiteInspection() {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return list;
     return (list || []).filter((inspection) => {
-      const clientName = inspection.customer
-        ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim() || inspection.customer.email || inspection.customer_name || ""
-        : inspection.customer_name || "";
-      const phone = inspection.customer?.phone || inspection.customer_phone || "";
-      const productName = inspection.items?.[0]?.name || inspection.items?.[0]?.product_id?.name || "";
-      const address = inspection.shipping_address || "";
-      const status = inspection.status || inspection.inspection_status || "";
-      return [clientName, phone, productName, address, status]
+      const clientName = `${inspection.customer?.first_name || ""} ${inspection.customer?.last_name || ""}`.trim()
+        || inspection.customer_name
+        || inspection.customer?.email
+        || inspection.customer_email
+        || "";
+      const trackingId = inspection.tracking
+        || inspection.order_number
+        || inspection.orderId
+        || `SI-${String(inspection._id || inspection.id || "").slice(-8).toUpperCase()}`;
+      const itemNames = (inspection.items || []).flatMap((item) => [
+        item.name,
+        item.product_name,
+        item.product_id?.name,
+      ]);
+      const displayStatus = activeTab === "cancelled"
+        ? "Cancelled"
+        : hasValidInspectionDate(inspection)
+          ? "Scheduled"
+          : "Needs to be Called";
+      const searchableValues = [
+        clientName,
+        inspection.customer?.email,
+        inspection.customer_email,
+        inspection.customer?.phone,
+        inspection.customer_phone,
+        trackingId,
+        ...itemNames,
+        inspection.shipping_address,
+        inspection.siteAddress,
+        inspection.customer?.street_address,
+        inspection.status,
+        inspection.inspection_status,
+        displayStatus,
+        inspection.order_type,
+        inspection.customerType,
+        inspection.createdAt,
+        formatDateToMMMDDYYYY(inspection.createdAt),
+        inspection.inspection_date,
+        formatDateToMMMDDYYYY(inspection.inspection_date),
+        getEstimatedInstallationDate(inspection),
+        formatDateToMMMDDYYYY(getEstimatedInstallationDate(inspection)),
+      ];
+      return searchableValues
         .join(" ")
         .toLowerCase()
         .includes(query);
@@ -1353,46 +1389,52 @@ function SiteInspection() {
     }
   };
 
-  const handleDownloadContract = async () => {
+  const createContractPdfDataUrl = async () => {
     const contractElement = document.getElementById("contract-content");
-    if (!contractElement) {
-      toast.error("Contract content is not available to download.");
-      return;
-    }
+    if (!contractElement) throw new Error("Contract content is not available to export.");
 
+    const { wrapper, clone } = createContractPrintClone(contractElement);
     try {
-      const { wrapper, clone } = createContractPrintClone(contractElement);
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        const contractImage = await toPng(clone, {
-          cacheBust: true,
-          pixelRatio: 2,
-          backgroundColor: "#ffffff",
-        });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const contractImage = await toPng(clone, {
+        cacheBust: true,
+        pixelRatio: 2,
+        backgroundColor: "#ffffff",
+      });
 
-        const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = pdf.internal.pageSize.getHeight();
-        const imageProperties = pdf.getImageProperties(contractImage);
-        const imageHeight = (imageProperties.height * pdfWidth) / imageProperties.width;
-        let heightLeft = imageHeight;
-        let position = 0;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imageProperties = pdf.getImageProperties(contractImage);
+      const imageHeight = (imageProperties.height * pdfWidth) / imageProperties.width;
+      let heightLeft = imageHeight;
+      let position = 0;
 
+      pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
+      heightLeft -= pdfHeight;
+      while (heightLeft > 0) {
+        position -= pdfHeight;
+        pdf.addPage();
         pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
         heightLeft -= pdfHeight;
-        while (heightLeft > 0) {
-          position -= pdfHeight;
-          pdf.addPage();
-          pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
-          heightLeft -= pdfHeight;
-        }
-
-        const downloadName = `ACGC-Contract-${contractInspection?.tracking || contractInspection?._id || "download"}.pdf`;
-        pdf.save(downloadName);
-        toast.success("Contract PDF downloaded.");
-      } finally {
-        wrapper.remove();
       }
+
+      return pdf.output("datauristring");
+    } finally {
+      wrapper.remove();
+    }
+  };
+
+  const handleDownloadContract = async () => {
+    try {
+      const contractPdf = await createContractPdfDataUrl();
+      const link = document.createElement("a");
+      link.href = contractPdf;
+      link.download = `ACGC-Contract-${contractInspection?.tracking || contractInspection?._id || "download"}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      toast.success("Contract PDF downloaded.");
     } catch (error) {
       console.error("Download contract failed:", error);
       toast.error("Unable to download the contract PDF.");
@@ -1415,11 +1457,13 @@ function SiteInspection() {
 
     try {
       setSendingCustomerEmail(true);
+      const contractAttachment = await createContractPdfDataUrl();
 
       await sendWalkInApprovalEmail(orderId, {
         customerName,
         customerEmail,
         contractUrl: contractInspection?.signed_contract_url || "",
+        contractAttachment,
       });
 
       const updatedOrder = {
@@ -1901,7 +1945,14 @@ function SiteInspection() {
   }, [isSidebarOpen]);
 
   const sourceList = activeTab === "cancelled" ? cancelledInspections : inspections.filter(isSiteInspectionVisible);
-  const filteredList = filterInspections(sourceList);
+  const searchedList = filterInspections(sourceList);
+  const filteredList = activeTab === "site" && statusFilter !== "all"
+    ? searchedList.filter((inspection) => (
+        statusFilter === "scheduled"
+          ? hasValidInspectionDate(inspection)
+          : !hasValidInspectionDate(inspection)
+      ))
+    : searchedList;
   const totalPages = Math.max(1, Math.ceil(filteredList.length / pageSize));
   const currentPageIndex = Math.min(Math.max(currentPage, 1), totalPages);
   const paginatedList = filteredList.slice((currentPageIndex - 1) * pageSize, currentPageIndex * pageSize);
@@ -1927,14 +1978,10 @@ function SiteInspection() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar isOpen={isSidebarOpen} />
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
 
       <div className="flex-1 min-h-0 flex flex-col">
-        <Navbar
-          toggleSidebar={() =>
-            setIsSidebarOpen(!isSidebarOpen)
-          }
-        />
+        <Navbar />
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
@@ -2088,8 +2135,8 @@ function SiteInspection() {
           <Toaster position="bottom-right" />
 
           {/* SEARCH */}
-          <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="relative flex-1">
                 <Search
                   size={18}
@@ -2100,17 +2147,31 @@ function SiteInspection() {
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   placeholder="Search inspections..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-12 pr-4 text-sm text-slate-700 outline-none transition focus:border-red-400 focus:bg-white"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-12 pr-4 text-sm text-slate-700 outline-none transition focus:border-red-400 focus:bg-white"
                 />
               </div>
 
-              <button
-                onClick={() => { resetNewInspectionForm(); setShowModal(true); }}
-                className="inline-flex items-center justify-center rounded-xl bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
-              >
-                <Plus size={18} className="mr-2" />
-                New Site Inspection
-              </button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {activeTab === "site" && (
+                  <select
+                    aria-label="Filter inspections by status"
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value)}
+                    className={`min-h-10 rounded-xl border px-3 py-2 text-sm font-semibold outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100 ${darkMode ? "border-slate-600 bg-[#122d42] text-slate-100" : "border-slate-200 bg-white text-slate-700"}`}
+                  >
+                    <option value="all">All status</option>
+                    <option value="scheduled">Scheduled</option>
+                    <option value="needs-call">Needs to be Called</option>
+                  </select>
+                )}
+                <button
+                  onClick={() => { resetNewInspectionForm(); setShowModal(true); }}
+                  className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                >
+                  <Plus size={18} className="mr-2" />
+                  New Site Inspection
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2144,20 +2205,32 @@ function SiteInspection() {
 
             <div className="overflow-x-auto">
 
-              <table className="w-full">
+              <table className="w-full min-w-[1280px] table-fixed">
+                <colgroup>
+                  <col className="w-[145px]" />
+                  <col className="w-[120px]" />
+                  <col className="w-[110px]" />
+                  <col className="w-[145px]" />
+                  <col className="w-[100px]" />
+                  <col className="w-[105px]" />
+                  <col className="w-[110px]" />
+                  <col className="w-[125px]" />
+                  <col className="w-[115px]" />
+                  <col className="w-[205px]" />
+                </colgroup>
 
                 <thead className={darkMode ? "bg-[#0d2033] shadow-inner" : "bg-gradient-to-r from-slate-100 via-slate-50 to-white shadow-inner"}>
                   <tr>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Client</th>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Tracking ID</th>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Customer Type</th>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Site Address</th>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Created</th>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Inspection Date</th>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Est. Install Date</th>
-                    <th className={`p-4 text-left text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Status</th>
-                    <th className={`p-4 text-right text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Est. Total</th>
-                    <th className={`p-4 text-center text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Actions</th>
+                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Client</th>
+                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Tracking ID</th>
+                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Customer Type</th>
+                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Site Address</th>
+                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Created</th>
+                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Inspection Date</th>
+                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Est. Install Date</th>
+                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Status</th>
+                    <th className={`px-2 py-3 text-right text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Est. Total</th>
+                    <th className={`px-4 py-3 text-center text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Actions</th>
                   </tr>
                 </thead>
 
@@ -2225,18 +2298,17 @@ function SiteInspection() {
                               ? "border-t border-slate-700 bg-[#0b2338] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#102d46] hover:shadow-[0_8px_18px_rgba(15,23,42,0.2)]"
                               : "border-t border-slate-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-50 hover:shadow-[0_8px_18px_rgba(15,23,42,0.04)]"}
                         >
-                          <td className="p-4 align-top py-5">
+                          <td className="px-2 py-4 align-top">
                             <ProfileAvatar
                               name={clientName}
                               email={phone}
                               compact
                             />
                           </td>
-                          <td className="p-4 align-top py-5">
-                            <div className={`text-[11px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Tracking</div>
-                            <div className={`mt-1 font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{trackingId}</div>
+                          <td className="px-2 py-4 align-top">
+                            <div className={`break-words text-xs font-bold leading-5 ${darkMode ? "text-slate-100" : "text-slate-900"}`} title={trackingId}>{trackingId}</div>
                           </td>
-                          <td className="p-4 align-top py-5">
+                          <td className="px-2 py-4 align-top">
                             <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${customerTypeLabel === "Online Customer"
                               ? darkMode
                                 ? "border-sky-500/30 bg-sky-500/10 text-sky-200"
@@ -2247,21 +2319,21 @@ function SiteInspection() {
                               {customerTypeLabel}
                             </span>
                           </td>
-                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
-                            <div className="max-w-[220px] break-words leading-relaxed">
+                          <td className={`px-2 py-4 align-top ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
+                            <div className="line-clamp-2 break-words text-sm leading-5" title={siteAddress}>
                               {siteAddress}
                             </div>
                           </td>
-                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
+                          <td className={`px-2 py-4 align-top text-xs ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
                             <div>{createdDate}</div>
                             {createdTime && <div className={`mt-1 text-xs font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{createdTime}</div>}
                           </td>
-                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{inspectionDate}</td>
-                          <td className={`p-4 align-top py-5 ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{installDate}</td>
-                          <td className="p-4 align-top py-5">
-                            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-bold tracking-[0.02em] ${statusConfig.className}`}>
+                          <td className={`whitespace-nowrap px-2 py-4 align-top text-xs ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{inspectionDate}</td>
+                          <td className={`whitespace-nowrap px-2 py-4 align-top text-xs ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{installDate}</td>
+                          <td className="px-2 py-4 align-top">
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1.5 text-xs font-bold ${statusConfig.className}`}>
                               <span
-                                className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] shadow-inner ${darkMode ? "border-white/15 bg-slate-950/70 text-white" : "border-white/70 bg-white/80 text-slate-700"}`}
+                                className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] shadow-inner ${darkMode ? "border-white/15 bg-slate-950/70 text-white" : "border-white/70 bg-white/80 text-slate-700"}`}
                                 aria-hidden="true"
                               >
                                 {isCancelledTab ? "⛔" : isScheduled ? "✓" : "📞"}
@@ -2269,41 +2341,41 @@ function SiteInspection() {
                               {statusConfig.label}
                             </span>
                           </td>
-                          <td className={`p-4 align-top py-5 text-right font-black ${darkMode ? "text-slate-100" : isCancelledTab ? "text-slate-600" : "text-slate-900"}`}>
+                          <td className={`whitespace-nowrap px-2 py-4 align-top text-right text-sm font-black ${darkMode ? "text-slate-100" : isCancelledTab ? "text-slate-600" : "text-slate-900"}`}>
                             {Number.isFinite(total) && total > 0 ? `₱${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00"}
                           </td>
-                          <td className="p-4 align-top py-5">
-                            <div className="flex items-center justify-center gap-3">
+                          <td className="px-4 py-4 align-top">
+                            <div className="flex flex-wrap items-center justify-end gap-1">
                               <button
-                                className={`${actionButtonClass} ${darkMode ? "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:border-sky-400 hover:bg-sky-500/20" : isCancelledTab ? "border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-300 hover:bg-blue-100" : "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:bg-sky-100"}`}
+                                className={`${actionButtonClass} focus-visible:ring-blue-500 ${darkMode ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25" : "bg-blue-100 text-blue-600 hover:bg-blue-200"}`}
                                 onClick={() => handleView(inspection)}
                                 title="View inspection"
                                 aria-label="View inspection"
                               >
-                                <Eye size={18} strokeWidth={2.2} className={actionIconClass} />
+                                <Eye size={18} strokeWidth={2.2} />
                               </button>
                               {activeTab !== "cancelled" && (
                                 <button
-                                  className={`${actionButtonClass} ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:border-amber-400 hover:bg-amber-500/20" : "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100"}`}
+                                  className={`${actionButtonClass} focus-visible:ring-amber-500 ${darkMode ? "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}
                                   onClick={() => handleEdit(inspection._id || inspection.id)}
                                   title="Edit inspection"
                                   aria-label="Edit inspection"
                                 >
-                                  <Pencil size={18} strokeWidth={2.2} className={actionIconClass} />
+                                  <Pencil size={18} strokeWidth={2.2} />
                                 </button>
                               )}
                               {activeTab !== "cancelled" && hasValidInspectionDate(inspection) && (
                                 <button
                                   title="Generate Contract"
                                   aria-label="Generate contract"
-                                  className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400 hover:bg-emerald-500/20" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100"}`}
+                                  className={`${actionButtonClass} focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
                                   onClick={() => openContractButtonHandler(inspection)}
                                   disabled={generatingId === (inspection._id || inspection.id)}
                                 >
                                   {generatingId === (inspection._id || inspection.id) ? (
                                     <span className="text-[10px] font-bold">…</span>
                                   ) : (
-                                    <FileText size={18} strokeWidth={2.2} className={actionIconClass} />
+                                    <FileText size={18} strokeWidth={2.2} />
                                   )}
                                 </button>
                               )}
@@ -2311,15 +2383,15 @@ function SiteInspection() {
                                 <button
                                   title="Manual approval"
                                   aria-label="Manual approval"
-                                  className={`${actionButtonClass} ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200 hover:border-amber-400 hover:bg-amber-500/20" : "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100"}`}
+                                  className={`${actionButtonClass} focus-visible:ring-amber-500 ${darkMode ? "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}
                                   onClick={() => openManualApprovalModal(inspection)}
                                 >
-                                  <ShieldCheck size={18} strokeWidth={2.2} className={actionIconClass} />
+                                  <ShieldCheck size={18} strokeWidth={2.2} />
                                 </button>
                               )}
                               {activeTab !== "cancelled" ? (
                                 <button
-                                  className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-red-500/30 bg-red-500/10 text-red-200 hover:border-red-400 hover:bg-red-500/20" : "border-red-200 bg-red-50 text-red-700 hover:border-red-300 hover:bg-red-100"}`}
+                                  className={`${actionButtonClass} focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
                                   onClick={() => requestCancel(inspection._id || inspection.id)}
                                   title="Cancel inspection"
                                   aria-label="Cancel inspection"
@@ -2328,21 +2400,21 @@ function SiteInspection() {
                                   {cancellingId === (inspection._id || inspection.id) ? (
                                     <span className="text-[10px] font-bold">…</span>
                                   ) : (
-                                    <XOctagon size={18} strokeWidth={2.2} className={actionIconClass} />
+                                    <Ban size={18} strokeWidth={2.2} />
                                   )}
                                 </button>
                               ) : (
                                 <button
                                   title="Restore inspection"
                                   aria-label="Restore inspection"
-                                  className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400 hover:bg-emerald-500/20" : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100"}`}
+                                  className={`${actionButtonClass} focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
                                   onClick={() => requestRestore(inspection._id || inspection.id)}
                                   disabled={restoringId === (inspection._id || inspection.id)}
                                 >
                                   {restoringId === (inspection._id || inspection.id) ? (
                                     <span className="text-[10px] font-bold">…</span>
                                   ) : (
-                                    <RotateCcw size={18} strokeWidth={2.2} className={actionIconClass} />
+                                    <RotateCcw size={18} strokeWidth={2.2} />
                                   )}
                                 </button>
                               )}
@@ -2401,26 +2473,32 @@ function SiteInspection() {
           {/* MODAL */}
 
           {showModal && (
-            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-6 backdrop-blur-[2px]">
-              <div className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] ${modalShellClass}`}>
-                <div className={`flex items-start justify-between px-6 py-5 ${modalHeaderClass}`}>
-                  <div>
-                    <h2 className={`text-[26px] font-black tracking-[-0.04em] ${darkMode ? "text-white" : "text-slate-900"}`}>New Site Inspection</h2>
-                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Fill in the details below to create a new inspection record.</p>
+            <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
+              <div className={`flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl sm:max-h-[88dvh] sm:rounded-3xl ${modalShellClass}`}>
+                <div className={`flex shrink-0 items-start justify-between gap-4 px-5 py-4 sm:px-7 sm:py-5 ${modalHeaderClass}`}>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-red-500/15 text-red-300" : "bg-red-50 text-red-600"}`}>
+                      <ClipboardList size={20} aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${darkMode ? "text-red-300" : "text-red-600"}`}>Site inspection</p>
+                      <h2 className={`mt-1 text-xl font-bold leading-tight sm:text-2xl ${darkMode ? "text-white" : "text-slate-900"}`}>New Site Inspection</h2>
+                      <p className={`mt-1 text-sm leading-5 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Create a customer record and schedule an inspection.</p>
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
-                    className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border text-2xl shadow-sm transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-900"}`}
+                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}
                     aria-label="Close new site inspection modal"
                   >
-                    ×
+                    <X size={18} aria-hidden="true" />
                   </button>
                 </div>
 
-                <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:space-y-5 sm:px-6 sm:py-5">
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
-                    <h3 className={`mb-5 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Client Information</h3>
+                    <h3 className={modalSectionTitleClass}>Client Information</h3>
 
                     <div className="grid gap-5 md:grid-cols-3">
                       <div className="md:col-span-1">
@@ -2518,8 +2596,8 @@ function SiteInspection() {
                     </div>
 
                     <div className="mt-6">
-                      <p className={`mb-3 text-[14px] font-bold ${labelClass}`}>Warranty Period</p>
-                      <div className="grid max-w-[286px] grid-cols-3 gap-2">
+                      <p className={`mb-3 text-sm font-semibold ${labelClass}`}>Warranty Period</p>
+                      <div className="grid max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
                         {["No Warranty", 30, 90, "Custom"].map((option) => {
                           const isSelected = option === "Custom"
                             ? newInspection.warranty_period === "Custom" || normalizeWarrantyPeriodValue(newInspection.warranty_period) === "Custom"
@@ -2542,12 +2620,12 @@ function SiteInspection() {
 
                                 handleInspectionFieldChange("warranty_period", option === "No Warranty" ? option : Number(option));
                               }}
-                              className={`${option === "Custom" ? "col-span-3 min-h-[46px]" : "min-h-[68px]"} w-full rounded-xl border px-3 py-2 text-sm font-bold transition ${
+                              className={`min-h-11 w-full rounded-lg border px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
                                 isSelected
-                                  ? "border-red-500 bg-red-600 text-white shadow-sm"
+                                  ? "border-red-600 bg-red-600 text-white shadow-sm"
                                   : darkMode
-                                    ? "border-slate-600 bg-[#122d42] text-slate-200 hover:bg-slate-700"
-                                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                                    ? "border-slate-600 bg-[#122d42] text-slate-200 hover:border-slate-500 hover:bg-slate-700"
+                                    : "border-slate-200 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50"
                               }`}
                             >
                               {option === "Custom" || option === "No Warranty" ? option : `${option} Days`}
@@ -2581,7 +2659,7 @@ function SiteInspection() {
                   </section>
 
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
-                    <h3 className={`mb-5 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Customer Account</h3>
+                    <h3 className={modalSectionTitleClass}>Customer Account</h3>
 
                     <div className="grid gap-5 md:grid-cols-[1.1fr_1.7fr]">
                       <div>
@@ -2636,21 +2714,29 @@ function SiteInspection() {
 
                   {newInspection.order_type === "walk_in_customer" && (
                     <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
-                      <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Signed Hard-Copy Contract</h3>
-                      <p className={`mb-3 text-sm ${mutedTextClass}`}>Upload the signed contract to verify walk-in acceptance and move the completed inspection into Transactions.</p>
-                      <input
-                        type="file"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        onChange={(event) => {
-                          handleSignedContractUpload(event.target.files);
-                          event.target.value = "";
-                        }}
-                        disabled={uploadingContractFile}
-                        className={`block w-full text-sm ${darkMode ? "text-slate-200" : "text-slate-700"}`}
-                      />
+                      <h3 className={modalSectionTitleClass}>Signed Hard-Copy Contract</h3>
+                      <p className={`mb-4 text-sm leading-5 ${mutedTextClass}`}>Upload the signed contract to verify walk-in acceptance and move the completed inspection into Transactions.</p>
+                      <label className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-5 text-center transition ${uploadingContractFile ? "cursor-wait opacity-60" : "hover:border-red-400 hover:bg-red-50/50"} ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-300 bg-slate-50"}`}>
+                        <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${darkMode ? "bg-slate-800 text-red-300" : "bg-white text-red-600 shadow-sm"}`}>
+                          <FileText size={20} aria-hidden="true" />
+                        </span>
+                        <span className={`text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>
+                          {uploadingContractFile ? "Uploading contract..." : newInspection.signed_contract_file ? "Replace signed contract" : "Choose signed contract"}
+                        </span>
+                        <span className={`text-xs ${mutedTextClass}`}>PDF, JPG, or PNG</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png"
+                          onChange={(event) => {
+                            handleSignedContractUpload(event.target.files);
+                            event.target.value = "";
+                          }}
+                          disabled={uploadingContractFile}
+                          className="sr-only"
+                        />
+                      </label>
                       {newInspection.signed_contract_file && <p className="mt-2 text-sm font-semibold text-emerald-600">Signed contract uploaded</p>}
-                      {uploadingContractFile && <p className={`mt-2 text-xs ${mutedTextClass}`}>Uploading contract...</p>}
-                      {(contractUploadError || errors.signed_contract_file) && <p className="mt-2 text-xs text-red-500">{contractUploadError || errors.signed_contract_file}</p>}
+                      {(contractUploadError || errors.signed_contract_file) && <p className="mt-2 text-sm text-red-500">{contractUploadError || errors.signed_contract_file}</p>}
                       <div className="mt-4 grid gap-4 sm:grid-cols-2">
                         <div>
                           <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Contract Number</label>
@@ -2675,7 +2761,7 @@ function SiteInspection() {
                   )}
 
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
-                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Site Details</h3>
+                    <h3 className={modalSectionTitleClass}>Site Details</h3>
                     <textarea
                       rows={4}
                       placeholder="Describe the project scope, access notes, special requirements..."
@@ -2689,11 +2775,11 @@ function SiteInspection() {
                   </section>
 
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
-                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Measurements</h3>
+                    <h3 className={modalSectionTitleClass}>Measurements</h3>
                     <p className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Add or edit measurement rows. Totals update in real time.</p>
 
-                    <div className={`mt-4 overflow-hidden rounded-xl border ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
-                      <div className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[11px] font-black uppercase tracking-[0.12em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
+                    <div className={`mt-4 overflow-x-auto rounded-xl border ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
+                      <div className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[10px] font-bold uppercase tracking-[0.1em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
                         <div>Product / Description</div>
                         <div>Width</div>
                         <div>Height</div>
@@ -2706,7 +2792,7 @@ function SiteInspection() {
                       {(newInspection.items || []).map((item, index) => {
                         const rowSubtotal = calculateRowSubtotal(item);
                         return (
-                          <div key={item.id} className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                          <div key={item.id} className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                             <div className="flex items-center gap-2">
                               <select
                                 value={item.product_id || ""}
@@ -2766,7 +2852,7 @@ function SiteInspection() {
                   </section>
 
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
-                    <h3 className={`mb-4 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>Payment Information</h3>
+                    <h3 className={modalSectionTitleClass}>Payment Information</h3>
                     <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                       <span className="mr-2 text-base">💡</span>
                       Business Policy: {isFullPaymentPlan(newInspection.payment_terms) ? "Full payment is required before project commences." : "A 50% downpayment is required before project commences."}
@@ -2881,7 +2967,7 @@ function SiteInspection() {
                   </section>
                 </div>
 
-                <div className={`flex shrink-0 justify-end gap-3 px-6 py-5 ${footerClass}`}>
+                <div className={`sticky bottom-0 z-10 flex shrink-0 justify-end gap-3 px-5 py-4 sm:px-7 ${footerClass}`}>
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
@@ -3159,28 +3245,34 @@ function SiteInspection() {
 
           {/* EDIT INSPECTION MODAL */}
           {editInspection && (
-            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-6 backdrop-blur-[2px]">
-              <div className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] ${modalShellClass}`}>
-                <div className={`flex items-start justify-between px-6 py-5 ${modalHeaderClass}`}>
-                  <div>
-                    <h2 className={`text-[26px] font-black tracking-[-0.04em] ${darkMode ? "text-white" : "text-slate-900"}`}>
-                      Edit Site Inspection
-                    </h2>
-                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                      Update client, schedule, and project details for this inspection.
-                    </p>
+            <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
+              <div className={`flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl sm:max-h-[88dvh] sm:rounded-3xl ${modalShellClass}`}>
+                <div className={`flex shrink-0 items-start justify-between gap-4 px-5 py-4 sm:px-7 sm:py-5 ${modalHeaderClass}`}>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-red-500/15 text-red-300" : "bg-red-50 text-red-600"}`}>
+                      <Pencil size={19} aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${darkMode ? "text-red-300" : "text-red-600"}`}>Site inspection</p>
+                      <h2 className={`mt-1 text-xl font-bold leading-tight sm:text-2xl ${darkMode ? "text-white" : "text-slate-900"}`}>
+                        Edit Site Inspection
+                      </h2>
+                      <p className={`mt-1 text-sm leading-5 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                        Update customer, schedule, and project details.
+                      </p>
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setEditInspection(null)}
-                    className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border text-2xl shadow-sm transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100 hover:text-slate-900"}`}
+                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}
                     aria-label="Close edit site inspection modal"
                   >
-                    ×
+                    <X size={18} aria-hidden="true" />
                   </button>
                 </div>
 
-                <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:space-y-5 sm:px-6 sm:py-5">
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
                     <h3 className={`mb-5 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>
                       Client Information
@@ -3259,8 +3351,8 @@ function SiteInspection() {
                     </div>
 
                     <div className="mt-6">
-                      <p className={`mb-3 text-[14px] font-bold ${labelClass}`}>Warranty Period</p>
-                      <div className="grid max-w-[286px] grid-cols-3 gap-2">
+                      <p className={`mb-3 text-sm font-semibold ${labelClass}`}>Warranty Period</p>
+                      <div className="grid max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
                         {["No Warranty", 30, 90, "Custom"].map((option) => {
                           const isSelected = option === "Custom"
                             ? editInspection.warranty_period === "Custom" || normalizeWarrantyPeriodValue(editInspection.warranty_period) === "Custom"
@@ -3283,12 +3375,12 @@ function SiteInspection() {
 
                                 handleEditChange("warranty_period", option === "No Warranty" ? option : Number(option));
                               }}
-                              className={`${option === "Custom" ? "col-span-3 min-h-[46px]" : "min-h-[68px]"} w-full rounded-xl border px-3 py-2 text-sm font-bold transition ${
+                              className={`min-h-11 w-full rounded-lg border px-3 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
                                 isSelected
-                                  ? "border-red-500 bg-red-600 text-white shadow-sm"
+                                  ? "border-red-600 bg-red-600 text-white shadow-sm"
                                   : darkMode
-                                    ? "border-slate-600 bg-[#122d42] text-slate-200 hover:bg-slate-700"
-                                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                                    ? "border-slate-600 bg-[#122d42] text-slate-200 hover:border-slate-500 hover:bg-slate-700"
+                                    : "border-slate-200 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50"
                               }`}
                             >
                               {option === "Custom" || option === "No Warranty" ? option : `${option} Days`}
@@ -3478,62 +3570,73 @@ function SiteInspection() {
 
                     {(() => {
                       const proof = getCustomerPaymentProof(editInspection);
+                      const proofNoticeClass = darkMode
+                        ? "rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-100 shadow-sm"
+                        : "rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900 shadow-sm";
+                      const proofContainerClass = darkMode
+                        ? "mt-3 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 p-3"
+                        : "mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-3";
+                      const proofCardClass = darkMode
+                        ? "mt-3 rounded-xl border border-slate-700 bg-slate-800 p-3 shadow-sm"
+                        : "mt-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm";
+                      const proofSecondaryTextClass = darkMode ? "text-slate-400" : "text-slate-500";
+                      const proofBodyTextClass = darkMode ? "text-slate-300" : "text-slate-600";
                       if (proof.submitted) {
                         return (
                           <div className="mb-5 space-y-3">
-                            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-100 shadow-sm">
+                            <div className={proofNoticeClass}>
                               <p className="font-medium leading-6">
-                                Customer says they paid <span className="font-bold text-white">₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>. Confirm it matches what you received.
+                                Customer says they paid <span className={`font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>. Confirm it matches what you received.
                               </p>
-                              <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-300">Use this amount</p>
+                              <p className={`mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${darkMode ? "text-amber-300" : "text-amber-700"}`}>Use this amount</p>
                             </div>
 
                             <div>
-                              <div className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-300">PROOF OF PAYMENT</div>
+                              <div className={`mb-2 text-[11px] font-bold uppercase tracking-[0.14em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>PROOF OF PAYMENT</div>
                               <button
                                 type="button"
-                                className="flex w-full items-center justify-between rounded-xl border border-slate-600 bg-slate-800/80 px-3 py-2.5 text-left text-sm text-slate-200 transition hover:bg-slate-700"
+                                className={`flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left text-sm transition ${darkMode ? "border-slate-600 bg-slate-800/80 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"}`}
                               >
                                 <span className="font-medium">View Proof of Payment</span>
-                                <span className="text-slate-400">↗</span>
+                                <span className={proofSecondaryTextClass}>↗</span>
                               </button>
 
-                              <div className="mt-3 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 p-3">
-                                <div className="flex items-center justify-between gap-3 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                              <div className={proofContainerClass}>
+                                <div className={`flex items-center justify-between gap-3 text-[11px] font-bold uppercase tracking-[0.12em] ${proofSecondaryTextClass}`}>
                                   <span>Customer Payment Submissions (1)</span>
                                   <span>{proof.paymentMethod || "Cash"}</span>
                                 </div>
 
-                                <div className="mt-3 rounded-xl border border-slate-700 bg-slate-800 p-3 shadow-sm">
-                                  <div className="mb-3 flex items-center justify-between gap-3 text-xs text-slate-400">
-                                    <span className="font-semibold text-slate-200">Payment #1</span>
+                                <div className={proofCardClass}>
+                                  <div className={`mb-3 flex items-center justify-between gap-3 text-xs ${proofSecondaryTextClass}`}>
+                                    <span className={`font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Payment #1</span>
                                     <span>{formatDateToMMMDDYYYY(new Date())}</span>
                                   </div>
 
-                                  <div className="rounded-lg border border-slate-600 bg-slate-900/80 p-3">
-                                    <div className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">Customer declared</div>
-                                    <div className="text-xl font-bold tracking-tight text-white">
+                                  <div className={`rounded-lg border p-3 ${darkMode ? "border-slate-600 bg-slate-900/80" : "border-slate-200 bg-slate-50"}`}>
+                                    <div className={`mb-2 text-[11px] font-bold uppercase tracking-[0.12em] ${proofSecondaryTextClass}`}>Customer declared</div>
+                                    <div className={`text-xl font-bold tracking-tight ${darkMode ? "text-white" : "text-slate-900"}`}>
                                       ₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </div>
                                   </div>
 
-                                  <div className="mt-3 grid gap-2 text-sm text-slate-300">
+                                  <div className={`mt-3 grid gap-2 text-sm ${proofBodyTextClass}`}>
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="font-medium">Admin recorded</span>
-                                      <span className="font-semibold text-red-400">
+                                      <span className={`font-semibold ${darkMode ? "text-red-400" : "text-red-600"}`}>
                                         ₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                       </span>
                                     </div>
                                     {proof.transactionNumber && (
                                       <div className="flex items-center justify-between gap-2">
                                         <span className="font-medium">Transaction</span>
-                                        <span className="font-semibold text-slate-100">{proof.transactionNumber}</span>
+                                        <span className={`font-semibold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{proof.transactionNumber}</span>
                                       </div>
                                     )}
                                     {proof.fileName && (
                                       <div className="flex items-center justify-between gap-2">
                                         <span className="font-medium">Attachment</span>
-                                        <span className="max-w-[150px] truncate text-right font-semibold text-slate-100" title={proof.fileName}>{proof.fileName}</span>
+                                        <span className={`max-w-[150px] truncate text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-800"}`} title={proof.fileName}>{proof.fileName}</span>
                                       </div>
                                     )}
                                   </div>
@@ -3545,8 +3648,8 @@ function SiteInspection() {
                       }
 
                       return (
-                        <div className="mb-5 rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-3 text-sm text-slate-400">
-                          <div className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.18em] text-slate-300">PROOF OF PAYMENT</div>
+                        <div className={`mb-5 rounded-xl border px-3 py-3 text-sm ${darkMode ? "border-slate-700 bg-slate-900/60 text-slate-400" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                          <div className={`mb-2 text-[11px] font-bold uppercase tracking-[0.14em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>PROOF OF PAYMENT</div>
                           <p>Customer has not submitted proof of payment yet.</p>
                         </div>
                       );
@@ -3653,7 +3756,7 @@ function SiteInspection() {
                   </section>
                 </div>
 
-                <div className={`flex shrink-0 justify-end gap-3 px-6 py-5 ${footerClass}`}>
+                <div className={`sticky bottom-0 z-10 flex shrink-0 justify-end gap-3 px-5 py-4 sm:px-7 ${footerClass}`}>
                   <button
                     type="button"
                     onClick={() => setEditInspection(null)}

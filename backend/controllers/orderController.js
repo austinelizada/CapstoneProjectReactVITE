@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import mongoose from "mongoose";
-import PDFDocument from "pdfkit";
 import Order from "../models/Order.js";
 import User from "../models/User.js";
 import { sendMail } from "../config/mailer.js";
@@ -17,6 +16,12 @@ const buildReviewNotificationMessage = (order, review) => {
   const productName = order.items?.[0]?.name || "project";
   return `New customer review received for ${productName} (${order.tracking}).\nRating: ${"⭐".repeat(review.rating || 0)}\nTitle: ${review.title || "-"}\nComment: ${review.comment || "-"}`;
 };
+
+const getDelayEventKey = (stage, entry, index) => [
+  stage.key || stage.name || index,
+  entry.reportedAt ? new Date(entry.reportedAt).getTime() : "",
+  entry.reason || "",
+].join("|");
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -99,63 +104,6 @@ const getDataUrlAttachment = (dataUrl, filename) => {
     contentType: match[1],
   };
 };
-
-const createContractPdfAttachment = ({
-  customerName,
-  orderNumber,
-  inspectionDate,
-  siteAddress,
-  paymentTerms,
-  warrantyPeriod,
-  inspectionNotes,
-  totalAmount,
-  itemRows,
-}) => new Promise((resolve, reject) => {
-  const document = new PDFDocument({ margin: 48, size: "A4" });
-  const chunks = [];
-
-  document.on("data", (chunk) => chunks.push(chunk));
-  document.on("end", () => resolve(Buffer.concat(chunks)));
-  document.on("error", reject);
-
-  document.fontSize(18).fillColor("#b91c1c").text("ACGC Glass & Aluminum Services");
-  document.moveDown(0.4);
-  document.fontSize(14).fillColor("#111827").text("Site Inspection Contract Details");
-  document.moveDown();
-  document.fontSize(10).fillColor("#111827");
-  document.text(`Hi ${customerName},`);
-  document.moveDown(0.5);
-  document.text("Thank you for choosing ACGC. Below are the contract details based on your site inspection.");
-  document.moveDown();
-  document.font("Helvetica-Bold").text(`Order Number: ${orderNumber}`);
-  document.font("Helvetica").text(`Inspection Date: ${inspectionDate}`);
-  document.text(`Site Address: ${siteAddress}`);
-  document.text(`Payment Terms: ${paymentTerms}`);
-  document.text(`Warranty Period: ${warrantyPeriod}`);
-  document.moveDown();
-
-  document.font("Helvetica-Bold").text("Inspection Items");
-  document.moveDown(0.4);
-  document.font("Helvetica");
-  if (itemRows.length === 0) {
-    document.text("No measurement items recorded.");
-  } else {
-    itemRows.forEach((item, index) => {
-      document.text(`${index + 1}. ${item.name}`);
-      document.text(`   Qty: ${item.quantity} | Dimensions: ${item.dimensions} | Area: ${item.area} | Amount: ${item.amount}`);
-      document.moveDown(0.25);
-    });
-  }
-
-  document.moveDown(0.5);
-  document.font("Helvetica-Bold").text(`Total Contract Amount: ${totalAmount}`);
-  document.moveDown();
-  document.text("Site Notes");
-  document.font("Helvetica").text(inspectionNotes, { width: 500 });
-  document.moveDown();
-  document.text("Please review these details and contact our support team if anything needs to be corrected.");
-  document.end();
-});
 
 const normalizeProductId = (productId) => {
   if (!productId) return null;
@@ -246,7 +194,7 @@ export const listOrders = async (req, res) => {
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
-      .populate("items.product_id", "image_url image images name product_name category product_type unit unit_price price_per_sqft price_per_blade");
+      .populate("items.product_id", "image_url image images name product_name category product_type unit unit_price price_per_sqft price_per_blade width height measurement_unit standard_size");
 
     res.json({ success: true, orders });
   } catch (error) {
@@ -441,7 +389,7 @@ export const trackOrder = async (req, res) => {
 
     const order = await Order.findOne({ tracking })
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
-      .populate("items.product_id", "image_url image images name product_name category product_type unit unit_price price_per_sqft price_per_blade");
+      .populate("items.product_id", "image_url image images name product_name category product_type unit unit_price price_per_sqft price_per_blade width height measurement_unit standard_size");
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
@@ -480,7 +428,7 @@ export const getAdminOrders = async (req, res) => {
     }
 
     const orders = await Order.find(filter)
-      .populate("items.product_id", "image_url image images name category product_type")
+      .populate("items.product_id", "image_url image images name category product_type width height measurement_unit standard_size")
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
       .sort({ createdAt: -1 });
 
@@ -500,7 +448,7 @@ export const getAdminOrderById = async (req, res) => {
     const { orderId } = req.params;
     const order = await Order.findById(orderId)
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
-      .populate("items.product_id", "image_url image images name category product_type");
+      .populate("items.product_id", "image_url image images name category product_type width height measurement_unit standard_size");
 
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
@@ -556,6 +504,36 @@ export const updateOrderStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
+    const requestedStatus = String(status || order.status || "").toLowerCase();
+    const requestedContractStatus = String(contract_status || order.contract_status || "").toLowerCase();
+    const requestsTransactionEntry =
+      requestedStatus === "contract_accepted" ||
+      requestedContractStatus === "accepted" ||
+      transactionCreated === true;
+
+    if (requestsTransactionEntry) {
+      const requestedAcceptanceMethod = acceptance_method || order.acceptance_method;
+      const isVerifiedWalkInContract =
+        order.order_type === "walk_in_customer" &&
+        requestedStatus === "contract_accepted" &&
+        requestedContractStatus === "accepted" &&
+        requestedAcceptanceMethod === "walk_in_signed_contract" &&
+        Boolean(signed_contract_url || order.signed_contract_url) &&
+        Boolean(contract_signed_date || order.contract_signed_date);
+      const isCustomerAcceptedOnlineContract =
+        order.order_type !== "walk_in_customer" &&
+        order.acceptedByCustomer === true &&
+        requestedAcceptanceMethod === "online" &&
+        String(order.contract_status || "").toLowerCase() === "accepted";
+
+      if (!isVerifiedWalkInContract && !isCustomerAcceptedOnlineContract) {
+        return res.status(400).json({
+          success: false,
+          message: "Customer acceptance is required before this order can enter Transactions.",
+        });
+      }
+    }
+
     const isOrderCompleted = order.status === "completed" || Number(order.progress) >= 100;
     if (String(status || "").toLowerCase() === "cancelled" && isOrderCompleted) {
       return res.status(400).json({
@@ -608,6 +586,27 @@ export const updateOrderStatus = async (req, res) => {
   } catch (error) {
     console.error("Update order status error:", error);
     res.status(500).json({ success: false, message: "Unable to update order", error: error.message });
+  }
+};
+
+export const deleteOrderReview = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found." });
+    }
+    if (!order.review || (!order.review.submittedAt && !order.review.rating)) {
+      return res.status(404).json({ success: false, message: "Customer feedback not found." });
+    }
+
+    order.review = undefined;
+    order.markModified("review");
+    await order.save();
+
+    return res.json({ success: true, order });
+  } catch (error) {
+    console.error("Delete order review error:", error);
+    return res.status(500).json({ success: false, message: "Unable to delete customer feedback.", error: error.message });
   }
 };
 
@@ -873,6 +872,21 @@ export const submitCustomerPaymentProof = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to update payment proof for this order." });
     }
 
+    const paymentBaseAmount = Number(order.contract_amount || order.total_amount || 0);
+    const requiredPaymentAmount = Number(order.downpayment_amount)
+      || (order.payment_terms === "full_payment" ? paymentBaseAmount : paymentBaseAmount * 0.5);
+    if (Math.round(normalizedAmount * 100) !== Math.round(requiredPaymentAmount * 100)) {
+      const roundedRequiredAmount = Math.round(requiredPaymentAmount * 100) / 100;
+      const formattedRequiredAmount = roundedRequiredAmount.toLocaleString("en-PH", {
+        minimumFractionDigits: Number.isInteger(roundedRequiredAmount) ? 0 : 2,
+        maximumFractionDigits: 2,
+      });
+      return res.status(400).json({
+        success: false,
+        message: `Please enter the exact required payment amount of ₱${formattedRequiredAmount}.`,
+      });
+    }
+
     order.payment_status = "paid";
     order.payment_proof_amount = normalizedAmount;
     order.payment_proof_submitted_at = new Date();
@@ -1124,6 +1138,14 @@ export const updateOrderInspection = async (req, res) => {
       updateData.shipping_address = normalizeAddress(order.shipping_address || buildAddressFromUser(registeredCustomer));
     }
 
+    if (Array.isArray(updateData.items)) {
+      updateData.items = updateData.items.map((item, index) => ({
+        ...item,
+        progress: order.items[index]?.progress ?? null,
+        progress_stages: order.items[index]?.progress_stages || [],
+      }));
+    }
+
     const updatedTotalAmount = total_amount !== undefined ? Number(total_amount) || 0 : order.total_amount;
     const updatedPaymentTerms = payment_terms !== undefined ? payment_terms : order.payment_terms;
     updateData.contract_amount = updatedTotalAmount;
@@ -1168,7 +1190,23 @@ export const updateOrderProgress = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
-    if (typeof progress !== "undefined") order.progress = Number(progress) || 0;
+    const itemIndex = req.body.itemIndex;
+    const isItemProgressUpdate = typeof itemIndex === "number" && Number.isInteger(itemIndex) && order.items.length > 1;
+    if (itemIndex !== undefined && (!isItemProgressUpdate || itemIndex < 0 || itemIndex >= order.items.length)) {
+      return res.status(400).json({ success: false, message: "Invalid item index for batch progress update." });
+    }
+    const previousStages = isItemProgressUpdate && order.items[itemIndex].progress_stages?.length
+      ? order.items[itemIndex].progress_stages
+      : order.progress_stages || [];
+    const previousDelayEventKeys = new Set(previousStages.flatMap((stage, index) =>
+      (stage.delayHistory || []).map((entry) => getDelayEventKey(stage, entry, index))
+    ));
+    let newDelayEvents = [];
+
+    if (typeof progress !== "undefined") {
+      if (isItemProgressUpdate) order.items[itemIndex].progress = Number(progress) || 0;
+      else order.progress = Number(progress) || 0;
+    }
 
     // Map friendly status values back to internal statuses when possible
     const mapFriendlyToInternal = (s) => {
@@ -1183,15 +1221,15 @@ export const updateOrderProgress = async (req, res) => {
       return undefined;
     };
 
-    const mapped = mapFriendlyToInternal(status);
+    const mapped = isItemProgressUpdate ? undefined : mapFriendlyToInternal(status);
     if (mapped) order.status = mapped;
 
-    if (installation_date) {
+    if (!isItemProgressUpdate && installation_date) {
       // store as inspection_date for compatibility with existing schema
       order.inspection_date = installation_date;
     }
 
-    if (estimated_installation_date !== undefined) {
+    if (!isItemProgressUpdate && estimated_installation_date !== undefined) {
       const parsedInstallationDate = estimated_installation_date ? new Date(estimated_installation_date) : null;
       if (parsedInstallationDate && Number.isNaN(parsedInstallationDate.getTime())) {
         return res.status(400).json({ success: false, message: "Estimated installation date must be a valid date." });
@@ -1200,7 +1238,7 @@ export const updateOrderProgress = async (req, res) => {
     }
 
     if (Array.isArray(stages)) {
-      order.progress_stages = stages.map((s) => ({
+      const normalizedStages = stages.map((s) => ({
         key: s.key || (s.name || "").toString().toLowerCase().replace(/\s+/g, "_"),
         name: s.name || "",
         status: ["pending", "in_progress", "done", "delayed", "on_hold"].includes(s.status) ? s.status : s.completed ? "done" : "pending",
@@ -1250,7 +1288,7 @@ export const updateOrderProgress = async (req, res) => {
       }));
 
       const delayReporter = req.user?.email || "";
-      order.progress_stages = order.progress_stages.map((stage) => {
+      const targetStages = normalizedStages.map((stage) => {
         const history = Array.isArray(stage.delayHistory)
           ? stage.delayHistory.map((entry) => ({
               ...entry,
@@ -1273,15 +1311,40 @@ export const updateOrderProgress = async (req, res) => {
         };
       });
 
-      const allProjectStagesDone =
-        order.progress_stages.length > 0 &&
-        order.progress_stages.every((stage) => stage.completed === true);
-      if (allProjectStagesDone) {
-        order.status = "completed";
+      newDelayEvents = targetStages.flatMap((stage, stageIndex) =>
+        stage.delayHistory
+          .filter((entry) => entry.status === "delayed" && !previousDelayEventKeys.has(getDelayEventKey(stage, entry, stageIndex)))
+          .map((entry) => ({
+            stageName: stage.name || stage.key || "Project stage",
+            reason: entry.reason,
+            expectedResolution: entry.expectedResolution,
+            notes: entry.notes,
+            productName: isItemProgressUpdate ? order.items[itemIndex]?.name : "",
+          }))
+      );
+
+      if (isItemProgressUpdate) {
+        order.items.forEach((item) => {
+          if (!Array.isArray(item.progress_stages) || item.progress_stages.length === 0) {
+            item.progress_stages = order.progress_stages.map((stage) => stage.toObject?.() || stage);
+            item.progress = order.progress ?? null;
+          }
+        });
+        order.items[itemIndex].progress_stages = targetStages;
+        order.items[itemIndex].progress = Number(progress) || 0;
+      } else {
+        order.progress_stages = targetStages;
+        const allProjectStagesDone =
+          order.progress_stages.length > 0 &&
+          order.progress_stages.every((stage) => stage.completed === true);
+        if (allProjectStagesDone) {
+          order.status = "completed";
+        }
       }
 
       // If a site inspection stage exists, keep inspection_date/status in sync
-      try {
+      if (!isItemProgressUpdate) {
+        try {
         const inspectionStage = order.progress_stages.find((s) => {
           const key = (s.key || "").toString().toLowerCase();
           const name = (s.name || "").toString().toLowerCase();
@@ -1314,6 +1377,7 @@ export const updateOrderProgress = async (req, res) => {
         }
       } catch (syncErr) {
         console.warn("Failed to sync inspection stage to order fields:", syncErr && syncErr.message ? syncErr.message : syncErr);
+        }
       }
     }
 
@@ -1327,6 +1391,44 @@ export const updateOrderProgress = async (req, res) => {
     }
 
     await order.save();
+
+    if (newDelayEvents.length > 0) {
+      const linkedCustomer = order.customer_email
+        ? null
+        : order.customer
+          ? await User.findById(order.customer).select("email first_name")
+          : null;
+      const customerEmail = order.customer_email || linkedCustomer?.email || "";
+      if (customerEmail) {
+        await Promise.all(newDelayEvents.map(async (delayEvent) => {
+          const expectedResolution = delayEvent.expectedResolution
+            ? new Date(delayEvent.expectedResolution).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
+            : "Not yet determined";
+          const projectName = delayEvent.productName || order.items?.[0]?.name || "your project";
+          const message = [
+            `Hello ${order.customer_name || linkedCustomer?.first_name || ""},`,
+            "",
+            `There is a delay affecting ${projectName}.`,
+            `Stage: ${delayEvent.stageName}`,
+            `Reason: ${delayEvent.reason || "Not provided"}`,
+            `Expected resolution: ${expectedResolution}`,
+            delayEvent.notes ? `Additional notes: ${delayEvent.notes}` : "",
+            "",
+            `Order: ${order.tracking || order._id}`,
+          ].filter(Boolean).join("\n");
+
+          try {
+            await sendMail({
+              to: customerEmail,
+              subject: `Project delay update - ${order.tracking || "your order"}`,
+              text: message,
+            });
+          } catch (mailError) {
+            console.error("Customer project delay email failed:", mailError);
+          }
+        }));
+      }
+    }
 
     res.json({ success: true, order });
   } catch (error) {
@@ -1417,8 +1519,17 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       return res.status(400).json({ success: false, message: "Customer email is required" });
     }
 
-    // Build the email from the saved inspection so the customer receives the
-    // same project details that admins see in the contract modal.
+    const generatedContractAttachment = getDataUrlAttachment(
+      contractAttachment,
+      `ACGC-Contract-${order.tracking || orderId}.pdf`
+    );
+    if (!generatedContractAttachment || generatedContractAttachment.contentType !== "application/pdf") {
+      return res.status(400).json({
+        success: false,
+        message: "Generate the contract PDF before sending it to the customer.",
+      });
+    }
+
     const escapeHtml = (value) => String(value ?? "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
@@ -1427,48 +1538,10 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       .replace(/'/g, "&#039;");
     const customerNameValue = customerName || order.customer_name || "Valued Customer";
     const orderNumber = order.tracking || "N/A";
-    const inspectionDate = order.inspection_date
-      ? new Date(order.inspection_date).toLocaleDateString()
-      : "N/A";
-    const totalAmount = typeof order.total_amount === "number"
-      ? `₱${order.total_amount.toFixed(2)}`
-      : "N/A";
-    const siteAddress = order.shipping_address || "N/A";
-    const paymentTerms = order.payment_terms || "50% downpayment, 50% upon completion";
-    const warrantyPeriod = order.warranty_period === "No Warranty"
-      ? "No Warranty"
-      : order.warranty_period
-        ? `${order.warranty_period} days`
-        : "90 days";
-    const inspectionNotes = order.inspection_notes || "No additional site notes provided.";
     const contractLink = contractUrl || order.signed_contract_url || "";
     const fromAddress = process.env.EMAIL_FROM || "ACGC Site Inspection <no-reply@acgc.com>";
     const frontendUrl = (process.env.FRONTEND_URL || process.env.CLIENT_URL || "http://localhost:5173").replace(/\/$/, "");
     const contractLoginLink = `${frontendUrl}/customer-dashboard?tab=contracts&orderId=${encodeURIComponent(order._id)}`;
-    const itemRows = (order.items || []).map((item) => {
-      const quantity = Number(item.quantity) || 1;
-      const width = Number(item.width) || 0;
-      const height = Number(item.height) || 0;
-      const area = Number(item.area) || 0;
-      const amount = Number(item.estimated_price) || (Number(item.unit_price) || 0) * quantity;
-      return {
-        name: item.name || "Inspection item",
-        quantity,
-        dimensions: `${width} x ${height} in`,
-        area: `${area.toFixed(2)} sq ft`,
-        amount: `₱${amount.toFixed(2)}`,
-      };
-    });
-    const itemHtml = itemRows.length > 0
-      ? itemRows.map((item) => `
-          <tr>
-            <td style="border:1px solid #d1d5db;padding:8px">${escapeHtml(item.name)}</td>
-            <td style="border:1px solid #d1d5db;padding:8px;text-align:center">${item.quantity}</td>
-            <td style="border:1px solid #d1d5db;padding:8px">${escapeHtml(item.dimensions)}</td>
-            <td style="border:1px solid #d1d5db;padding:8px">${escapeHtml(item.area)}</td>
-            <td style="border:1px solid #d1d5db;padding:8px;text-align:right">${escapeHtml(item.amount)}</td>
-          </tr>`).join("")
-      : `<tr><td colspan="5" style="border:1px solid #d1d5db;padding:8px">No measurement items recorded.</td></tr>`;
 
     const htmlBody = `
       <div style="font-family:Arial,sans-serif;color:#111827">
@@ -1494,26 +1567,7 @@ Thank you,
 ACGC Site Inspection Team
 `;
 
-    const contractPdf = await createContractPdfAttachment({
-      customerName: customerNameValue,
-      orderNumber,
-      inspectionDate,
-      siteAddress,
-      paymentTerms,
-      warrantyPeriod,
-      inspectionNotes,
-      totalAmount,
-      itemRows,
-    });
-    const renderedContractAttachment = getDataUrlAttachment(
-      contractAttachment,
-      `ACGC-site-inspection-${orderNumber}.pdf`
-    );
-    const attachments = [renderedContractAttachment || {
-      filename: `ACGC-site-inspection-${orderNumber}.pdf`,
-      content: contractPdf,
-      contentType: "application/pdf",
-    }];
+    const attachments = [generatedContractAttachment];
     const uploadedContractAttachment = getLocalUploadedAttachment(contractLink);
     if (uploadedContractAttachment) {
       attachments.push(uploadedContractAttachment);

@@ -53,6 +53,7 @@ export const createProduct = async (req, res) => {
       description,
       unit_price,
       unit,
+      measurement_unit,
       stock_quantity,
       image_url,
       // ERP fields
@@ -64,6 +65,7 @@ export const createProduct = async (req, res) => {
       price_per_sqft,
       price_per_blade,
       customization_fee,
+      standard_size,
       width,
       height,
       blade_count,
@@ -76,22 +78,7 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ success: false, message: "Name and category are required" });
     }
 
-    const normalizedCategory = category ? category.toLowerCase() : "other";
-    const allowedCategories = [
-      "glass",
-      "aluminum",
-      "accessories",
-      "hardware",
-      "sealant",
-      "other",
-      "windows",
-      "doors",
-      "cabinets",
-      "shower enclosures",
-    ];
-    const categoryValue = allowedCategories.includes(normalizedCategory)
-      ? normalizedCategory
-      : "other";
+    const categoryValue = String(category || "other").trim().toLowerCase();
 
     const product = new Product({
       name,
@@ -100,6 +87,7 @@ export const createProduct = async (req, res) => {
       description: description || "",
       unit_price: Number(unit_price) || 0,
       unit: unit || "per_piece",
+      measurement_unit: measurement_unit || "in",
       stock_quantity: Number(stock_quantity) || 0,
       is_featured: req.body.is_featured !== undefined ? Boolean(req.body.is_featured) : false,
       image_url: image_url || "",
@@ -141,25 +129,11 @@ export const updateProduct = async (req, res) => {
     const updates = {
       name: req.body.name ?? product.name,
       sku: req.body.sku ?? product.sku,
-      category: (() => {
-        const value = req.body.category ? req.body.category.toLowerCase() : product.category;
-        const allowed = [
-          "glass",
-          "aluminum",
-          "accessories",
-          "hardware",
-          "sealant",
-          "other",
-          "windows",
-          "doors",
-          "cabinets",
-          "shower enclosures",
-        ];
-        return allowed.includes(value) ? value : "other";
-      })(),
+      category: String(req.body.category ?? product.category ?? "other").trim().toLowerCase(),
       description: req.body.description ?? product.description,
       unit_price: req.body.unit_price != null ? Number(req.body.unit_price) : product.unit_price,
       unit: req.body.unit ?? product.unit,
+      measurement_unit: req.body.measurement_unit ?? product.measurement_unit,
       stock_quantity: req.body.stock_quantity != null ? Number(req.body.stock_quantity) : product.stock_quantity,
       is_featured: req.body.is_featured != null ? Boolean(req.body.is_featured) : product.is_featured,
       image_url: req.body.image_url ?? product.image_url,

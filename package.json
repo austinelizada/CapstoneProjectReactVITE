@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "cross-env NODE_OPTIONS=--no-deprecation concurrently -k --raw \"npm --prefix backend run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev:frontend\"",
     "dev:debug": "cross-env DEBUG_API=true NODE_OPTIONS=--no-deprecation concurrently -k --raw \"npm --prefix backend run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev:frontend\"",
-    "dev:frontend": "npx kill-port 5173 --quiet && vite --host 0.0.0.0 --port 5173 --strictPort true",
-    "dev:frontend:mobile": "npx kill-port 5173 --quiet && vite --host 0.0.0.0 --port 5173 --strictPort true",
+    "dev:frontend": "vite --host 0.0.0.0",
+    "dev:frontend:mobile": "vite --host 0.0.0.0",
     "dev:mobile": "concurrently -k -n backend,frontend -c blue,green \"npm --prefix backend run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev:frontend:mobile\"",
-    "dev:no-hmr": "vite --host 0.0.0.0 --port 5173 --no-hmr",
+    "dev:no-hmr": "vite --host 0.0.0.0 --no-hmr",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "vite build",

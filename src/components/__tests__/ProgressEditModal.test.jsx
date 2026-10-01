@@ -56,6 +56,30 @@ describe("ProgressEditModal", () => {
     });
   });
 
+  it("saves Assembly after Cutting and before Fabrication", async () => {
+    const onSave = vi.fn().mockResolvedValue();
+
+    render(
+      <ProgressEditModal
+        project={{ id: "order-123", client: "Acme Corp", stages: [] }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalled();
+      expect(onSave.mock.calls[0][0].stages.map((stage) => stage.key)).toEqual([
+        "cutting",
+        "assembly",
+        "fabrication",
+        "installation",
+      ]);
+    });
+  });
+
   it("allows completed parent stage sub-stages to be marked done and undone before save", () => {
     const project = {
       id: "order-123",

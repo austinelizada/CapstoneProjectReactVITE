@@ -183,9 +183,9 @@ function Settings() {
   return (
     <div className={`admin-settings settings-premium flex h-screen overflow-hidden ${darkMode ? "bg-slate-950 text-slate-100" : "bg-[#eef1f3] text-slate-900"}`}>
       <Toaster position="bottom-right" />
-      <Sidebar isOpen={isSidebarOpen} />
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
       <div className="flex min-h-0 flex-1 flex-col">
-        <Navbar toggleSidebar={() => setIsSidebarOpen((open) => !open)} />
+        <Navbar />
         <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <AdminPageHeader
             title="System Settings"

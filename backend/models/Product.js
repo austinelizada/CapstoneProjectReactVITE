@@ -15,18 +15,6 @@ const ProductSchema = new mongoose.Schema(
     category: {
       type: String,
       required: true,
-      enum: [
-        "glass",
-        "aluminum",
-        "accessories",
-        "hardware",
-        "sealant",
-        "other",
-        "windows",
-        "doors",
-        "cabinets",
-        "shower enclosures",
-      ],
       default: "glass",
     },
     description: {
@@ -121,6 +109,11 @@ const ProductSchema = new mongoose.Schema(
       required: true,
       enum: ["per_sqft", "per_piece", "per_meter", "per_set"],
       default: "per_piece",
+    },
+    measurement_unit: {
+      type: String,
+      enum: ["in", "ft", "cm", "m"],
+      default: "in",
     },
     stock_quantity: {
       type: Number,

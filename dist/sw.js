@@ -1,1 +1,59 @@
-if(!self.define){let e,s={};const i=(i,n)=>(i=new URL(i+".js",n).href,s[i]||new Promise(s=>{if("document"in self){const e=document.createElement("script");e.src=i,e.onload=s,document.head.appendChild(e)}else e=i,importScripts(i),s()}).then(()=>{let e=s[i];if(!e)throw new Error(`Module ${i} didn’t register its module`);return e}));self.define=(n,r)=>{const t=e||("document"in self?document.currentScript.src:"")||location.href;if(s[t])return;let l={};const o=e=>i(e,t),u={module:{uri:t},exports:l,require:o};s[t]=Promise.all(n.map(e=>u[e]||o(e))).then(e=>(r(...e),l))}}define(["./workbox-9c191d2f"],function(e){"use strict";self.skipWaiting(),e.clientsClaim(),e.precacheAndRoute([{url:"registerSW.js",revision:"402b66900e731ca748771b6fc5e7a068"},{url:"index.html",revision:"eb95b3f7acfde82114bdda072db01e2a"},{url:"assets/purify.es-6-uFcs4-.js",revision:null},{url:"assets/index.es-De_dtG4v.js",revision:null},{url:"assets/index-CmfJg1tH.css",revision:null},{url:"assets/index-BTbNFt0G.js",revision:null},{url:"assets/html2canvas-DJDa0ixs.js",revision:null},{url:"pwa-192x192.png",revision:"849333580c93f090764db475e64f1ee8"},{url:"pwa-512x512.png",revision:"33ac359db85b38dbf119ea232d9736a6"},{url:"manifest.webmanifest",revision:"eb22e160bfd3fce299b87a554042c50e"}],{}),e.cleanupOutdatedCaches(),e.registerRoute(new e.NavigationRoute(e.createHandlerBoundToURL("index.html")))});
+const CACHE_NAME = 'acgc-shell-v1'
+const APP_SHELL = ['./', './index.html', './favicon.svg', './manifest.webmanifest']
+
+self.addEventListener('install', (event) => {
+	event.waitUntil(
+		caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)),
+	)
+	self.skipWaiting()
+})
+
+self.addEventListener('activate', (event) => {
+	event.waitUntil(
+		caches.keys().then((keys) =>
+			Promise.all(
+				keys
+					.filter((key) => key !== CACHE_NAME)
+					.map((key) => caches.delete(key)),
+			),
+		),
+	)
+	self.clients.claim()
+})
+
+self.addEventListener('fetch', (event) => {
+	const requestUrl = new URL(event.request.url)
+
+	if (requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api')) {
+		return
+	}
+
+	if (event.request.mode === 'navigate') {
+		event.respondWith(
+			fetch(event.request)
+				.then((response) => {
+					const responseCopy = response.clone()
+					caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', responseCopy))
+					return response
+				})
+				.catch(() => caches.match('./index.html')),
+		)
+		return
+	}
+
+	event.respondWith(
+		caches.match(event.request).then((cachedResponse) => {
+			if (cachedResponse) {
+				return cachedResponse
+			}
+
+			return fetch(event.request).then((response) => {
+				if (response.ok) {
+					const responseCopy = response.clone()
+					caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseCopy))
+				}
+				return response
+			})
+		}),
+	)
+})

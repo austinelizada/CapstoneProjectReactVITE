@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Package,
   Plus,
   Search,
-  Loader2,
   Pencil,
   Trash2,
   X,
+  ChevronDown,
 } from "lucide-react";
 import * as catalogApi from '@/api/catalog';
 import { API_BASE } from "@/api/client";
@@ -26,6 +27,492 @@ import { recordActivity } from "@/lib/activityLog";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
+
+const MEASUREMENT_UNITS = [
+  ["in", "Inches (in)"],
+  ["cm", "Centimeters (cm)"],
+  ["m", "Meters (m)"],
+];
+
+function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, disabled = false }) {
+  const actionLabel = label.replace(/\s*\*+\s*$/, "");
+  const [isOpen, setIsOpen] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [newOption, setNewOption] = useState("");
+  const [savingOption, setSavingOption] = useState(false);
+  const [error, setError] = useState("");
+  const [menuPosition, setMenuPosition] = useState(null);
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+
+  const updateMenuPosition = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom - 16;
+    const spaceAbove = rect.top - 16;
+    const openAbove = spaceBelow < 260 && spaceAbove > spaceBelow;
+    const availableSpace = openAbove ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(100, Math.min(320, availableSpace - 8));
+    const top = openAbove
+      ? Math.max(8, rect.top - maxHeight - 8)
+      : Math.min(rect.bottom + 8, window.innerHeight - maxHeight - 8);
+
+    setMenuPosition({
+      position: "fixed",
+      top,
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8)),
+      width: rect.width,
+      maxHeight,
+    });
+  };
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    updateMenuPosition();
+    const closeOnOutsideClick = (event) => {
+      if (triggerRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) return;
+      setIsOpen(false);
+      setIsAdding(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key !== "Escape") return;
+      setIsOpen(false);
+      setIsAdding(false);
+    };
+
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isOpen]);
+
+  const saveOption = async (event) => {
+    event.preventDefault();
+    const trimmedOption = newOption.trim();
+    if (!trimmedOption) return;
+
+    setSavingOption(true);
+    setError("");
+    try {
+      const savedOption = await onAdd(trimmedOption);
+      onChange(savedOption || trimmedOption);
+      setNewOption("");
+      setIsAdding(false);
+      setIsOpen(false);
+    } catch (saveError) {
+      setError(saveError?.data?.message || saveError?.message || `Unable to add ${actionLabel.toLowerCase()}.`);
+    } finally {
+      setSavingOption(false);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <label className="mb-2 block text-sm font-semibold text-slate-700">{label}</label>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        disabled={disabled}
+        onClick={() => {
+          if (!isOpen) updateMenuPosition();
+          setIsOpen((open) => !open);
+        }}
+        className="flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border border-rose-200 bg-[#fffafa] px-4 py-3 text-left text-sm text-slate-900 outline-none transition hover:border-rose-300 focus:border-red-700 focus:ring-2 focus:ring-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span className={value ? "truncate" : "truncate text-slate-400"}>{value || placeholder}</span>
+        <ChevronDown size={16} className={`shrink-0 text-slate-400 transition ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+
+      {isOpen && !disabled && menuPosition && createPortal(
+        <div ref={menuRef} style={menuPosition} className="z-[100] overflow-y-auto rounded-xl border border-red-700 bg-white shadow-xl">
+          <div className="max-h-56 overflow-y-auto py-1" role="listbox" aria-label={label}>
+            {options.map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="option"
+                aria-selected={value === option}
+                onClick={() => {
+                  onChange(option);
+                  setIsOpen(false);
+                  setIsAdding(false);
+                }}
+                className={`w-full px-4 py-3 text-left text-sm transition hover:bg-rose-50 ${value === option ? "bg-rose-100 font-semibold text-red-900" : "text-slate-800"}`}
+              >
+                {value === option && <span className="mr-2 text-red-800" aria-hidden="true">✓</span>}
+                {option}
+              </button>
+            ))}
+            {options.length === 0 && <p className="px-4 py-3 text-sm text-slate-500">No options yet.</p>}
+          </div>
+
+          <div className="border-t border-rose-100 p-2">
+            {isAdding ? (
+              <form onSubmit={saveOption} className="space-y-2">
+                <input
+                  autoFocus
+                  value={newOption}
+                  onChange={(event) => setNewOption(event.target.value)}
+                  placeholder={`New ${actionLabel.toLowerCase()}`}
+                  className="w-full rounded-lg border border-rose-200 px-3 py-2 text-sm outline-none focus:border-red-600"
+                />
+                {error && <p className="text-xs text-red-600">{error}</p>}
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setIsAdding(false)} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100">Cancel</button>
+                  <button type="submit" disabled={savingOption || !newOption.trim()} className="rounded-lg bg-red-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                    {savingOption ? "Adding..." : "Add"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsAdding(true)}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-semibold text-red-900 hover:bg-rose-50"
+              >
+                <Plus size={16} aria-hidden="true" />
+                Add new {actionLabel.toLowerCase()}...
+              </button>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+function ProductFormModal({
+  editingProduct,
+  newProduct,
+  setNewProduct,
+  productTypeOptions,
+  categoryOptions,
+  variantOptions,
+  pricingMethodByName,
+  uploaderSections,
+  uploadProgress,
+  uploading,
+  modalError,
+  saveProduct,
+  closeModal,
+  cancelUpload,
+  saveCatalogOption,
+}) {
+  const updateField = (field, value) => setNewProduct((product) => ({ ...product, [field]: value }));
+  const mainImage = uploaderSections.find(([key]) => key === "main");
+  const angleImages = uploaderSections.filter(([key]) => key !== "main");
+  const imageName = (key) => newProduct.imageFiles?.[key]?.name || newProduct.images?.[key]?.split("/").pop() || "";
+
+  const setImageFile = (key, file) => {
+    if (!file) return;
+    const previewUrl = URL.createObjectURL(file);
+    setNewProduct((product) => ({
+      ...product,
+      images: { ...product.images, [key]: previewUrl },
+      imageFiles: { ...product.imageFiles, [key]: file },
+    }));
+  };
+
+  const removeImage = (key) => setNewProduct((product) => ({
+    ...product,
+    images: { ...product.images, [key]: undefined },
+    imageFiles: { ...product.imageFiles, [key]: undefined },
+  }));
+
+  const renderImageDropzone = ([key, label], isMain = false) => (
+    <div key={key}>
+      <p className="mb-2 text-sm font-semibold text-slate-700">{label}</p>
+      <label
+        className={`group relative flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-rose-200 bg-[#fffafa] text-center transition hover:border-red-500 hover:bg-rose-50 ${isMain ? "min-h-36 px-5 py-6" : "aspect-square min-h-24 px-2 py-3"}`}
+        onDrop={(event) => {
+          event.preventDefault();
+          setImageFile(key, event.dataTransfer.files?.[0]);
+        }}
+        onDragOver={(event) => event.preventDefault()}
+      >
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(event) => {
+            setImageFile(key, event.target.files?.[0]);
+            event.target.value = "";
+          }}
+          className="sr-only"
+        />
+        {newProduct.images?.[key] ? (
+          <img src={newProduct.images[key]} alt={`${label} preview`} className="absolute inset-0 h-full w-full object-cover" />
+        ) : (
+          <>
+            <span className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-rose-100 text-red-900" aria-hidden="true">
+              <Plus size={18} />
+            </span>
+            <span className="text-xs font-semibold text-slate-700">{label}</span>
+            {isMain && <span className="mt-1 text-xs text-slate-400">Drag and drop or browse</span>}
+          </>
+        )}
+        {uploading && uploadProgress[key] !== undefined && (
+          <span className="absolute inset-0 flex items-center justify-center bg-slate-950/60 text-sm font-semibold text-white">
+            Uploading {uploadProgress[key]}%
+          </span>
+        )}
+      </label>
+      <div className="mt-1 flex min-h-5 items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-xs text-slate-500" title={imageName(key)}>{imageName(key) || ""}</span>
+        {newProduct.images?.[key] && (
+          <button type="button" onClick={() => removeImage(key)} className="shrink-0 text-xs font-semibold text-red-700 hover:text-red-900">
+            Remove
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  const sectionHeading = (title) => (
+    <div className="mb-5 flex items-center gap-3">
+      <h3 className="shrink-0 text-xs font-bold uppercase tracking-[0.14em] text-slate-700">{title}</h3>
+      <div className="h-px flex-1 bg-slate-200" />
+    </div>
+  );
+
+  const fieldClass = "min-h-12 w-full rounded-xl border border-rose-200 bg-[#fffafa] px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-700 focus:ring-2 focus:ring-red-100";
+  const labelClass = "mb-2 block text-sm font-semibold text-slate-700";
+  const displayedEstimatedPrice = Number(newProduct.estimated_price_override) > 0
+    ? Number(newProduct.estimated_price_override)
+    : Number(newProduct.estimated_price || 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-2 backdrop-blur-sm sm:p-4">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="product-form-title"
+        className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-rose-100 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.28)]"
+      >
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-rose-100 bg-[#fff8f7] px-5 py-4 sm:px-7">
+          <div>
+            <h2 id="product-form-title" className="text-xl font-bold text-slate-950">
+              {editingProduct ? "Edit Product" : "Add New Product"}
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {editingProduct ? "Update the product details and availability." : "Fill in the details to create a new product."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={closeModal}
+            aria-label="Close product form"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-rose-100 bg-white text-slate-500 transition hover:bg-rose-50 hover:text-slate-900"
+          >
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+          {modalError && (
+            <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
+              {modalError}
+            </div>
+          )}
+
+          <section>
+            {sectionHeading("Product Information")}
+            <div className="grid gap-5 md:grid-cols-2">
+              <CatalogPicker
+                label="Product Type *"
+                value={newProduct.product_type}
+                options={productTypeOptions}
+                placeholder="Select product type"
+                onChange={(value) => setNewProduct((product) => ({ ...product, product_type: value, product_name: "", pricing_method: "", variant: "" }))}
+                onAdd={(name) => saveCatalogOption("types", name)}
+              />
+              <CatalogPicker
+                label="Category *"
+                value={newProduct.category}
+                options={categoryOptions}
+                placeholder="Select category"
+                onChange={(value) => updateField("category", value)}
+                onAdd={(name) => saveCatalogOption("categories", name)}
+              />
+              <div className="md:col-span-2">
+                <label htmlFor="product-name-input" className={labelClass}>Product Name *</label>
+                <input
+                  id="product-name-input"
+                  type="text"
+                  value={newProduct.product_name}
+                  disabled={!newProduct.product_type}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setNewProduct((product) => ({
+                      ...product,
+                      product_name: value,
+                      pricing_method: pricingMethodByName[value] || "",
+                      variant: "",
+                    }));
+                  }}
+                  placeholder="Type product name"
+                  className={fieldClass}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <CatalogPicker
+                  label="Variant"
+                  value={newProduct.variant}
+                  options={variantOptions}
+                  placeholder="Select variant"
+                  disabled={!newProduct.product_name}
+                  onChange={(value) => updateField("variant", value)}
+                  onAdd={(name) => saveCatalogOption("variants", name)}
+                />
+                <p className="mt-2 text-xs text-slate-400">Variants are scoped to the selected product name.</p>
+              </div>
+              <div className="md:col-span-2">
+                <label className={labelClass}>Description</label>
+                <textarea
+                  rows={3}
+                  value={newProduct.description}
+                  onChange={(event) => updateField("description", event.target.value)}
+                  placeholder="Describe the product, materials, use case, and special features..."
+                  className={`${fieldClass} resize-y`}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section>
+            {sectionHeading("Measurements & Pricing")}
+            <div className="grid gap-5 md:grid-cols-3">
+              <>
+                  <div>
+                    <label className={labelClass}>Width *</label>
+                    <input type="number" min="0" value={newProduct.width} onChange={(event) => updateField("width", event.target.value)} placeholder="0" className={fieldClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Height *</label>
+                    <input type="number" min="0" value={newProduct.height} onChange={(event) => updateField("height", event.target.value)} placeholder="0" className={fieldClass} />
+                  </div>
+                  <div>
+                    <label htmlFor="product-measurement-unit" className={labelClass}>Unit</label>
+                    <select id="product-measurement-unit" value={newProduct.unit || "in"} onChange={(event) => updateField("unit", event.target.value)} className={fieldClass}>
+                      {MEASUREMENT_UNITS.map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-3">
+                    <label className={labelClass}>Price Per Square Foot (PHP) *</label>
+                    <input type="number" min="0" value={newProduct.price_per_sqft} onChange={(event) => updateField("price_per_sqft", event.target.value)} placeholder="0.00" className={fieldClass} />
+                  </div>
+              </>
+
+              {newProduct.pricing_method === "blade" && (
+                <>
+                  <div>
+                    <label className={labelClass}>Blade Count *</label>
+                    <input type="number" min="1" value={newProduct.blade_count} onChange={(event) => updateField("blade_count", event.target.value)} placeholder="0" className={fieldClass} />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className={labelClass}>Price Per Blade (PHP) *</label>
+                    <input type="number" min="0" value={newProduct.price_per_blade} onChange={(event) => updateField("price_per_blade", event.target.value)} placeholder="0.00" className={fieldClass} />
+                  </div>
+                </>
+              )}
+
+              {newProduct.pricing_method === "fixed" && (
+                <>
+                  <div>
+                    <label className={labelClass}>Standard Size</label>
+                    <input type="text" value={newProduct.standard_size || ""} onChange={(event) => updateField("standard_size", event.target.value)} placeholder="e.g. 900 x 2100 mm" className={fieldClass} />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className={labelClass}>Base Price (PHP) *</label>
+                    <input type="number" min="0" value={newProduct.base_price} onChange={(event) => updateField("base_price", event.target.value)} placeholder="0.00" className={fieldClass} />
+                  </div>
+                </>
+              )}
+
+              <div className="md:col-span-3 rounded-xl border border-rose-200 bg-rose-50/80 px-5 py-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-bold text-red-950">Estimated Cost</p>
+                    <p className="mt-1 text-xs text-red-800/70">Auto-calculated from dimensions and pricing</p>
+                    <p className="mt-1 text-xs text-red-800/70">Estimated area: {Number(newProduct.estimated_area || 0).toFixed(2)} sq ft</p>
+                  </div>
+                  <p className="shrink-0 text-2xl font-black text-red-950">₱{displayedEstimatedPrice.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                </div>
+              </div>
+
+              <div className="md:col-span-3">
+                <label className={labelClass}>Override Estimated Cost (PHP)</label>
+                <input type="number" min="0" value={newProduct.estimated_price_override || ""} onChange={(event) => updateField("estimated_price_override", event.target.value)} placeholder="Leave blank to use auto-calculated cost" className={fieldClass} />
+              </div>
+            </div>
+          </section>
+
+          <section>
+            {sectionHeading("Product Images")}
+            {mainImage && renderImageDropzone(mainImage, true)}
+            <div className="mt-5">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Viewing Angles</p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {angleImages.map((section) => renderImageDropzone(section))}
+              </div>
+            </div>
+            {uploading && (
+              <div className="mt-4 flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 sm:flex-row sm:items-center sm:justify-between">
+                <span>Uploading images...</span>
+                <button type="button" onClick={cancelUpload} className="self-start rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 sm:self-auto">
+                  Cancel upload
+                </button>
+              </div>
+            )}
+          </section>
+
+          <section>
+            {sectionHeading("Status")}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(newProduct.is_active)}
+              onClick={() => updateField("is_active", !newProduct.is_active)}
+              className="flex w-full items-center justify-between gap-4 rounded-xl border border-rose-100 bg-[#fffafa] p-4 text-left transition hover:border-rose-200"
+            >
+              <span>
+                <span className="block text-sm font-semibold text-slate-800">Active Product</span>
+                <span className="mt-1 block text-xs text-slate-500">{newProduct.is_active ? "This product is live and visible." : "This product is hidden from customers."}</span>
+              </span>
+              <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${newProduct.is_active ? "bg-emerald-500" : "bg-slate-300"}`}>
+                <span className={`h-5 w-5 rounded-full bg-white shadow transition ${newProduct.is_active ? "translate-x-5" : "translate-x-0.5"}`} />
+              </span>
+            </button>
+          </section>
+        </div>
+
+        <footer className="flex shrink-0 justify-end gap-3 border-t border-rose-100 bg-[#fff8f7] px-5 py-3 sm:px-7">
+          <button type="button" onClick={closeModal} className="rounded-xl border border-rose-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-rose-50">
+            Cancel
+          </button>
+          <button type="button" onClick={saveProduct} disabled={uploading} className="inline-flex items-center gap-2 rounded-xl bg-red-900 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60">
+            <span aria-hidden="true">✓</span>
+            {editingProduct ? "Update Product" : "Create Product"}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
 
 function Products() {
   const API_HOST = (function getApiHost() {
@@ -295,22 +782,64 @@ function Products() {
   const [variantsList, setVariantsList] = useState(VARIANTS);
 
   const reloadCatalogLists = async () => {
-    try {
-      const types = await catalogApi.getTypes();
-      const normalizedTypes = normalizeOptionValues(types);
-      setProductTypesList(mergeOptionValues(PRODUCT_TYPES, normalizedTypes));
-      const names = await catalogApi.getNames();
-      const normalizedNames = normalizeGroupedOptionValues(names, "product_type");
-      setProductNamesList(mergeGroupedOptionValues(PRODUCT_NAMES, normalizedNames));
-      const categories = await catalogApi.getCategories();
-      const normalizedCategories = normalizeOptionValues(categories);
-      setCategoryOptionsList(mergeOptionValues(CATEGORY_OPTIONS, normalizedCategories));
-      const vars = await catalogApi.getVariants();
-      const normalizedVariants = normalizeGroupedOptionValues(vars, "product_name");
-      setVariantsList(mergeGroupedOptionValues(VARIANTS, normalizedVariants));
-    } catch (e) {
-      console.error("Failed to load catalog lists", e);
+    const [types, names, categories, vars] = await Promise.allSettled([
+      catalogApi.getTypes(),
+      catalogApi.getNames(),
+      catalogApi.getCategories(),
+      catalogApi.getVariants(),
+    ]);
+
+    if (types.status === "fulfilled") {
+      setProductTypesList(mergeOptionValues(PRODUCT_TYPES, normalizeOptionValues(types.value)));
+    } else {
+      console.error("Failed to load product types", types.reason);
     }
+
+    if (names.status === "fulfilled") {
+      setProductNamesList(mergeGroupedOptionValues(PRODUCT_NAMES, normalizeGroupedOptionValues(names.value, "product_type")));
+    } else {
+      console.error("Failed to load product names", names.reason);
+    }
+
+    if (categories.status === "fulfilled") {
+      setCategoryOptionsList(mergeOptionValues(CATEGORY_OPTIONS, normalizeOptionValues(categories.value)));
+    } else {
+      console.error("Failed to load categories", categories.reason);
+    }
+
+    if (vars.status === "fulfilled") {
+      setVariantsList(mergeGroupedOptionValues(VARIANTS, normalizeGroupedOptionValues(vars.value, "product_name")));
+    } else {
+      console.error("Failed to load variants", vars.reason);
+    }
+  };
+
+  const saveCatalogOption = async (kind, name) => {
+    if (kind === "types") await catalogApi.createType({ name });
+    if (kind === "names") await catalogApi.createName({ name, product_type: newProduct.product_type });
+    if (kind === "categories") await catalogApi.createCategory({ name });
+    if (kind === "variants") {
+      const productName = newProduct.product_name.trim();
+      if (!productName) throw new Error("Enter a Product Name before adding a variant.");
+      await catalogApi.createVariant({ name, product_name: productName });
+    }
+
+    if (kind === "types") {
+      setProductTypesList((current) => mergeOptionValues(current, [name]));
+    }
+    if (kind === "categories") {
+      setCategoryOptionsList((current) => mergeOptionValues(current, [name]));
+    }
+    if (kind === "variants") {
+      const productName = newProduct.product_name.trim();
+      setVariantsList((current) => ({
+        ...current,
+        [productName]: mergeOptionValues(current[productName] || [], [name]),
+      }));
+    }
+
+    await reloadCatalogLists();
+    return name;
   };
 
   useEffect(() => {
@@ -340,6 +869,7 @@ function Products() {
     blade_count: "",
     estimated_area: 0,
     estimated_price: 0,
+    estimated_price_override: "",
     images: {},
     description: "",
     is_active: true,
@@ -379,11 +909,12 @@ function Products() {
       width,
       height,
       quantity: 1,
+      measurementUnit: newProduct.unit,
       blade_count: bladeCount,
       base_price: basePrice,
-      overrideRate: newProduct.pricing_method === 'sqft' ? sqftPrice : (newProduct.pricing_method === 'blade' ? bladePrice : undefined),
-      customization: newProduct.customization,
-      customization_fee: newProduct.customization_fee,
+      overrideRate: sqftPrice > 0
+        ? sqftPrice
+        : (newProduct.pricing_method === 'blade' ? bladePrice : undefined),
     });
 
     setNewProduct((prev) => {
@@ -403,9 +934,8 @@ function Products() {
     newProduct.price_per_sqft,
     newProduct.blade_count,
     newProduct.price_per_blade,
+    newProduct.unit,
     newProduct.base_price,
-    newProduct.customization,
-    newProduct.customization_fee,
     newProduct.product_name,
     newProduct.product_type,
     newProduct.variant,
@@ -416,7 +946,7 @@ function Products() {
     ["left", "Left Angle"],
     ["right", "Right Angle"],
     ["top", "Top Angle"],
-    ["bottom", "Bottom Angle"],
+    ["bottom", "Back Angle"],
   ];
 
   const rowsPerPage = 5;
@@ -534,10 +1064,11 @@ function Products() {
           standard_size: product.standard_size || "",
           width: product.width || "",
           height: product.height || "",
-          unit: product.unit || "in",
+          unit: product.measurement_unit || "in",
           blade_count: product.blade_count || "",
           estimated_area: product.estimated_area || 0,
           estimated_price: product.estimated_price || 0,
+          estimated_price_override: product.estimated_price_override || "",
           images: product.images || {},
           imageFiles: {},
           description: product.description || "",
@@ -644,23 +1175,19 @@ function Products() {
       return;
     }
 
-    // Validation
-    if (!newProduct.product_type) {
-      setModalError("Product type is required.");
-      return;
-    }
+    const productName = newProduct.product_name.trim() || "Unnamed Product";
+    const variant = newProduct.variant.trim();
+    const pricingMethod = newProduct.pricing_method || (
+      Number(newProduct.price_per_sqft) > 0
+        ? "sqft"
+        : Number(newProduct.price_per_blade) > 0
+        ? "blade"
+        : Number(newProduct.base_price) > 0
+        ? "fixed"
+        : ""
+    );
 
-    if (!newProduct.product_name) {
-      setModalError("Product name is required.");
-      return;
-    }
-
-    if (!newProduct.pricing_method) {
-      setModalError("Pricing method is required.");
-      return;
-    }
-
-    if (newProduct.pricing_method === "sqft") {
+    if (pricingMethod === "sqft") {
       const w = parseFloat(newProduct.width);
       const h = parseFloat(newProduct.height);
       if (!w || !h || w <= 0 || h <= 0) {
@@ -673,7 +1200,7 @@ function Products() {
       }
     }
 
-    if (newProduct.pricing_method === "blade") {
+    if (pricingMethod === "blade") {
       const b = parseInt(newProduct.blade_count || 0, 10);
       if (!b || b <= 0) {
         setModalError("Blade count must be greater than 0.");
@@ -685,7 +1212,7 @@ function Products() {
       }
     }
 
-    if (newProduct.pricing_method === "fixed") {
+    if (pricingMethod === "fixed") {
       if (!newProduct.base_price) {
         setModalError("Base price is required for fixed price products.");
         return;
@@ -710,26 +1237,26 @@ function Products() {
       }
       const payload = {
         // Backend compatibility fields
-        name: newProduct.product_name,
+        name: productName,
         sku: "",
-        unit_price: Number(newProduct.estimated_price) || Number(newProduct.base_price) || Number(newProduct.price_per_sqft) || 0,
-        unit: newProduct.pricing_method === "sqft" ? "per_sqft" : "per_piece",
-        image_url: newProduct.images?.main || "",
+        unit_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || Number(newProduct.base_price) || Number(newProduct.price_per_sqft) || 0,
+        unit: pricingMethod === "sqft" ? "per_sqft" : "per_piece",
+        measurement_unit: newProduct.unit || "in",
+        image_url: finalImages?.main || "",
         product_type: newProduct.product_type,
-        product_name: newProduct.product_name,
-        pricing_method: newProduct.pricing_method,
-        category: newProduct.category,
-        variant: newProduct.variant,
+        product_name: newProduct.product_name || productName,
+        pricing_method: pricingMethod,
+        category: newProduct.category || DEFAULT_CATEGORY,
+        variant,
         base_price: Number(newProduct.base_price) || undefined,
         price_per_sqft: Number(newProduct.price_per_sqft) || undefined,
         price_per_blade: Number(newProduct.price_per_blade) || undefined,
-        customization_fee: newProduct.customization ? Number(newProduct.customization_fee) : 0,
         standard_size: newProduct.standard_size || "",
         width: newProduct.width ? Number(newProduct.width) : undefined,
         height: newProduct.height ? Number(newProduct.height) : undefined,
         blade_count: newProduct.blade_count ? Number(newProduct.blade_count) : undefined,
         estimated_area: Number(newProduct.estimated_area) || undefined,
-        estimated_price: Number(newProduct.estimated_price) || undefined,
+        estimated_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || undefined,
         images: finalImages,
         description: newProduct.description,
         is_active: newProduct.is_active,
@@ -745,15 +1272,13 @@ function Products() {
               : item
           )
         );
-        recordActivity(user, `Updated product ${newProduct.product_name}.`, "Products");
+        recordActivity(user, `Updated product ${productName}.`, "Products");
       } else {
         const created = await createProductApi(payload);
         const product = created.product || created;
-        setProducts((current) => [
-          ...current,
-          normalizeProductForState(product),
-        ]);
-        recordActivity(user, `Created product ${newProduct.product_name}.`, "Products");
+        const refreshedProducts = await getProducts({ adminOnly: true });
+        setProducts((refreshedProducts.products || []).map((item) => normalizeProductForState(item)));
+        recordActivity(user, `Created product ${productName}.`, "Products");
       }
 
       closeModal();
@@ -812,32 +1337,21 @@ function Products() {
   };
 
   const productTypeOptions = withSelectedOption(productTypesList, newProduct.product_type);
-  const productNameOptions = withSelectedOption(
-    productNamesList[newProduct.product_type] || PRODUCT_NAMES[newProduct.product_type] || [],
-    newProduct.product_name
-  );
   const categoryOptions = withSelectedOption(categoryOptionsList, newProduct.category);
+  const variantProductName = Object.keys(variantsList).find(
+    (productName) => productName.trim().toLowerCase() === newProduct.product_name.trim().toLowerCase(),
+  ) || newProduct.product_name;
   const variantOptions = withSelectedOption(
-    variantsList[newProduct.product_name] || VARIANTS[newProduct.product_name] || [],
+    variantsList[variantProductName] || VARIANTS[variantProductName] || [],
     newProduct.variant
   );
-  const effectivePricingMethod = newProduct.pricing_method || PRICING_METHOD[newProduct.product_name] || "";
-
-
-
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar isOpen={isSidebarOpen} />
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
 
       <div className="flex-1 min-h-0 flex flex-col">
 
-        <Navbar
-          toggleSidebar={() =>
-            setIsSidebarOpen(
-              !isSidebarOpen
-            )
-          }
-        />
+        <Navbar />
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
@@ -1057,326 +1571,24 @@ function Products() {
         </main>
       </div>
 
-      {/* ADD PRODUCT MODAL */}
-
       {showModal && (
-
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-
-          <div className="bg-white rounded-3xl w-full max-w-6xl p-8 relative max-h-[90vh] overflow-y-auto">
-
-            <button
-              onClick={closeModal}
-              className="absolute top-4 right-4"
-            >
-              <X />
-            </button>
-
-            <h2 className="text-2xl font-bold mb-6">
-              {editingProduct ? "Edit Product" : "Add Product"}
-            </h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Upload column */}
-              <div className="md:col-span-1">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Product photos</p>
-                    <p className="text-sm text-gray-500">Side-scroll uploader</p>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between mb-4 text-xs text-slate-500">
-                  <span>Drag or scroll sideways to choose image slots</span>
-                  <span>{uploaderSections.length} images total</span>
-                </div>
-                <div className="flex gap-4 overflow-x-auto pb-3 snap-x snap-mandatory">
-                  {uploaderSections.map(([key, label]) => (
-                      <div key={key} className="min-w-[18rem] snap-start bg-gray-50 rounded-2xl p-3 flex flex-col items-center">
-                        <div
-                          className="w-full h-36 bg-white rounded-lg overflow-hidden flex items-center justify-center mb-2 relative"
-                          onDragOver={(e) => e.preventDefault()}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            const file = e.dataTransfer.files && e.dataTransfer.files[0];
-                            if (file) {
-                              const url = URL.createObjectURL(file);
-                              setNewProduct((p) => ({ ...p, images: { ...p.images, [key]: url }, imageFiles: { ...p.imageFiles, [key]: file } }));
-                            }
-                          }}
-                        >
-                      {newProduct.images?.[key] ? (
-                        <img src={newProduct.images[key]} alt={`${label} preview`} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="text-sm text-gray-400 text-center">{label} <br/> <span className="text-xs">(drag & drop or choose file)</span></div>
-                      )}
-                      {uploading && uploadProgress[key] !== undefined && (
-                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                          <div className="text-white text-xs text-center">
-                            <Loader2 className="animate-spin mx-auto mb-2" size={18} />
-                            Uploading {uploadProgress[key]}%
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <label className="mt-2 inline-flex items-center gap-3 cursor-pointer px-3 py-2 bg-white border rounded text-sm">
-                      <span className="text-gray-600">Choose file</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={(e) => {
-                          const file = e.target.files && e.target.files[0];
-                          if (file) {
-                            const url = URL.createObjectURL(file);
-                            setNewProduct((p) => ({ ...p, images: { ...p.images, [key]: url }, imageFiles: { ...p.imageFiles, [key]: file } }));
-                          }
-                        }}
-                        className="hidden"
-                      />
-                    </label>
-                    <div className="mt-1 text-xs text-gray-500">{newProduct.imageFiles?.[key]?.name || (newProduct.images?.[key] ? newProduct.images[key].split('/').pop() : 'No file chosen')}</div>
-                    {uploadProgress[key] !== undefined && (
-                      <div className="mt-2">
-                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                          <div className="h-full bg-emerald-500 transition-all duration-200" style={{ width: `${uploadProgress[key]}%` }} />
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-1">{uploadProgress[key]}%</div>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between gap-2 mt-2">
-                      {newProduct.images?.[key] && (
-                        <button
-                          onClick={() => setNewProduct((p) => ({ ...p, images: { ...p.images, [key]: undefined }, imageFiles: { ...p.imageFiles, [key]: undefined } }))}
-                          className="text-xs text-red-600"
-                        >
-                          Remove
-                        </button>
-                      )}
-                      {uploading && uploadProgress[key] !== undefined && (
-                        <span className="text-[10px] text-slate-500">Saving…</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                </div>
-                {uploading && (
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Uploading images…</span>
-                      <button
-                        type="button"
-                        onClick={cancelUpload}
-                        className="rounded-xl bg-white border px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
-                      >
-                        Cancel upload
-                      </button>
-                    </div>
-                    <p className="mt-2 text-xs text-emerald-700/80">Your current image upload will stop immediately.</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Fields column */}
-              <div className="md:col-span-2 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="text-xs text-gray-500">Product Type *</label>
-                    <select
-                      value={newProduct.product_type}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setNewProduct((p) => ({
-                          ...p,
-                          product_type: val,
-                          product_name: "",
-                          pricing_method: "",
-                          variant: "",
-                        }));
-                      }}
-                      className="w-full px-4 py-3 border rounded-xl"
-                    >
-                      <option value="">Select Product Type</option>
-                        {productTypeOptions.map((name) => (
-                          <option key={name} value={name}>{name}</option>
-                        ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-gray-500">Product Name *</label>
-                    <select
-                      value={newProduct.product_name}
-                      disabled={!newProduct.product_type}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setNewProduct((p) => ({
-                          ...p,
-                          product_name: value,
-                          pricing_method: PRICING_METHOD[value] || "",
-                          variant: "",
-                        }));
-                      }}
-                      className="w-full px-4 py-3 border rounded-xl"
-                    >
-                      <option value="">Select Product Name</option>
-                      {productNameOptions.map((name) => (
-                        <option key={name} value={name}>{name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-gray-500">Pricing Method *</label>
-                    <select
-                      value={effectivePricingMethod}
-                      disabled={!newProduct.product_name}
-                      onChange={(e) => setNewProduct((p) => ({
-                        ...p,
-                        pricing_method: e.target.value,
-                        width: "",
-                        height: "",
-                        blade_count: "",
-                        base_price: "",
-                        price_per_sqft: "",
-                        price_per_blade: "",
-                      }))}
-                      className="w-full px-4 py-3 border rounded-xl"
-                    >
-                      <option value="">Select Pricing Method</option>
-                      <option value="sqft">Per square foot</option>
-                      <option value="fixed">Fixed price</option>
-                      <option value="blade">Per blade</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="text-xs text-gray-500">Category</label>
-                    <select
-                      value={newProduct.category}
-                      onChange={(e) => setNewProduct((p) => ({ ...p, category: e.target.value }))}
-                      className="w-full px-4 py-3 border rounded-xl"
-                    >
-                      {categoryOptions.map((option) => (
-                        <option key={option} value={option}>{option}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-gray-500">Variant</label>
-                    <select
-                      value={newProduct.variant}
-                      disabled={!newProduct.product_name}
-                      onChange={(e) => setNewProduct((p) => ({ ...p, variant: e.target.value }))}
-                      className="w-full px-4 py-3 border rounded-xl"
-                    >
-                      <option value="">Select Variant</option>
-                      {variantOptions.map((name) => (
-                        <option key={name} value={name}>{name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-xs text-gray-500">Status</label>
-                    <select value={newProduct.is_active ? "Active" : "Inactive"} onChange={(e)=>setNewProduct(p=>({...p,is_active: e.target.value==="Active"}))} className="w-full px-4 py-3 border rounded-xl">
-                      <option>Active</option>
-                      <option>Inactive</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Dynamic pricing fields */}
-                {newProduct.pricing_method === "sqft" || PRICING_METHOD[newProduct.product_name] === "sqft" ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="text-xs text-gray-500">Width ({newProduct.unit})</label>
-                      <input type="number" value={newProduct.width} min="0" onChange={(e)=>setNewProduct(p=>({...p,width:e.target.value}))} className="w-full px-4 py-3 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500">Height ({newProduct.unit})</label>
-                      <input type="number" value={newProduct.height} min="0" onChange={(e)=>setNewProduct(p=>({...p,height:e.target.value}))} className="w-full px-4 py-3 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500">Price Per Sq Ft (₱)</label>
-                      <input type="number" value={newProduct.price_per_sqft} min="0" onChange={(e)=>setNewProduct(p=>({...p,price_per_sqft:e.target.value}))} className="w-full px-4 py-3 border rounded-xl" />
-                    </div>
-                  </div>
-                ) : null}
-
-                {newProduct.pricing_method === "blade" || PRICING_METHOD[newProduct.product_name] === "blade" ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="text-xs text-gray-500">Blade Count</label>
-                      <input type="number" value={newProduct.blade_count} min="0" onChange={(e)=>setNewProduct(p=>({...p,blade_count:e.target.value}))} className="w-full px-4 py-3 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500">Price Per Blade (₱)</label>
-                      <input type="number" value={newProduct.price_per_blade} min="0" onChange={(e)=>setNewProduct(p=>({...p,price_per_blade:e.target.value}))} className="w-full px-4 py-3 border rounded-xl" />
-                    </div>
-                    <div />
-                  </div>
-                ) : null}
-
-                {newProduct.pricing_method === "fixed" || PRICING_METHOD[newProduct.product_name] === "fixed" ? (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                    <div>
-                      <label className="text-xs text-gray-500">Standard Size</label>
-                      <input type="text" value={newProduct.standard_size || ""} onChange={(e)=>setNewProduct(p=>({...p,standard_size:e.target.value}))} className="w-full px-4 py-3 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500">Base Price (₱)</label>
-                      <input type="number" value={newProduct.base_price} min="0" onChange={(e)=>setNewProduct(p=>({...p,base_price:e.target.value}))} className="w-full px-4 py-3 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500">Customization</label>
-                      <div className="flex items-center gap-3">
-                        <input type="checkbox" checked={newProduct.customization} onChange={(e)=>setNewProduct(p=>({...p,customization:e.target.checked}))} />
-                        <span className="text-sm text-gray-500">Add customization (₱{newProduct.customization_fee})</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-
-                <div className="grid grid-cols-1 gap-4">
-                  <label className="text-xs text-gray-500">Description</label>
-                  <textarea rows={3} value={newProduct.description} onChange={(e)=>setNewProduct(p=>({...p,description:e.target.value}))} className="w-full px-4 py-3 border rounded-xl" />
-                </div>
-
-                {/* Live preview */}
-                <div className="bg-gray-50 border rounded-2xl p-4 mt-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-gray-500">Area</p>
-                      <p className="font-semibold">{newProduct.estimated_area ? `${newProduct.estimated_area} sq ft` : "—"}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Estimated Price</p>
-                      <p className="font-semibold text-green-600">₱{(Number(newProduct.estimated_price) || 0).toFixed(2)}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {modalError ? (
-              <p className="text-sm text-red-600 mb-4">
-                {modalError}
-              </p>
-            ) : null}
-
-            <button
-              onClick={saveProduct}
-              className="mt-6 w-full bg-red-600 text-white py-3 rounded-xl font-semibold hover:bg-red-700"
-            >
-              {editingProduct ? "Update Product" : "Save Product"}
-            </button>
-
-          </div>
-
-        </div>
-
+        <ProductFormModal
+          editingProduct={editingProduct}
+          newProduct={newProduct}
+          setNewProduct={setNewProduct}
+          productTypeOptions={productTypeOptions}
+          categoryOptions={categoryOptions}
+          variantOptions={variantOptions}
+          pricingMethodByName={PRICING_METHOD}
+          uploaderSections={uploaderSections}
+          uploadProgress={uploadProgress}
+          uploading={uploading}
+          modalError={modalError}
+          saveProduct={saveProduct}
+          closeModal={closeModal}
+          cancelUpload={cancelUpload}
+          saveCatalogOption={saveCatalogOption}
+        />
       )}
 
       {deleteConfirmOpen && (

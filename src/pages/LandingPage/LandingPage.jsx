@@ -11,27 +11,38 @@ import {
   ShieldCheck,
   Clock3,
   Wrench,
+  Truck,
+  LoaderCircle,
   Star,
   StarHalf,
 } from "lucide-react";
 import { getProducts } from "../../api/products";
-import { getProductReviews } from "../../api/orders";
+import { getProductReviews, trackOrder } from "../../api/orders";
 import logo from "../../assets/images/ACGCLOGO1.png";
-import heroVisual from "../../../backend/uploads/1780678859091-c2tdfj-main.jpg";
 
 function LandingPage() {
 
   const [active, setActive] = useState("home");
   const [mobileMenu, setMobileMenu] = useState(false);
   const [featuredProducts, setFeaturedProducts] = useState([]);
+  const [catalogProducts, setCatalogProducts] = useState([]);
+  const [productSearch, setProductSearch] = useState("");
   const [featuredProductStats, setFeaturedProductStats] = useState({});
-  const [heroImages, setHeroImages] = useState([heroVisual]);
-  const [heroImageIndex, setHeroImageIndex] = useState(0);
+  const [featuredRatingStats, setFeaturedRatingStats] = useState({
+    average: 0,
+    total: 0,
+    counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+  });
   const [isLoadingFeatured, setIsLoadingFeatured] = useState(false);
   const [featuredError, setFeaturedError] = useState("");
+  const [trackingNumber, setTrackingNumber] = useState("");
+  const [trackingResult, setTrackingResult] = useState(null);
+  const [trackingError, setTrackingError] = useState("");
+  const [trackingLoading, setTrackingLoading] = useState(false);
   const scrollToSection = (sectionId) => {
     setActive(sectionId);
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth" });
+    setMobileMenu(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   useEffect(() => {
@@ -41,9 +52,7 @@ function LandingPage() {
 
       try {
         const response = await getProducts();
-        let allProducts = response.products || [];
-
-        const activeProducts = allProducts.filter((product) => product.is_active !== false);
+        const activeProducts = (response.products || []).filter((product) => product.is_active !== false);
 
         const productReviewData = await Promise.all(
           activeProducts.map(async (product) => {
@@ -59,12 +68,17 @@ function LandingPage() {
                 product,
                 averageRating,
                 ratingsCount: ratedReviews.length,
+                ratingCounts: [5, 4, 3, 2, 1].reduce((counts, star) => {
+                  counts[star] = ratedReviews.filter((review) => Math.round(Number(review.rating)) === star).length;
+                  return counts;
+                }, {}),
               };
-            } catch (error) {
+            } catch {
               return {
                 product,
                 averageRating: 0,
                 ratingsCount: 0,
+                ratingCounts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
               };
             }
           })
@@ -81,19 +95,32 @@ function LandingPage() {
             return product;
           });
 
-        const productImages = allProducts
-          .filter((product) => product.is_active !== false)
-          .map((product) => getProductImage(product))
-          .filter(Boolean);
+        const totalRatings = productReviewData.reduce((sum, entry) => sum + entry.ratingsCount, 0);
+        const ratingCounts = productReviewData.reduce((counts, entry) => {
+          [5, 4, 3, 2, 1].forEach((star) => {
+            counts[star] += entry.ratingCounts?.[star] || 0;
+          });
+          return counts;
+        }, { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 });
+        const weightedRatingTotal = [5, 4, 3, 2, 1].reduce(
+          (sum, star) => sum + ratingCounts[star] * star,
+          0
+        );
 
-        setFeaturedProducts(sortedProducts);
+        setCatalogProducts(activeProducts);
+        setFeaturedProducts(sortedProducts.slice(0, 3));
         setFeaturedProductStats(stats);
-        setHeroImages(productImages.length ? productImages : [heroVisual]);
-        setHeroImageIndex(0);
+        setFeaturedRatingStats({
+          average: totalRatings ? weightedRatingTotal / totalRatings : 0,
+          total: totalRatings,
+          counts: ratingCounts,
+        });
       } catch (error) {
         console.error("Failed to load featured products", error);
+        setCatalogProducts([]);
         setFeaturedProducts([]);
         setFeaturedProductStats({});
+        setFeaturedRatingStats({ average: 0, total: 0, counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } });
         setFeaturedError(
           error?.data?.message || error?.message || "Failed to load featured products."
         );
@@ -139,6 +166,37 @@ function LandingPage() {
     return "Contact us";
   };
 
+  const visibleProducts = catalogProducts.filter((product) => {
+    const query = productSearch.trim().toLowerCase();
+    return !query || `${product.name || ""} ${product.product_name || ""} ${product.category || ""} ${product.description || ""}`
+      .toLowerCase()
+      .includes(query);
+  });
+
+  const handleTrackOrder = async (event) => {
+    event.preventDefault();
+    const tracking = trackingNumber.trim();
+    if (!tracking) {
+      setTrackingError("Please enter your tracking number.");
+      setTrackingResult(null);
+      return;
+    }
+
+    setTrackingLoading(true);
+    setTrackingError("");
+    setTrackingResult(null);
+    try {
+      const response = await trackOrder(tracking);
+      setTrackingResult(response.order || response);
+    } catch (error) {
+      setTrackingError(error.data?.message || error.message || "No order found with that tracking number.");
+    } finally {
+      setTrackingLoading(false);
+    }
+  };
+
+  const statusLabel = (status) => String(status || "Unknown").replace(/_/g, " ");
+
   const renderRatingStars = (rating = 0, size = 16) => {
     const normalizedRating = Number(rating) || 0;
     const fullStars = Math.floor(normalizedRating);
@@ -157,40 +215,8 @@ function LandingPage() {
     });
   };
 
-  useEffect(() => {
-    if (heroImages.length <= 1) return undefined;
-
-    const intervalId = setInterval(() => {
-      setHeroImageIndex((currentIndex) => (currentIndex + 1) % heroImages.length);
-    }, 2000);
-
-    return () => clearInterval(intervalId);
-  }, [heroImages]);
-
   return (
-  <div className="min-h-screen bg-gradient-to-r from-white-300 via-gray-100 to-white-200 text-gray-900 overflow-x-hidden"> {/* BACKGROUND FX */}
-
-      <motion.div
-        animate={{
-          x:[0,50,0],
-          y:[0,-40,0],
-        }}
-        transition={{
-          duration:10,
-          repeat:Infinity,
-        }}
-    className="absolute top-[-120px] right-[-120px] w-[420px] h-[420px] rounded-full bg-red-500/20 blur-[120px]"      />
-
-      <motion.div
-        animate={{
-          x:[0,-80,0],
-          y:[0,60,0],
-        }}
-        transition={{
-          duration:14,
-          repeat:Infinity,
-        }}
-    className="absolute bottom-[-180px] left-[-120px] w-[500px] h-[500px] rounded-full bg-gray-300/40 blur-[160px]"      />
+  <div className="flex min-h-screen flex-col overflow-x-hidden bg-white text-gray-900">
 
       {/* NAVBAR */}
 
@@ -201,17 +227,14 @@ function LandingPage() {
         className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-white/95 backdrop-blur-2xl shadow-sm"
       >
 
-        <div className="w-full px-6 py-5 flex justify-between items-center">
+        <div className="w-full px-4 py-2.5 flex items-center justify-between gap-3">
 
           {/* LOGO */}
 
           <button
             type="button"
-            onClick={() => {
-              setActive("home");
-              document.getElementById("home")?.scrollIntoView({ behavior: "smooth" });
-            }}
-            className="flex items-center gap-4 text-left"
+            onClick={() => scrollToSection("home")}
+            className="flex items-center gap-3 px-1.5 py-0.5 text-left"
             aria-label="Go to ACGC Services home"
           >
             <motion.img
@@ -224,106 +247,52 @@ function LandingPage() {
               }}
               src={logo}
               alt="logo"
-              className="w-16 h-16 object-contain sm:w-20 sm:h-20"
+              className="w-14 h-14 object-contain"
             />
 
             <div className="leading-tight">
-              <h1 className="font-black text-2xl text-red-600 tracking-tight">
+              <h1 className="text-xl font-bold text-red-500">
                 ACGC Services
               </h1>
-              <p className="text-2xl text-gray-700 font-bold tracking-tight sm:text-2xl">
+              <p className="text-sm font-bold text-gray-700">
                 Aluminum & Glass Services
               </p>
             </div>
           </button>
 
-          {featuredError && (
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
-              <p className="font-semibold">Backend connection issue</p>
-              <p>{featuredError}</p>
-            </div>
-          )}
-
-                {/* DESKTOP NAV */}
-
-        <nav className="hidden lg:flex items-center gap-10">
-
-        {[
+          <div className="hidden flex-wrap items-center gap-1.5 lg:flex md:gap-2">
+            <nav className="flex flex-wrap items-center gap-1.5 md:gap-2">
+              {[
             { name: "Browse Products", id: "products" },
             { name: "About Us", id: "about" },
-            { name: "Track Order", id: "track-order", path: "/track-order" },
-        ].map((item, index) => (
-
-            item.path ? (
-              <Link
-                key={index}
-                to={item.path}
-                onClick={() => setActive(item.id)}
-                className={`relative transition duration-300 font-medium ${
-                  active === item.id
-                    ? "text-red-600"
-                    : "text-gray-800 hover:text-red-600"
-                }`}
-              >
-
-                {item.name}
-
-                {active === item.id && (
-                  <motion.div
-                    layoutId="activeNav"
-                    className="absolute -bottom-2 left-0 w-full h-[2px] bg-red-500"
-                  />
-                )}
-
-              </Link>
-            ) : (
-              <button
-                key={index}
-                onClick={() => {
-                  setActive(item.id);
-
-                  document
-                    .getElementById(item.id)
-                    ?.scrollIntoView({
-                      behavior: "smooth",
-                    });
-                }}
-                className={`relative transition duration-300 font-medium ${
-                  active === item.id
-                    ? "text-red-600"
-                    : "text-gray-800 hover:text-red-600"
-                }`}
-              >
-
-                {item.name}
-
-                {active === item.id && (
-                  <motion.div
-                    layoutId="activeNav"
-                    className="absolute -bottom-2 left-0 w-full h-[2px] bg-red-500"
-                  />
-                )}
-
-              </button>
-            )
-
-        ))}
-
-        </nav>
-          {/* ACTIONS */}
-
-          <div className="hidden lg:flex items-center gap-4">
+            { name: "Track Order", id: "track-order" },
+              ].map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => scrollToSection(item.id)}
+              aria-current={active === item.id ? "page" : undefined}
+              className={`rounded-full px-4 py-2 text-base font-semibold transition ${
+                active === item.id
+                  ? "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
+                  : "text-slate-700 hover:bg-slate-100"
+              } focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2`}
+            >
+              {item.name}
+            </button>
+              ))}
+            </nav>
 
             <Link
               to="/login"
-              className="border border-white/20 hover:border-gray-500 px-5 py-2 rounded-xl bg-white/5 backdrop-blur-xl transition"
+              className="rounded-full px-4 py-2 text-base font-semibold text-gray-700 transition hover:bg-slate-100"
             >
               Login
             </Link>
 
             <Link
               to="/signup"
-              className="bg-red-600 text-white px-6 py-2 rounded-xl font-semibold shadow-lg shadow-red-900/20 hover:scale-105 transition"
+              className="rounded-full bg-red-600 px-4 py-2 text-base font-semibold text-white shadow-lg shadow-red-900/20 transition hover:bg-red-700"
             >
               Sign Up
             </Link>
@@ -334,7 +303,9 @@ function LandingPage() {
 
           <button
             onClick={()=>setMobileMenu(!mobileMenu)}
-            className="lg:hidden"
+            className="rounded-full p-2 text-slate-700 transition hover:bg-slate-100 lg:hidden"
+            aria-label={mobileMenu ? "Close navigation menu" : "Open navigation menu"}
+            aria-expanded={mobileMenu}
           >
             {mobileMenu ? <X size={30}/> : <Menu size={30}/>}
           </button>
@@ -348,10 +319,10 @@ function LandingPage() {
           <motion.div
             initial={{opacity:0,y:-30}}
             animate={{opacity:1,y:0}}
-            className="lg:hidden bg-[#111] border-t border-gray-200"
+            className="lg:hidden border-t border-slate-200 bg-white shadow-lg"
           >
 
-            <div className="px-6 py-6 flex flex-col gap-5">
+            <div className="flex flex-col gap-2 px-4 py-4">
 
               <button
                 type="button"
@@ -359,30 +330,33 @@ function LandingPage() {
                   setMobileMenu(false);
                   scrollToSection("products");
                 }}
-                className="text-left text-white hover:text-red-400"
+                className={`rounded-full px-4 py-2 text-left text-base font-semibold transition ${active === "products" ? "border border-slate-200 bg-slate-100 text-red-600 shadow-sm" : "text-slate-700 hover:bg-slate-100"}`}
               >
                 Browse Products
               </button>
 
               <button
-                onClick={() => {
-                  setActive("about");
-                  setMobileMenu(false);
-                  document.getElementById("about")?.scrollIntoView({ behavior: "smooth" });
-                }}
-                className="text-left text-white hover:text-red-400"
+                onClick={() => scrollToSection("about")}
+                className={`rounded-full px-4 py-2 text-left text-base font-semibold transition ${active === "about" ? "border border-slate-200 bg-slate-100 text-red-600 shadow-sm" : "text-slate-700 hover:bg-slate-100"}`}
               >
                 About Us
               </button>
 
-              <Link to="/track-order" onClick={() => setMobileMenu(false)} className="text-left text-white hover:text-gray-400">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileMenu(false);
+                  scrollToSection("track-order");
+                }}
+                className={`rounded-full px-4 py-2 text-left text-base font-semibold transition ${active === "track-order" ? "border border-slate-200 bg-slate-100 text-red-600 shadow-sm" : "text-slate-700 hover:bg-slate-100"}`}
+              >
                 Track Order
-              </Link>
+              </button>
 
               <Link
                 to="/login"
                 onClick={() => setMobileMenu(false)}
-                className="text-center border border-red-600 py-3 rounded-xl"
+                className="rounded-full px-4 py-2 text-center text-base font-semibold text-slate-700 transition hover:bg-slate-100"
               >
                 Login
               </Link>
@@ -390,7 +364,7 @@ function LandingPage() {
               <Link
                 to="/signup"
                 onClick={() => setMobileMenu(false)}
-                className="text-center bg-red-600 py-3 rounded-xl text-white"
+                className="rounded-full bg-red-600 px-4 py-2 text-center text-base font-semibold text-white transition hover:bg-red-700"
               >
                 Sign Up
               </Link>
@@ -405,56 +379,56 @@ function LandingPage() {
 
       {/* HERO */}
 
-      <section id="home" className="relative overflow-hidden bg-[#941d24] text-white pt-32">
-        <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(255,255,255,0.18)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.18)_1px,transparent_1px)] [background-size:42px_42px]" />
-        <div className="relative mx-auto flex min-h-[470px] max-w-7xl items-center justify-center px-6 py-20 text-center">
-          <div className="max-w-3xl">
-            <motion.p initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-sm font-semibold uppercase tracking-[0.28em] text-red-100">
+      {active === "home" && (
+        <>
+      <section id="home" className="relative scroll-mt-24 overflow-hidden bg-[#941d24] pt-24 text-white">
+        <div className="relative mx-auto flex min-h-[360px] max-w-7xl items-center justify-center px-6 py-16 text-center">
+          <div className="max-w-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-red-100">
               ACGC Services
-            </motion.p>
-            <motion.h1 initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mt-5 text-4xl font-black leading-tight sm:text-6xl">
-              Custom Glass &amp; Aluminum Solutions
-            </motion.h1>
-            <motion.p initial={{ opacity: 0, y: 25 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="mx-auto mt-6 max-w-2xl text-base leading-7 text-red-100 sm:text-lg">
+            </p>
+            <h1 className="mt-4 text-4xl font-black leading-tight sm:text-6xl">Custom Glass &amp; Aluminum Solutions</h1>
+            <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-red-100 sm:text-lg">
               Professional fabrication and installation of glass windows, doors, partitions, and aluminum works for your space.
-            </motion.p>
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }} className="mt-9 flex flex-wrap justify-center gap-3">
+            </p>
+            <div className="mt-8 flex flex-wrap justify-center gap-3">
               <button type="button" onClick={() => scrollToSection("products")} className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-red-700 shadow-lg transition hover:bg-red-50">
                 <ShoppingBag size={18} /> Browse Products <ArrowRight size={16} />
               </button>
-              <Link to="/track-order" className="inline-flex items-center gap-2 rounded-xl border border-white/70 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10">
-                <Search size={18} /> Track Order
-              </Link>
-            </motion.div>
+              <button type="button" onClick={() => scrollToSection("track-order")} className="inline-flex items-center gap-2 rounded-xl border border-white/70 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10">
+                <Search size={18} /> View My Orders
+              </button>
+            </div>
           </div>
         </div>
       </section>
 
       <section className="relative z-10 mx-auto -mt-8 max-w-5xl px-6">
         <div className="grid gap-6 rounded-3xl bg-white px-6 py-8 text-center shadow-xl sm:grid-cols-3 sm:px-10">
-          <div><ShieldCheck className="mx-auto h-11 w-11 text-slate-900" strokeWidth={1.7} /><h2 className="mt-4 text-lg font-black">Quality Guaranteed</h2><p className="mt-2 text-sm text-slate-600">Premium materials and careful workmanship.</p></div>
-          <div><Clock3 className="mx-auto h-11 w-11 text-slate-900" strokeWidth={1.7} /><h2 className="mt-4 text-lg font-black">Fast Turnaround</h2><p className="mt-2 text-sm text-slate-600">Efficient production for your project timeline.</p></div>
-          <div><Wrench className="mx-auto h-11 w-11 text-slate-900" strokeWidth={1.7} /><h2 className="mt-4 text-lg font-black">Expert Installation</h2><p className="mt-2 text-sm text-slate-600">Professional site inspection and installation.</p></div>
+          <div className="flex flex-col items-center"><ShieldCheck className="h-12 w-12 text-slate-900" strokeWidth={1.7} /><h3 className="mt-4 text-xl font-black">Quality Guaranteed</h3><p className="mt-2 text-sm text-slate-600">Premium materials and careful workmanship.</p></div>
+          <div className="flex flex-col items-center"><Clock3 className="h-12 w-12 text-slate-900" strokeWidth={1.7} /><h3 className="mt-4 text-xl font-black">Fast Turnaround</h3><p className="mt-2 text-sm text-slate-600">Efficient production for your project timeline.</p></div>
+          <div className="flex flex-col items-center"><Wrench className="h-12 w-12 text-slate-900" strokeWidth={1.7} /><h3 className="mt-4 text-xl font-black">Expert Installation</h3><p className="mt-2 text-sm text-slate-600">Professional site inspection and installation.</p></div>
         </div>
       </section>
+        </>
+      )}
 {/* PRODUCTS SECTION */}
 
-<section
-  id="products"
-  className="relative max-w-7xl mx-auto px-6 py-28"
->
+    {active === "home" && (
+<section id="featured-products" className="relative mx-auto max-w-7xl scroll-mt-24 px-6 py-8">
 
+  <div className="rounded-[24px] border border-red-100 bg-white p-5 shadow-[0_14px_35px_rgba(148,163,184,0.12)]">
   <motion.div
     initial={{opacity:0,y:60}}
     whileInView={{opacity:1,y:0}}
     viewport={{once:true}}
     transition={{duration:1}}
-    className="text-center"
+    className="mb-5 text-left"
   >
 
-    <h2 className="text-5xl font-black">
+    <h2 className="text-5xl font-black leading-none tracking-[-0.05em]">
 
-      Browse
+      Featured
 
       <span className="text-red-500">
         {" "}Products
@@ -462,16 +436,15 @@ function LandingPage() {
 
     </h2>
 
-    <p className="text-gray-400 mt-6 max-w-2xl mx-auto">
+    <p className="mt-6 max-w-3xl text-lg text-slate-500">
 
-      Explore all available aluminum and glass solutions
-      created for modern residential and commercial projects.
+      Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
 
     </p>
 
   </motion.div>
 
-  <div className="mt-16 grid grid-cols-1 gap-6 md:grid-cols-3">
+  <div className="grid gap-4 md:grid-cols-3">
     {isLoadingFeatured ? (
       <div className="col-span-full rounded-[24px] border border-slate-200 bg-white p-10 text-center text-slate-600 shadow-sm">
         Loading products...
@@ -497,7 +470,7 @@ function LandingPage() {
             whileHover={{scale:1.01}}
             className="group cursor-pointer overflow-hidden rounded-[20px] border border-slate-200 bg-slate-50 shadow-[0_8px_22px_rgba(15,23,42,0.05)] transition duration-300 hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_18px_30px_rgba(239,68,68,0.12)]"
           >
-            <div className="relative h-100 overflow-hidden bg-slate-100">
+            <div className="relative h-44 overflow-hidden bg-slate-100">
               {imageUrl ? (
                 <img src={imageUrl} alt={product.product_name || product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
               ) : (
@@ -515,7 +488,7 @@ function LandingPage() {
               </div>
 
               <div>
-                <h3 className="text-[1.8rem] font-black leading-tight text-slate-900">
+                <h3 className="text-xl font-bold leading-tight text-slate-900">
                   {product.product_name || product.name || "Unnamed Product"}
                 </h3>
                 <p className="mt-2 line-clamp-2 text-[0.95rem] leading-6 text-slate-700">
@@ -548,18 +521,147 @@ function LandingPage() {
       })
     )}
   </div>
+  </div>
 
+  <section className="mt-8 rounded-3xl bg-white px-6 py-8 shadow-sm sm:px-10">
+    <h2 className="text-center text-3xl font-black text-slate-900">Customer Ratings</h2>
+    <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
+      <div className="text-center">
+        <p className="text-6xl font-black leading-none text-slate-950">{featuredRatingStats.average.toFixed(1)}</p>
+        <div className="mt-3 flex justify-center gap-1 text-amber-500">
+          {renderRatingStars(featuredRatingStats.average, 22)}
+        </div>
+        <p className="mt-3 text-sm font-semibold text-slate-600">
+          Average Rating ({featuredRatingStats.total} review{featuredRatingStats.total === 1 ? "" : "s"})
+        </p>
+      </div>
+      <div className="space-y-3">
+        {[5, 4, 3, 2, 1].map((star) => {
+          const count = featuredRatingStats.counts[star] || 0;
+          const percentage = featuredRatingStats.total
+            ? Math.round((count / featuredRatingStats.total) * 100)
+            : 0;
+          return (
+            <div key={star} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 text-sm">
+              <span className="font-semibold text-slate-600">{star}</span>
+              <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+                <div className="h-full rounded-full bg-amber-400 transition-all" style={{ width: `${percentage}%` }} />
+              </div>
+              <span className="w-12 text-right font-semibold text-slate-500">{percentage}%</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  </section>
 </section>
+)}
 
-{/* TRACK ORDER SECTION */}
+{active === "products" && (
+<section id="products" className="mx-auto max-w-7xl scroll-mt-24 px-6 py-14">
+  <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+    <div>
+      <p className="text-xs font-black uppercase tracking-[0.25em] text-red-600">ACGC Catalog</p>
+      <h2 className="mt-3 text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">Browse Products</h2>
+      <p className="mt-4 max-w-2xl text-slate-600">Explore the complete collection of aluminum and glass products created in the system.</p>
+    </div>
+    <label className="relative w-full md:max-w-xs">
+      <Search size={18} className="absolute left-4 top-3.5 text-slate-400" />
+      <input
+        value={productSearch}
+        onChange={(event) => setProductSearch(event.target.value)}
+        placeholder="Search products"
+        className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 outline-none focus:border-red-500"
+      />
+    </label>
+  </div>
+
+  {isLoadingFeatured && <p className="py-20 text-center text-slate-500">Loading products...</p>}
+  {!isLoadingFeatured && featuredError && <p className="mt-10 rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700">{featuredError}</p>}
+  {!isLoadingFeatured && !featuredError && visibleProducts.length === 0 && (
+    <p className="mt-10 rounded-2xl border border-dashed border-slate-300 p-12 text-center text-slate-500">No products match your search.</p>
+  )}
+
+  <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+    {visibleProducts.map((product) => {
+      const productId = product._id || product.id;
+      const rating = featuredProductStats[productId] || { averageRating: 0, ratingsCount: 0 };
+      const image = getProductImage(product);
+      return (
+        <article key={productId} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl">
+          <div className="h-64 bg-slate-100">
+            {image ? <img src={image} alt={product.product_name || product.name} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-sm text-slate-400">No image available</div>}
+          </div>
+          <div className="space-y-4 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-red-700">{product.category || "General"}</span>
+              <span className="font-bold text-emerald-600">{getProductPrice(product)}</span>
+            </div>
+            <div>
+              <h3 className="text-2xl font-black text-slate-900">{product.product_name || product.name || "Unnamed Product"}</h3>
+              <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">{product.description || "Premium aluminum and glass product crafted for reliability and style."}</p>
+            </div>
+            <div className="flex items-center justify-between gap-3 text-amber-500">
+              <div className="flex items-center gap-1">
+                {renderRatingStars(rating.averageRating, 15)}
+                <span className="ml-1 text-xs font-semibold text-slate-500">{rating.ratingsCount ? `${rating.averageRating.toFixed(1)} (${rating.ratingsCount})` : "No reviews"}</span>
+              </div>
+              <Link to="/login" className="inline-flex items-center gap-1 rounded-full bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700">
+                Order <ArrowRight size={14} />
+              </Link>
+            </div>
+          </div>
+        </article>
+      );
+    })}
+  </div>
+</section>
+)}
+
+{active === "track-order" && (
+<section id="track-order" className="scroll-mt-24 bg-white px-6 pb-14 pt-32">
+  <div className="mx-auto max-w-7xl rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
+    <div className="mb-6 flex items-center gap-3">
+      <Truck size={30} className="text-red-600" />
+      <div>
+        <h2 className="text-2xl font-bold text-slate-950">Track an Order</h2>
+        <p className="text-slate-500">Enter your tracking number to see current order status.</p>
+      </div>
+    </div>
+    <form className="grid gap-4 sm:grid-cols-[1fr_auto]" onSubmit={handleTrackOrder}>
+      <input
+        type="text"
+        value={trackingNumber}
+        onChange={(event) => setTrackingNumber(event.target.value)}
+        placeholder="Enter tracking ID"
+        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500"
+      />
+      <button type="submit" disabled={trackingLoading} className="flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-6 py-3 font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
+        {trackingLoading && <LoaderCircle size={20} className="animate-spin" />}
+        {trackingLoading ? "Searching..." : "Track"}
+      </button>
+    </form>
+    {trackingError && <div className="mt-8 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">{trackingError}</div>}
+    {trackingResult && (
+      <div className="mt-10 border-t border-slate-100 pt-8">
+        <h3 className="mb-5 text-xl font-black text-slate-950">Order Status</h3>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
+          <div className="mb-4 flex justify-between gap-4"><span className="font-medium">Order ID:</span><span className="break-all text-right">{trackingResult.tracking || trackingResult._id || "—"}</span></div>
+          <div className="mb-4 flex justify-between gap-4"><span className="font-medium">Customer:</span><span className="text-right">{trackingResult.customer_name || `${trackingResult.customer?.first_name || ""} ${trackingResult.customer?.last_name || ""}`.trim() || "—"}</span></div>
+          <div className="mb-4 flex justify-between gap-4"><span className="font-medium">Product:</span><span className="text-right">{trackingResult.items?.[0]?.name || trackingResult.items?.[0]?.product_name || "—"}</span></div>
+          <div className="flex justify-between gap-4"><span className="font-medium">Status:</span><span className="rounded-full bg-red-100 px-4 py-1 font-semibold capitalize text-red-700">{statusLabel(trackingResult.status)}</span></div>
+        </div>
+      </div>
+    )}
+  </div>
+</section>
+)}
 
 
 {/* ABOUT SECTION */}
 
-<section
-  id="about"
-  className="max-w-7xl mx-auto px-6 py-28"
->
+{active === "about" && (
+<section id="about" className="mx-auto max-w-7xl scroll-mt-24 px-6 py-28">
 
   <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
     <motion.div
@@ -667,94 +769,53 @@ function LandingPage() {
   </div>
 
 </section>
+)}
 
 {/* FOOTER */}
 
-<footer className="border-t border-white/10 bg-black/70">
-
-  <div className="max-w-7xl mx-auto px-6 py-14">
-
-    <div className="grid lg:grid-cols-3 gap-14">
-
+<footer className="relative left-1/2 mt-auto w-screen -translate-x-1/2 border-t border-slate-200 bg-slate-900/90">
+  <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <div className="grid gap-6 md:gap-8 lg:grid-cols-3">
       <div>
-
-        <div className="flex items-center gap-4">
-
-          <img
-            src={logo}
-            alt="logo"
-            className="w-20 h-14 object-contain"
-          />
-
+        <div className="flex items-center gap-3">
+          <img src={logo} alt="logo" className="h-10 w-14 object-contain" />
           <div>
-
-            <h3 className="font-bold text-xl text-white">
-
-              ACGC Aluminum Services
-
-            </h3>
-
-            <p className="text-gray-300 text-sm">
-
-              Premium Glass & Aluminum Solutions
-
-            </p>
-
+            <h3 className="text-base font-bold text-white">ACGC Aluminum Services</h3>
+            <p className="text-xs text-slate-300">Premium Glass &amp; Aluminum Solutions</p>
           </div>
-
         </div>
-
       </div>
 
       <div>
-
-        <h4 className="font-bold text-white 500 mb-6">
-
-          Quick Links
-
-        </h4>
-
-        <div className="space-y-4 text-gray-300">
-
-          <p>Home</p>
-          <p>Browse Products</p>
-          <p>Track Order</p>
-          <p>About Us</p>
-
+        <h4 className="mb-3 text-sm font-bold text-white">Quick Links</h4>
+        <div className="space-y-2 text-xs text-slate-300">
+          {[
+            ["Home", "home"],
+            ["Browse Products", "products"],
+            ["Track Order", "track-order"],
+            ["About Us", "about"],
+          ].map(([label, sectionId]) => (
+            <button key={sectionId} type="button" onClick={() => scrollToSection(sectionId)} className="block transition hover:text-white">
+              {label}
+            </button>
+          ))}
         </div>
-
       </div>
 
       <div>
-
-        <h4 className="font-bold text-white 500 mb-6">
-
-          Contact
-
-        </h4>
-
-        <div className="space-y-4 text-gray-300">
-
+        <h4 className="mb-3 text-sm font-bold text-white">Contact</h4>
+        <div className="space-y-2 text-xs text-slate-300">
           <p>Email: acgc.services00@email.com</p>
-
           <p>Phone: +63 900 000 0000</p>
-
           <p>Philippines</p>
-
         </div>
-
       </div>
-
     </div>
 
-    <div className="border-t border-white/40 mt-12 pt-8 text-center text-white 500 text-sm">
-
+    <div className="mt-6 border-t border-white/20 pt-4 text-center text-[11px] text-slate-300">
       © 2026 ACGC Aluminum Services — All Rights Reserved.
-
     </div>
-
   </div>
-
 </footer>
 
 </div>

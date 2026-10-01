@@ -3,6 +3,7 @@ import {
   Search,
   Eye,
   Pencil,
+  Play,
 } from "lucide-react";
 
 import { getAdminOrders, updateOrderProgress, updateOrderStatus } from "@/api/orders";
@@ -20,31 +21,105 @@ import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 
+const normalizeStageStatus = (value) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/-+/g, "-");
+
 const hasDelayedStage = (stages = []) =>
   Array.isArray(stages) &&
   stages.some(
     (stage) =>
-      (!stage.completed && stage.status === "delayed") ||
+      (!stage.completed && normalizeStageStatus(stage.status) === "delayed") ||
       (Array.isArray(stage.subStages) &&
-        stage.subStages.some((sub) => !sub.completed && sub.status === "delayed"))
+        stage.subStages.some((sub) => !sub.completed && normalizeStageStatus(sub.status) === "delayed"))
   );
 
-const formatOrderStatus = (status, contractStatus) => {
+const hasAddedStages = (stages = []) =>
+  Array.isArray(stages) &&
+  stages.some((stage) => {
+    if (!Array.isArray(stage.subStages) || stage.subStages.length === 0) return false;
+    const status = normalizeStageStatus(stage.status);
+    const isCurrent = ["in-progress", "active", "current"].includes(status);
+    const isDone = stage.completed === true || ["done", "completed"].includes(status);
+    return !isCurrent && !isDone;
+  });
+
+export const buildStartedProgressStages = (stages = []) => {
+  const stageDefinitions = [
+    { key: "cutting", name: "Cutting" },
+    { key: "assembly", name: "Assembly" },
+    { key: "fabrication", name: "Fabrication" },
+    { key: "installation", name: "Installation" },
+  ];
+  const existingStages = Array.isArray(stages) ? stages : [];
+
+  return stageDefinitions.map(({ key, name }) => {
+    const existingStage = existingStages.find((stage) => {
+      const normalizedKey = normalizeStageStatus(stage.key);
+      const normalizedName = normalizeStageStatus(stage.name);
+      return normalizedKey === key || normalizedName === normalizeStageStatus(name);
+    }) || existingStages.find((stage) =>
+      normalizeStageStatus(stage.key || stage.name).includes(key)
+    );
+    const wasCompleted = existingStage?.completed === true ||
+      ["done", "completed"].includes(normalizeStageStatus(existingStage?.status));
+
+    return {
+      ...(existingStage || {}),
+      key,
+      name,
+      status: key === "cutting" ? "in_progress" : wasCompleted ? "done" : "pending",
+      completed: key !== "cutting" && wasCompleted,
+    };
+  });
+};
+
+export const formatOrderStatus = (status, contractStatus) => {
   if (status === "completed") return "Completed";
   if (status === "site_inspection") return "Installation";
   if (status === "processing") return "Fabrication";
   if (status === "approved") return "Pending";
-  if (status === "contract_accepted") return "Accepted";
+  if (status === "contract_accepted") return "Pending";
   if (status === "contract_sent") return "Pending";
   if (status === "admin_review") return "Pending";
   if (status === "order_submitted") return "Pending";
   if (status === "cancelled") return "Cancelled";
-  return contractStatus === "accepted" ? "Accepted" : "Pending";
+  return "Pending";
 };
 
-const getProjectStatus = (order) => {
-  if (hasDelayedStage(order.progress_stages)) return "Delayed";
-  return formatOrderStatus(order.status, order.contract_status);
+export const getProjectStatus = (order, stages = order?.progress_stages ?? []) => {
+  if (Array.isArray(stages) && stages.length > 0) {
+    const allCompleted = stages.every((stage) =>
+      stage.completed === true ||
+      ["done", "completed"].includes(normalizeStageStatus(stage.status))
+    );
+    if (allCompleted) return "Completed";
+  }
+
+  if (hasDelayedStage(stages)) return "Delayed";
+
+  const activeStage = Array.isArray(stages)
+    ? stages.find((stage) => {
+        const status = normalizeStageStatus(stage.status);
+        return status === "in-progress" || status === "active";
+      })
+    : null;
+
+  if (activeStage?.name) return activeStage.name;
+
+  const nextStage = Array.isArray(stages)
+    ? stages.find((stage) => {
+        const status = normalizeStageStatus(stage.status);
+        return ["pending", "not-started"].includes(status);
+      })
+    : null;
+
+  if (nextStage?.name) return nextStage.name;
+
+  return formatOrderStatus(order?.status, order?.contract_status);
 };
 
 const getStageProgressColor = (project) => {
@@ -53,6 +128,7 @@ const getStageProgressColor = (project) => {
   if (status === "completed") return "bg-emerald-500";
   if (status === "installation") return "bg-sky-500";
   if (status === "fabrication" || status === "processing") return "bg-amber-500";
+  if (status === "assembly") return "bg-blue-500";
   if (status === "cutting") return "bg-orange-500";
   if (status === "delayed") return "bg-rose-500";
   if (status === "accepted") return "bg-violet-500";
@@ -92,6 +168,10 @@ const buildProjectRows = (order) => {
   const items = Array.isArray(order?.items) && order.items.length > 0 ? order.items.filter(Boolean) : [null];
 
   return items.map((item, index) => {
+    const stages = Array.isArray(item?.progress_stages) && item.progress_stages.length > 0
+      ? item.progress_stages
+      : order.progress_stages || [];
+    const itemProgress = typeof item?.progress === "number" ? item.progress : null;
     const itemName =
       item?.name ||
       item?.product_name ||
@@ -119,9 +199,9 @@ const buildProjectRows = (order) => {
           : "TBD"),
       installation: formatDateToMMMDDYYYY(order.estimated_installation_date) || "TBD",
       estimated_installation_date: order.estimated_installation_date,
-      progress: mapProgressFromStatus(order.status, order.progress),
-      stages: order.progress_stages || [],
-      status: getProjectStatus(order),
+      progress: itemProgress ?? mapProgressFromStatus(order.status, order.progress),
+      stages,
+      status: getProjectStatus(order, stages),
       statusKey: order.status,
       contract_status: order.contract_status,
       payment_status: order.payment_status,
@@ -181,6 +261,7 @@ function ProgressMonitor() {
 
   const [cancelConfirm, setCancelConfirm] = useState({ open: false, id: null });
   const [cancellingId, setCancellingId] = useState(null);
+  const [startingProjectId, setStartingProjectId] = useState(null);
 
   const rowsPerPage = 5;
 
@@ -198,10 +279,12 @@ function ProgressMonitor() {
           .includes(search.toLowerCase());
 
       const matchStatus =
-        statusFilter === "All"
+        statusFilter === "Added stages"
+          ? hasAddedStages(project.stages)
+          : statusFilter === "All"
           ? true
           : statusFilter === "Pending"
-          ? ["Pending", "Accepted"].includes(project.status)
+          ? project.status === "Pending"
           : project.status === statusFilter;
 
       return matchSearch && matchStatus;
@@ -219,9 +302,9 @@ function ProgressMonitor() {
       lastIndex
     );
 
-  const totalPages = Math.ceil(
+  const totalPages = Math.max(1, Math.ceil(
     filteredProjects.length / rowsPerPage
-  );
+  ));
 
   useEffect(() => {
     const fetchProjects = async () => {
@@ -285,11 +368,16 @@ function ProgressMonitor() {
           estimated_installation_date: updatedProject.installation,
           stages: updatedProject.stages,
           proof_images: [],
+          ...(updatedProject.rawOrder?.items?.length > 1 ? { itemIndex: updatedProject.itemIndex } : {}),
         });
-        recordActivity(user, `Updated progress for project ${targetOrderId}.`, "Progress Monitor");
+        recordActivity(user, `Updated progress for ${updatedProject.product} in order ${targetOrderId}.`, "Progress Monitor");
 
         if (response?.order) {
           const savedOrder = response.order;
+          const savedItem = savedOrder.items?.[updatedProject.itemIndex];
+          const savedStages = savedItem?.progress_stages?.length
+            ? savedItem.progress_stages
+            : savedOrder.progress_stages || [];
           updatedProject = {
             ...updatedProject,
             rawOrder: savedOrder,
@@ -302,10 +390,12 @@ function ProgressMonitor() {
             createdAt: savedOrder.createdAt,
             updatedAt: savedOrder.updatedAt,
             contract_terms: savedOrder.contract_terms,
-            progress: mapProgressFromStatus(savedOrder.status, savedOrder.progress),
-            stages: savedOrder.progress_stages || [],
-            progress_stages: savedOrder.progress_stages || [],
-            status: getProjectStatus(savedOrder),
+            progress: typeof savedItem?.progress === "number"
+              ? savedItem.progress
+              : mapProgressFromStatus(savedOrder.status, savedOrder.progress),
+            stages: savedStages,
+            progress_stages: savedStages,
+            status: getProjectStatus(savedOrder, savedStages),
           };
         }
       }
@@ -321,6 +411,59 @@ function ProgressMonitor() {
     } catch (err) {
       console.error("Failed to save progress", err);
       throw err;
+    }
+  };
+
+  const handleStartProject = async (project) => {
+    const targetOrderId = project.orderId || project.id;
+    if (!targetOrderId) return;
+
+    setStartingProjectId(project.id);
+    try {
+      const isBatchOrder = project.rawOrder?.items?.length > 1;
+      const stages = buildStartedProgressStages(project.stages);
+      const response = await updateOrderProgress(targetOrderId, {
+        progress: 20,
+        status: "Cutting",
+        estimated_installation_date: project.estimated_installation_date || "",
+        stages,
+        proof_images: [],
+        ...(isBatchOrder ? { itemIndex: project.itemIndex } : {}),
+      });
+
+      const savedOrder = response.order;
+      const savedItem = savedOrder.items?.[project.itemIndex];
+      const savedStages = savedItem?.progress_stages?.length
+        ? savedItem.progress_stages
+        : savedOrder.progress_stages?.length
+          ? savedOrder.progress_stages
+          : stages;
+      const updatedProject = {
+        ...project,
+        rawOrder: savedOrder,
+        statusKey: savedOrder.status,
+        progress: typeof savedItem?.progress === "number"
+          ? savedItem.progress
+          : typeof savedOrder.progress === "number"
+            ? savedOrder.progress
+            : 20,
+        stages: savedStages,
+        progress_stages: savedStages,
+        status: getProjectStatus(savedOrder, savedStages),
+      };
+
+      setProjectList((items) =>
+        items.map((item) =>
+          isSameProjectRow(item, updatedProject) ? { ...item, ...updatedProject } : item
+        )
+      );
+      setCurrentPage(1);
+      recordActivity(user, `Started project ${project.product} in order ${targetOrderId}.`, "Progress Monitor");
+      toast.success("Project started at Cutting.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to start project.");
+    } finally {
+      setStartingProjectId(null);
     }
   };
 
@@ -522,14 +665,10 @@ function ProgressMonitor() {
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
       <Toaster position="bottom-right" />
-      <Sidebar isOpen={isSidebarOpen} />
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
 
       <div className="flex-1 min-h-0 flex flex-col">
-        <Navbar
-          toggleSidebar={() =>
-            setIsSidebarOpen(!isSidebarOpen)
-          }
-        />
+        <Navbar />
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
@@ -557,9 +696,10 @@ function ProgressMonitor() {
                 type="text"
                 placeholder="Search client or product..."
                 value={search}
-                onChange={(e) =>
-                  setSearch(e.target.value)
-                }
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="w-full pl-12 pr-4 py-3 border rounded-xl"
               />
             </div>
@@ -569,16 +709,19 @@ function ProgressMonitor() {
                 "All",
                 "Pending",
                 "Cutting",
+                "Assembly",
                 "Fabrication",
                 "Installation",
                 "Completed",
                 "Delayed",
+                "Added stages",
               ].map((status) => (
                 <button
                   key={status}
-                  onClick={() =>
+                  onClick={() => {
                     setStatusFilter(status)
-                  }
+                    setCurrentPage(1)
+                  }}
                   className={`px-4 py-2 rounded-xl ${
                     statusFilter === status
                       ? "bg-red-600 text-white"
@@ -682,14 +825,28 @@ function ProgressMonitor() {
 
                           <div className="flex justify-center gap-2">
 
-                            <button className="bg-blue-100 text-blue-600 p-2 rounded-lg">
-                                <Eye size={18} onClick={() => {
+                            <button
+                              onClick={() => {
                                   setSelectedProject(project);
                                   setShowViewModal(true);
-                                }} />
+                              }}
+                              className="bg-blue-100 text-blue-600 p-2 rounded-lg"
+                              aria-label={`View ${project.product} progress`}
+                            >
+                              <Eye size={18} />
                             </button>
 
-                            {Number(project.progress) < 100 && (
+                            {project.status === "Pending" ? (
+                              <button
+                                onClick={() => handleStartProject(project)}
+                                disabled={startingProjectId === project.id}
+                                className="bg-emerald-100 text-emerald-700 p-2 rounded-lg disabled:cursor-wait disabled:opacity-50"
+                                title="Start project at Cutting"
+                                aria-label={`Start ${project.product} at Cutting`}
+                              >
+                                <Play size={18} />
+                              </button>
+                            ) : Number(project.progress) < 100 && (
                               <button
                                 onClick={() => {
                                   setSelectedProject(project);

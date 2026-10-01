@@ -5,19 +5,21 @@ import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "../../contexts/AuthContext";
 
 import {
-  LayoutDashboard,
-  MapPinned,
+  Gauge,
+  ClipboardCheck,
   ReceiptText,
-  BarChart3,
+  ChartNoAxesCombined,
   Package,
   UserCog,
   Settings,
   LogOut,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 
-function Sidebar({ isOpen }) {
+function Sidebar({ isOpen, onToggle }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const location = useLocation();
@@ -40,11 +42,10 @@ function Sidebar({ isOpen }) {
 
   return (
     <>
-      <aside
-        className={`admin-sidebar relative shrink-0 border-r shadow-sm min-h-screen overflow-hidden transition-all duration-300 ease-in-out ${darkMode ? "border-red-950/70 bg-gradient-to-b from-[#050817] via-[#10162d] to-[#3b0b1b] text-slate-100" : "border-slate-300 bg-gradient-to-b from-slate-100 via-white to-slate-200 text-slate-900"} ${
-          isOpen ? "w-64" : "w-20"
-        }`}
-      >
+      <div className={`relative shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${isOpen ? "w-52" : "w-20"}`}>
+        <aside
+          className={`admin-sidebar relative h-full min-h-screen w-full border-r shadow-sm overflow-hidden ${darkMode ? "border-red-950/70 bg-gradient-to-b from-[#050817] via-[#10162d] to-[#3b0b1b] text-slate-100" : "border-slate-300 bg-gradient-to-b from-slate-100 via-white to-slate-200 text-slate-900"}`}
+        >
         <div className={`pointer-events-none absolute -right-28 -top-24 h-72 w-72 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
         <div className={`pointer-events-none absolute -right-16 -top-12 h-48 w-48 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
         <div className={`pointer-events-none absolute -left-24 top-1/3 h-44 w-44 rounded-full border ${darkMode ? "border-blue-200/10" : "border-slate-900/10"}`} />
@@ -52,36 +53,37 @@ function Sidebar({ isOpen }) {
         <div className={`pointer-events-none absolute -bottom-28 right-6 h-56 w-56 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
         <div className={`pointer-events-none absolute -bottom-12 right-24 h-28 w-28 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
 
-        {/* LOGO */}
-        <button
-          type="button"
-          onClick={handleLogoClick}
-          className="relative z-10 flex w-full cursor-pointer items-center gap-1 border-b p-4 text-left transition-none"
-          aria-label="Go to dashboard"
-        >
-          <img
-            src={logo}
-            alt="ACGC Logo"
-            className="h-12 w-14 object-contain"
-          />
+        <div className={`relative z-10 flex border-b ${isOpen ? "items-center gap-0 p-1.5" : "flex-col items-center gap-2 p-2"}`}>
+          <button
+            type="button"
+            onClick={handleLogoClick}
+            className={`grid min-w-0 cursor-pointer items-center text-left transition-[grid-template-columns,gap] duration-300 ease-in-out motion-reduce:transition-none ${isOpen ? "flex-1 grid-cols-[36px_minmax(0,1fr)] gap-1" : "w-full grid-cols-[1fr_0fr] gap-0"}`}
+            aria-label="Go to dashboard"
+          >
+            <img
+              src={logo}
+              alt="ACGC Aluminum Services"
+              className="h-8 w-9 shrink-0 justify-self-center object-contain"
+            />
 
-          <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
-            <h1 className="text-lg font-bold text-red-500">
-              ACGC ADMIN
-            </h1>
+            <div className={`min-w-0 overflow-hidden transition-[max-width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
+              <h1 className="truncate text-base font-bold leading-tight text-red-500">
+                ACGC Services
+              </h1>
 
-            <p className={`whitespace-nowrap text-xs font-bold ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
-              Aluminum & Glass Services
-            </p>
-          </div>
-        </button>
+              <p className={`whitespace-nowrap text-[10px] leading-tight font-bold ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
+                Aluminum & Glass Services
+              </p>
+            </div>
+          </button>
+        </div>
 
         {/* MENU */}
-        <nav className="p-1 space-y-4 gap-1 mt-4 px-2 flex flex-col">
+        <nav className="mt-3 flex flex-col gap-1.5 px-2 py-1">
 
           <MenuItem
             to="/dashboard"
-            icon={<LayoutDashboard size={23} />}
+            icon={<Gauge size={20} />}
             label="Dashboard"
             isOpen={isOpen}
             active={location.pathname === "/dashboard"}
@@ -90,7 +92,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/site-inspection"
-            icon={<MapPinned size={23} />}
+            icon={<ClipboardCheck size={20} />}
             label="Site Inspection"
             isOpen={isOpen}
             active={location.pathname === "/site-inspection"}
@@ -99,7 +101,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/transactions"
-            icon={<ReceiptText size={23} />}
+            icon={<ReceiptText size={20} />}
             label="Transactions"
             isOpen={isOpen}
             active={location.pathname === "/transactions"}
@@ -108,7 +110,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/progress-monitor"
-            icon={<BarChart3 size={23} />}
+            icon={<ChartNoAxesCombined size={20} />}
             label="Progress Monitor"
             isOpen={isOpen}
             active={location.pathname === "/progress-monitor"}
@@ -117,7 +119,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/product"
-            icon={<Package size={23} />}
+            icon={<Package size={20} />}
             label="Products"
             isOpen={isOpen}
             active={location.pathname === "/product"}
@@ -126,7 +128,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/profile"
-            icon={<UserCog size={23} />}
+            icon={<UserCog size={20} />}
             label="Admin Profile"
             isOpen={isOpen}
             active={location.pathname === "/profile"}
@@ -135,7 +137,7 @@ function Sidebar({ isOpen }) {
 
           <MenuItem
             to="/settings"
-            icon={<Settings size={23} />}
+            icon={<Settings size={20} />}
             label="Settings"
             isOpen={isOpen}
             active={location.pathname === "/settings"}
@@ -146,16 +148,27 @@ function Sidebar({ isOpen }) {
           <button
             onClick={() => setShowLogoutModal(true)}
             title="Logout"
-            className={`relative z-10 flex w-full items-center gap-3 rounded-xl p-3 text-red-500 transition-all duration-300 ease-in-out ${darkMode ? "hover:bg-red-950/70 hover:text-red-300" : "hover:bg-red-50"} ${isOpen ? "justify-start" : "justify-center"}`}
+            className={`relative z-10 flex min-h-10 w-full items-center rounded-lg px-3 py-2 text-sm text-red-500 transition-[gap,background-color,color] duration-300 ease-in-out motion-reduce:transition-none ${darkMode ? "hover:bg-red-950/70 hover:text-red-300" : "hover:bg-red-50"} ${isOpen ? "justify-start gap-2.5" : "justify-center gap-0"}`}
           >
-            <LogOut size={23} />
-            <span className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
+            <LogOut size={20} className="shrink-0" />
+            <span className={`min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${isOpen ? "max-w-full opacity-100" : "invisible max-w-0 opacity-0"}`}>
               Logout
             </span>
           </button>
 
         </nav>
-      </aside>
+        </aside>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
+          aria-pressed={!isOpen}
+          title={isOpen ? "Collapse sidebar" : "Expand sidebar"}
+          className={`absolute right-0 top-7 z-20 inline-flex h-8 w-8 translate-x-1/2 cursor-pointer items-center justify-center rounded-full border shadow-[0_2px_8px_rgba(15,23,42,0.18)] ring-1 ring-black/5 transition-[transform,background-color,border-color,box-shadow,color] duration-150 hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 motion-reduce:transition-none ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 ring-white/10 hover:border-red-800 hover:bg-slate-700 hover:text-red-300" : "border-slate-200 bg-white text-slate-600 hover:border-red-200 hover:bg-red-50 hover:text-red-700"}`}
+        >
+          {isOpen ? <ChevronLeft size={18} aria-hidden="true" /> : <ChevronRight size={18} aria-hidden="true" />}
+        </button>
+      </div>
 
       {/* LOGOUT MODAL */}
       {showLogoutModal && createPortal(
@@ -207,16 +220,21 @@ function MenuItem({
     <Link
       to={to}
       title={label}
-      className={`relative flex w-full items-center gap-1 p-3 rounded-xl transition-all duration-300 ease-in-out ${
+      className={`group relative grid min-h-10 w-full items-center rounded-lg px-3 py-2 text-sm transition-[grid-template-columns,gap,background-color,color,transform] duration-200 ease-out hover:translate-x-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 motion-reduce:transition-none motion-reduce:hover:translate-x-0 ${
         active
-          ? "bg-gradient-to-r from-red-700 to-red-950 text-white shadow-lg shadow-red-950/30"
+          ? darkMode
+            ? "bg-amber-500/15 text-amber-200 shadow-sm shadow-amber-950/30 ring-1 ring-inset ring-amber-400/40"
+            : "bg-white text-amber-800 shadow-[0_2px_10px_rgba(245,158,11,0.12)] ring-1 ring-inset ring-amber-500/40"
           : darkMode
             ? "text-slate-300 hover:bg-red-950/70 hover:text-red-200"
             : "text-gray-700 hover:bg-red-50 hover:text-red-700"
-      } ${isOpen ? "justify-start" : "justify-center"} ${nested ? "rounded-l-none rounded-r-xl" : ""}`}
+      } ${isOpen ? "grid-cols-[20px_minmax(0,1fr)] gap-2.5" : "grid-cols-[1fr_0fr] gap-0"} ${nested ? "rounded-l-none rounded-r-xl" : ""}`}
     >
-      <span className="relative shrink-0">{icon}</span>
-      <span className={`overflow-hidden whitespace-nowrap transition-all duration-1000 ease-in-out ${
+      {active && <span aria-hidden="true" className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.75)]" />}
+      <span className={`relative shrink-0 justify-self-center transition-transform duration-200 ease-out motion-reduce:transition-none ${
+        isOpen ? "" : "group-hover:-translate-y-0.5 group-hover:scale-110 motion-reduce:group-hover:translate-y-0 motion-reduce:group-hover:scale-100"
+      }`}>{icon}</span>
+      <span className={`min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${
         isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"
       }`}>
         {label}

@@ -120,6 +120,189 @@ const getStageStatus = (order, stepIndex, currentIndex, stageKey) => {
   }
 };
 
+const batchOrderMilestones = [
+  { key: "order_submitted", label: "Order Submitted" },
+  { key: "admin_review", label: "Admin Review" },
+  { key: "site_inspection", label: "Site Inspection" },
+  { key: "contract_sent", label: "Contract Sent" },
+  { key: "contract_accepted", label: "Contract Accepted" },
+];
+
+const batchProductStages = [
+  { key: "cutting", label: "Cutting" },
+  { key: "assembly", label: "Assembly" },
+  { key: "fabrication", label: "Fabrication" },
+  { key: "installation", label: "Installation" },
+];
+
+const normalizeStageKey = (stage) =>
+  (stage?.key || stage?.name || "").toString().toLowerCase().replace(/\s+/g, "_");
+
+const normalizeStageStatus = (value) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/-+/g, "-");
+
+export const calculateStageProgressPercent = (steps = []) => {
+  const visibleSteps = Array.isArray(steps) ? steps.filter(Boolean) : [];
+
+  if (visibleSteps.length === 0) {
+    return 0;
+  }
+
+  const activeIndex = visibleSteps.findLastIndex((step) => (
+    Boolean(step?.active) || ["in-progress", "in_progress", "delayed", "active"].includes(normalizeStageStatus(step?.status || ""))
+  ));
+
+  if (activeIndex >= 0) {
+    return Math.round(((activeIndex + 1) / visibleSteps.length) * 100);
+  }
+
+  const completedIndex = visibleSteps.findLastIndex((step) => (
+    Boolean(step?.done) || ["done", "completed"].includes(normalizeStageStatus(step?.status || ""))
+  ));
+
+  if (completedIndex >= 0) {
+    return Math.round(((completedIndex + 1) / visibleSteps.length) * 100);
+  }
+
+  return Math.round((1 / visibleSteps.length) * 100);
+};
+
+const getBatchMilestoneIndex = (order, hasProductionStarted) => {
+  const status = String(order?.status || "").toLowerCase();
+  const contractStatus = String(order?.contract_status || "").toLowerCase();
+
+  if (status === "completed" || status === "approved" || status === "processing") return 5;
+  if (contractStatus === "accepted" || status === "contract_accepted") return hasProductionStarted ? 5 : 4;
+  if (status === "contract_sent" || ["sent", "declined"].includes(contractStatus)) return 3;
+  if (status === "site_inspection" && order.inspection_status === "completed") return 3;
+  if (status === "site_inspection") return 2;
+  if (status === "admin_review") return 1;
+  return 0;
+};
+
+export const buildBatchProductTimelineStages = (order, item, itemIndex = 0) => {
+  const status = String(order?.status || "").toLowerCase();
+  const contractStatus = String(order?.contract_status || "").toLowerCase();
+  const isCancelled = status === "cancelled";
+  const hasAcceptedContract = status === "contract_accepted" || contractStatus === "accepted";
+  const hasItemStages = Array.isArray(item?.progress_stages) && item.progress_stages.length > 0;
+  const savedStages = hasItemStages
+    ? item.progress_stages
+    : Array.isArray(order?.progress_stages)
+    ? order.progress_stages
+    : [];
+  const stageMap = new Map(savedStages.map((stage) => [normalizeStageKey(stage), stage]));
+  const hasProductionStarted = batchProductStages.some((definition) => {
+    const stage = stageMap.get(definition.key);
+    return stage && (stage.completed || !["", "pending"].includes(String(stage.status || "").toLowerCase()));
+  });
+  const milestoneIndex = getBatchMilestoneIndex(order, hasProductionStarted);
+
+  const milestoneSteps = batchOrderMilestones.map((milestone, index) => {
+    const milestoneStatus = isCancelled
+      ? "cancelled"
+      : index < milestoneIndex
+      ? "completed"
+      : index === milestoneIndex
+      ? "in-progress"
+      : "pending";
+    const milestoneDates = {
+      order_submitted: order?.createdAt || order?.created_at,
+      admin_review: order?.updatedAt || order?.updated_at,
+      site_inspection: order?.inspection_date,
+      contract_sent: order?.contractSentAt || order?.updatedAt,
+      contract_accepted: order?.acceptedAt || order?.contract_signed_date || order?.updatedAt,
+    };
+
+    return {
+      key: `batch_${itemIndex + 1}_${milestone.key}`,
+      label: milestone.label,
+      status: milestoneStatus,
+      statusText: milestoneStatus === "completed" ? "Completed" : milestoneStatus === "in-progress" ? "In Progress" : milestoneStatus === "cancelled" ? "Cancelled" : "Pending",
+      date: milestoneStatus === "completed" ? formatDateTimeToMMDDYYYY(milestoneDates[milestone.key]) || "Completed" : milestoneStatus === "in-progress" ? "In progress" : "Pending",
+      assignedTo: milestone.key === "contract_accepted" ? "Customer" : milestone.key === "site_inspection" ? "Inspection Team" : "Admin Team",
+      notes: "Order milestone shared by all products in this batch.",
+      subStages: [],
+    };
+  });
+
+  const productionSteps = batchProductStages.map((definition) => {
+    const sourceStage = stageMap.get(definition.key) ||
+      (definition.key === "fabrication" ? stageMap.get("processing") : null);
+    const sourceStatus = normalizeStageStatus(sourceStage?.status || "");
+    const completed = Boolean(sourceStage?.completed) || ["done", "completed"].includes(sourceStatus) || (!sourceStage && status === "completed");
+    const stepStatus = isCancelled
+      ? "cancelled"
+      : completed
+      ? "completed"
+      : sourceStatus === "delayed"
+      ? "delayed"
+      : ["in-progress", "in_progress", "active"].includes(sourceStatus)
+      ? "in-progress"
+      : "pending";
+    const subStages = Array.isArray(sourceStage?.subStages)
+      ? sourceStage.subStages.map((sub) => ({
+          name: sub.name || "",
+          status: sub.completed || sub.status === "done"
+            ? "completed"
+            : sub.status === "delayed"
+            ? "delayed"
+            : sub.status === "in_progress"
+            ? "in-progress"
+            : "pending",
+          date: formatDateTimeToMMDDYYYY(sub.date),
+          notes: sub.description || null,
+          images: Array.isArray(sub.images) ? sub.images : [],
+        }))
+      : [];
+    const latestDelayEntry = Array.isArray(sourceStage?.delayHistory)
+      ? sourceStage.delayHistory.at(-1)
+      : null;
+
+    return {
+      key: `batch_${itemIndex + 1}_${definition.key}`,
+      batchStageKey: definition.key,
+      label: sourceStage?.name || definition.label,
+      status: stepStatus,
+      statusText: stepStatus === "completed" ? "Completed" : stepStatus === "in-progress" ? "In Progress" : stepStatus === "delayed" ? "Delayed" : stepStatus === "cancelled" ? "Cancelled" : "Pending",
+      date: stepStatus === "completed" ? formatDateTimeToMMDDYYYY(sourceStage?.date) || "Completed" : stepStatus === "in-progress" ? "In progress" : "Pending",
+      assignedTo: definition.key === "installation" ? "Installation Team" : "Production Team",
+      notes: sourceStage?.delayReason || sourceStage?.delayNotes || `Current phase: ${definition.label}`,
+      delayReason: latestDelayEntry?.reason || sourceStage?.delayReason || "",
+      delayNotes: latestDelayEntry?.notes || sourceStage?.delayNotes || "",
+      delayReportedAt: formatDateTimeToMMDDYYYY(latestDelayEntry?.reportedAt || sourceStage?.delayReportedAt) || "Not recorded",
+      delayExpectedResolution: formatDateToMMDDYYYY(latestDelayEntry?.expectedResolution || sourceStage?.delayExpectedResolution) || "Not set",
+      images: Array.isArray(sourceStage?.images) ? sourceStage.images : [],
+      subStages,
+    };
+  });
+
+  const productionComplete = productionSteps.every((step) => step.status === "completed");
+
+  const normalizedProductionSteps = hasAcceptedContract && savedStages.length === 0
+    ? productionSteps.map((step, index) => index === 0 ? { ...step, status: "in-progress", statusText: "In Progress" } : step)
+    : productionSteps;
+
+  const visibleSteps = hasAcceptedContract
+    ? [...normalizedProductionSteps, {
+        key: `batch_${itemIndex + 1}_completed`,
+        label: "Completed",
+        status: isCancelled ? "cancelled" : productionComplete ? "completed" : "pending",
+        statusText: isCancelled ? "Cancelled" : productionComplete ? "Completed" : "Pending",
+        date: isCancelled ? "Cancelled" : productionComplete ? "Completed" : "Pending",
+        assignedTo: "Project Manager",
+        notes: "All production stages for this product must be completed.",
+        subStages: [],
+      }]
+    : milestoneSteps;
+
+  return visibleSteps;
+};
+
 export const buildOrderTimelineStages = (order) => {
   if (!order) return [];
 
@@ -146,26 +329,26 @@ export const buildOrderTimelineStages = (order) => {
     };
   });
 
-  const contractAccepted = order.contract_status === "accepted" || order.status === "contract_accepted";
-  if (!contractAccepted) {
-    return baseStages;
-  }
-
   const progressStageKeys = [
-    { key: "cutting", label: "Fabrication" },
+    { key: "cutting", label: "Cutting" },
+    { key: "assembly", label: "Assembly" },
     { key: "fabrication", label: "Fabrication" },
     { key: "installation_scheduling", label: "Installation" },
     { key: "installation_agreement", label: "Installation" },
     { key: "installation", label: "Installation" },
   ];
 
-  const stageMap = Array.isArray(order.progress_stages)
-    ? order.progress_stages.reduce((map, stage) => {
-        const key = stage.key || (stage.name || "").toLowerCase().replace(/\s+/g, "_");
-        map[key] = stage;
-        return map;
-      }, {})
-    : {};
+  const sourceProgressStages = Array.isArray(order.progress_stages) && order.progress_stages.length > 0
+    ? order.progress_stages
+    : Array.isArray(order.items)
+    ? order.items.find((item) => Array.isArray(item?.progress_stages) && item.progress_stages.length > 0)?.progress_stages || []
+    : [];
+
+  const stageMap = sourceProgressStages.reduce((map, stage) => {
+    const key = stage.key || (stage.name || "").toLowerCase().replace(/\s+/g, "_");
+    map[key] = stage;
+    return map;
+  }, {});
 
   const progressStages = progressStageKeys
     .map((definition) => {
@@ -175,20 +358,21 @@ export const buildOrderTimelineStages = (order) => {
         ? scheduleStageCandidates.find((stage) => ["accepted", "reschedule_requested"].includes(stage.customerResponse)) || scheduleStageCandidates[scheduleStageCandidates.length - 1] || {}
         : stageMap[definition.key] || {};
 
+      const normalizedSourceStatus = normalizeStageStatus(sourceStage?.status || "");
       const completed = isAgreementStage
         ? sourceStage.customerResponse === "accepted" || sourceStage.customerResponse === "reschedule_requested"
-        : !!sourceStage.completed || sourceStage.customerResponse === "accepted";
-      const delayed = !completed && sourceStage.status === "delayed";
-      const inProgress = !completed && sourceStage.status === "in_progress";
+        : !!sourceStage.completed || sourceStage.customerResponse === "accepted" || ["done", "completed"].includes(normalizedSourceStatus);
+      const delayed = !completed && normalizedSourceStatus === "delayed";
+      const inProgress = !completed && ["in-progress", "in_progress", "active"].includes(normalizedSourceStatus);
       const status = completed ? "completed" : delayed ? "delayed" : inProgress ? "in-progress" : "pending";
       const subStages = Array.isArray(sourceStage.subStages)
         ? sourceStage.subStages.map((sub) => ({
             name: sub.name || "",
             status: sub.completed
               ? "completed"
-              : sub.status === "delayed"
+              : normalizeStageStatus(sub.status) === "delayed"
               ? "delayed"
-              : sub.status === "in_progress"
+              : ["in-progress", "in_progress", "active"].includes(normalizeStageStatus(sub.status))
               ? "in-progress"
               : "pending",
             date: formatDateTimeToMMDDYYYY(sub.date),
@@ -326,6 +510,19 @@ export const buildOrderTimelineStages = (order) => {
     assignedTo: "Project Manager",
     notes: installationComplete ? "Project execution complete." : "Final project completion pending.",
   };
+
+  const contractAccepted = order.contract_status === "accepted" || order.status === "contract_accepted";
+  if (contractAccepted) {
+    const productionFallback = [
+      { key: "cutting", label: "Cutting", status: "in-progress", statusText: "In Progress", date: null, assignedTo: "Production Team", notes: "Current phase: Cutting", images: [], subStages: [] },
+      { key: "assembly", label: "Assembly", status: "pending", statusText: "Pending", date: null, assignedTo: "Production Team", notes: "Current phase: Assembly", images: [], subStages: [] },
+      { key: "fabrication", label: "Fabrication", status: "pending", statusText: "Pending", date: null, assignedTo: "Production Team", notes: "Current phase: Fabrication", images: [], subStages: [] },
+      { key: "installation", label: "Installation", status: "pending", statusText: "Pending", date: null, assignedTo: "Production Team", notes: "Current phase: Installation", images: [], subStages: [] },
+      completedStage,
+    ];
+
+    return progressStages.length ? progressStages : productionFallback;
+  }
 
   return [...baseStages, ...progressStages, completedStage];
 };

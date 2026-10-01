@@ -24,7 +24,7 @@ VITE_API_BASE_URL=http://localhost/acgc_system
 npm run dev
 ```
 
-Open browser: `http://localhost:5173`
+Open the local URL printed by Vite. If port 5173 is occupied, Vite automatically selects the next available port.
 
 ## Login Credentials
 
@@ -234,9 +234,7 @@ Output: `dist/` folder ready to deploy
 ## Troubleshooting
 
 ### Port 5173 Already in Use
-```bash
-npm run dev -- --port 3000
-```
+Vite automatically selects the next available port. Open the URL printed in the terminal instead of reusing `http://localhost:5173`.
 
 ### PHP Backend Returns HTML Error
 1. Check PHP error logs

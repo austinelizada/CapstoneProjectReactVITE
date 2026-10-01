@@ -357,12 +357,10 @@ function AdminProfile() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar isOpen={isSidebarOpen} />
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
 
       <div className="flex-1 min-h-0 flex flex-col">
-        <Navbar
-          toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-        />
+        <Navbar />
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
           <AdminPageHeader

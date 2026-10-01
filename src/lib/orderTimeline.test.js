@@ -1,0 +1,221 @@
+import { describe, expect, it } from "vitest";
+import { buildBatchProductTimelineStages, buildOrderTimelineStages, calculateStageProgressPercent } from "./orderTimeline";
+import { buildCustomerOrderTimelineSteps, formatOrderItemMeasurements, getOrderItemImageSource, getVisibleCompletedStageSubStages } from "../components/OrderProgressTimeline";
+import { buildStartedProgressStages, getProjectStatus } from "../pages/ProgressMonitor/ProgressMonitor";
+
+const makeStages = (completedKeys = [], activeKey = "") =>
+  ["cutting", "assembly", "fabrication", "installation"].map((key) => ({
+    key,
+    name: key[0].toUpperCase() + key.slice(1),
+    status: completedKeys.includes(key) ? "done" : key === activeKey ? "in_progress" : "pending",
+    completed: completedKeys.includes(key),
+  }));
+
+describe("buildBatchProductTimelineStages", () => {
+  it("shows each batch item's own production stages", () => {
+    const order = { status: "contract_accepted", contract_status: "accepted" };
+    const firstProduct = {
+      name: "Aluminum Door",
+      progress_stages: makeStages(["cutting"], "assembly"),
+    };
+    const secondProduct = {
+      name: "Glass Door",
+      progress_stages: makeStages(["cutting", "assembly"], "fabrication"),
+    };
+
+    const firstStages = buildBatchProductTimelineStages(order, firstProduct, 0);
+    const secondStages = buildBatchProductTimelineStages(order, secondProduct, 1);
+    const findProductionStage = (steps, key) => steps.find((step) => step.batchStageKey === key);
+
+    expect(findProductionStage(firstStages, "assembly").status).toBe("in-progress");
+    expect(findProductionStage(secondStages, "assembly").status).toBe("completed");
+    expect(findProductionStage(secondStages, "fabrication").status).toBe("in-progress");
+    expect(firstStages.at(-1).status).toBe("pending");
+    expect(secondStages.at(-1).status).toBe("pending");
+  });
+
+  it("hides pre-production milestones after the contract is accepted", () => {
+    const order = { status: "contract_accepted", contract_status: "accepted" };
+    const product = { progress_stages: makeStages(["cutting"], "assembly") };
+    const stages = buildBatchProductTimelineStages(order, product, 0);
+
+    expect(stages.some((step) => step.key.includes("order_submitted"))).toBe(false);
+    expect(stages.some((step) => step.key.includes("site_inspection"))).toBe(false);
+    expect(stages.some((step) => step.key.includes("contract_sent"))).toBe(false);
+    expect(stages.some((step) => step.key.includes("contract_accepted"))).toBe(false);
+    expect(stages.some((step) => step.batchStageKey === "cutting")).toBe(true);
+    expect(stages.some((step) => step.batchStageKey === "assembly")).toBe(true);
+  });
+
+  it("hides production stages until the contract is accepted", () => {
+    const order = { status: "contract_sent", contract_status: "sent" };
+    const product = { progress_stages: makeStages([], "cutting") };
+    const stages = buildBatchProductTimelineStages(order, product, 0);
+
+    expect(stages.map((step) => step.label)).toEqual([
+      "Order Submitted",
+      "Admin Review",
+      "Site Inspection",
+      "Contract Sent",
+      "Contract Accepted",
+    ]);
+    expect(stages.some((step) => step.batchStageKey)).toBe(false);
+    expect(stages.some((step) => step.label === "Completed")).toBe(false);
+  });
+
+  it("starts the accepted-contract timeline at cutting when no production stages are saved yet", () => {
+    const order = { status: "contract_accepted", contract_status: "accepted" };
+    const stages = buildBatchProductTimelineStages(order, {}, 0);
+
+    expect(stages[0].batchStageKey).toBe("cutting");
+    expect(stages[0].label).toBe("Cutting");
+    expect(stages.some((step) => step.key.includes("order_submitted"))).toBe(false);
+  });
+
+  it("marks a product complete only after all of its production stages are done", () => {
+    const order = { status: "completed", contract_status: "accepted" };
+    const allStagesComplete = { progress_stages: makeStages(["cutting", "assembly", "fabrication", "installation"]) };
+    const installationPending = { progress_stages: makeStages(["cutting", "assembly", "fabrication"]) };
+
+    expect(buildBatchProductTimelineStages(order, allStagesComplete).at(-1).status).toBe("completed");
+    expect(buildBatchProductTimelineStages(order, installationPending).at(-1).status).toBe("pending");
+  });
+
+  it("uses the first item progress stages when building a single order timeline", () => {
+    const order = {
+      status: "contract_accepted",
+      contract_status: "accepted",
+      items: [{
+        progress_stages: makeStages(["cutting"], "assembly"),
+      }],
+      progress_stages: [],
+    };
+
+    const stages = buildOrderTimelineStages(order);
+    const cutting = stages.find((stage) => (stage.key || "").toLowerCase() === "cutting");
+    const assembly = stages.find((stage) => (stage.key || "").toLowerCase() === "assembly");
+
+    expect(cutting?.status).toBe("completed");
+    expect(assembly?.status).toBe("in-progress");
+  });
+
+  it("returns the active production stage name when the stage status uses hyphenated values", () => {
+    const order = { status: "contract_accepted", contract_status: "accepted" };
+    const stages = [
+      { key: "cutting", name: "Cutting", status: "done", completed: true },
+      { key: "assembly", name: "Assembly", status: "in-progress", completed: false },
+      { key: "fabrication", name: "Fabrication", status: "pending", completed: false },
+    ];
+
+    expect(getProjectStatus(order, stages)).toBe("Assembly");
+  });
+
+  it("starts a pending project at Cutting and leaves later stages pending", () => {
+    const stages = buildStartedProgressStages([]);
+
+    expect(stages.map(({ name, status }) => [name, status])).toEqual([
+      ["Cutting", "in_progress"],
+      ["Assembly", "pending"],
+      ["Fabrication", "pending"],
+      ["Installation", "pending"],
+    ]);
+    expect(getProjectStatus({ status: "approved" }, stages)).toBe("Cutting");
+  });
+
+  it("shares the customer's active stage state for admin order timelines", () => {
+    const order = { status: "contract_accepted", contract_status: "accepted" };
+    const item = { progress_stages: makeStages(["cutting"], "assembly") };
+    const steps = buildCustomerOrderTimelineSteps(order, item, 0);
+
+    expect(steps.find((step) => step.batchStageKey === "cutting")).toMatchObject({ done: true, active: false });
+    expect(steps.find((step) => step.batchStageKey === "assembly")).toMatchObject({ done: false, active: true });
+    expect(steps.find((step) => step.batchStageKey === "fabrication")).toMatchObject({ done: false, active: false, future: true });
+  });
+
+  it("passes delay reason and expected resolution into the customer/admin timeline", () => {
+    const order = { status: "contract_accepted", contract_status: "accepted" };
+    const item = {
+      progress_stages: [{
+        key: "cutting",
+        name: "Cutting",
+        status: "delayed",
+        delayReason: "Waiting for supplier materials",
+        delayExpectedResolution: "2026-10-05T00:00:00.000Z",
+      }],
+    };
+    const cutting = buildCustomerOrderTimelineSteps(order, item, 0)
+      .find((step) => step.batchStageKey === "cutting");
+
+    expect(cutting).toMatchObject({
+      status: "delayed",
+      active: true,
+      delayReason: "Waiting for supplier materials",
+      delayExpectedResolution: "Oct-05-2026",
+    });
+  });
+
+  it("keeps uploaded proof photos attached to their timeline stage", () => {
+    const photoUrls = ["/uploads/cutting-proof-1.jpg", "/uploads/cutting-proof-2.jpg"];
+    const steps = buildCustomerOrderTimelineSteps(
+      { status: "contract_accepted", contract_status: "accepted" },
+      { progress_stages: [{ key: "cutting", name: "Cutting", status: "in_progress", images: photoUrls }] },
+      0
+    );
+
+    expect(steps.find((step) => step.batchStageKey === "cutting").images).toEqual(photoUrls);
+  });
+
+  it("only exposes sub-stages in the timeline after their parent is completed", () => {
+    const subStages = [{ name: "Cut glass", status: "completed" }];
+
+    expect(getVisibleCompletedStageSubStages({ status: "in-progress", subStages })).toEqual([]);
+    expect(getVisibleCompletedStageSubStages({ status: "completed", subStages })).toEqual(subStages);
+  });
+
+  it("shows exact order-item measurements instead of quantity", () => {
+    expect(formatOrderItemMeasurements({
+      quantity: 1,
+      dimensions: { width: 30, height: 48, unit: "in" },
+    })).toBe('Size: 30" x 48" (10 sq ft)');
+  });
+
+  it("uses populated product measurements and standard size when order dimensions are missing", () => {
+    expect(formatOrderItemMeasurements({
+      product_id: { width: 24, height: 36, measurement_unit: "in" },
+      quantity: 1,
+    })).toBe('Size: 24" x 36" (6 sq ft)');
+    expect(formatOrderItemMeasurements({
+      product_id: { standard_size: "24 x 36 inches" },
+      quantity: 1,
+    })).toBe("Size: 24 x 36 inches");
+    expect(formatOrderItemMeasurements({ quantity: 1 })).toBe("Measurements not provided");
+  });
+
+  it("resolves product photos from item, populated product, and nested image fields", () => {
+    expect(getOrderItemImageSource({
+      product_id: { images: { main: "/uploads/product-main.png" } },
+    })).toBe("/uploads/product-main.png");
+    expect(getOrderItemImageSource({
+      image_url: "/uploads/order-item.png",
+      product_id: { image_url: "/uploads/product.png" },
+    })).toBe("/uploads/order-item.png");
+  });
+
+  it("maps the fill width to the current active production stage instead of the final completed state", () => {
+    const steps = [
+      { key: "cutting", label: "Cutting", active: true, done: false },
+      { key: "assembly", label: "Assembly", active: false, done: false },
+      { key: "fabrication", label: "Fabrication", active: false, done: false },
+      { key: "installation", label: "Installation", active: false, done: false },
+      { key: "completed", label: "Completed", active: false, done: false },
+    ];
+
+    expect(calculateStageProgressPercent(steps)).toBe(20);
+
+    const nextStage = steps.map((step, index) =>
+      index === 1 ? { ...step, active: true } : { ...step, active: false }
+    );
+
+    expect(calculateStageProgressPercent(nextStage)).toBe(40);
+  });
+});

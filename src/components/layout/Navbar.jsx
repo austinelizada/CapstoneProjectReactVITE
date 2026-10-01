@@ -1,28 +1,19 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Menu, Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send } from "lucide-react";
+import { Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send } from "lucide-react";
 import { getAdminOrders } from "@/api/orders";
-import { formatDateTimeToMMDDYYYY } from "@/lib/dateUtils";
+import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 
 const ADMIN_READ_NOTIFICATIONS_KEY = "acgc-admin-read-notifications";
 
-function Navbar({ toggleSidebar }) {
+function Navbar() {
   const { darkMode, toggleDarkMode } = useAdminTheme();
 
   return (
     <header className={`admin-navbar px-6 py-4 flex items-center justify-between shadow ${darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}>
 
       <div className="flex items-center gap-4">
-
-        <button
-          onClick={toggleSidebar}
-          className={`p-2 rounded-lg ${darkMode ? "hover:bg-slate-800" : "hover:bg-gray-100"}`}
-          aria-label="Toggle sidebar"
-        >
-          <Menu size={24} />
-        </button>
-
         <div>
           <h1 className="text-xl font-bold">
             Welcome Administrator
@@ -313,7 +304,9 @@ function NotificationMenu() {
                     <div className="min-w-0 flex-1">
                       <p className={`text-sm font-semibold truncate ${darkMode ? "text-white" : "text-slate-950"}`}>{n.title}</p>
                       <p className={`text-xs mt-0.5 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{n.message}</p>
-                      <p className="mt-1 text-xs text-slate-400">{n.date ? formatDateTimeToMMDDYYYY(n.date) : "Recently"}</p>
+                      <p className="mt-1 text-xs text-slate-400" title={n.date ? formatDateTimeToMMDDYYYY(n.date) : undefined}>
+                        {formatTimeAgo(n.date)}
+                      </p>
                     </div>
                   </div>
                 </button>

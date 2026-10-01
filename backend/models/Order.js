@@ -108,6 +108,16 @@ const OrderItemSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    progress: {
+      type: Number,
+      min: 0,
+      max: 100,
+      default: null,
+    },
+    progress_stages: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
   },
   { _id: false }
 );

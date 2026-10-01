@@ -7,6 +7,8 @@ import {
   Eye,
   Pencil,
   Lock,
+  Star,
+  Trash2,
   X,
   Info,
   XCircle,
@@ -19,7 +21,7 @@ import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
-import { getAdminOrders, acceptContract, declineContract, updateOrderStatus } from "@/api/orders";
+import { getAdminOrders, acceptContract, declineContract, updateOrderStatus, deleteOrderReview } from "@/api/orders";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY, getTodayIso, isTodayOrFuture, isSameOrAfter } from "@/lib/dateUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
@@ -43,8 +45,13 @@ function Transactions() {
   const location = useLocation();
 
   useEffect(() => {
-    if (location && location.state && location.state.activeTable) {
-      setActiveTable(location.state.activeTable);
+    if (location?.state?.activeTable) {
+      const requestedTable = location.state.activeTable;
+      setActiveTable(
+        requestedTable === "warranty_in" || requestedTable === "warranty_out"
+          ? "projects"
+          : requestedTable
+      );
       try {
         window.history.replaceState({}, document.title);
       } catch (e) {
@@ -66,8 +73,6 @@ function Transactions() {
     useState(1);
   const [cancelledPage, setCancelledPage] =
     useState(1);
-  const [warrantyInPage, setWarrantyInPage] = useState(1);
-  const [warrantyOutPage, setWarrantyOutPage] = useState(1);
   const [tableSearch, setTableSearch] = useState("");
 
   useEffect(() => {
@@ -76,14 +81,15 @@ function Transactions() {
     setFeedbackPage(1);
     setProjectPage(1);
     setCancelledPage(1);
-    setWarrantyInPage(1);
-    setWarrantyOutPage(1);
   }, [activeTable]);
 
   const rowsPerPage = 5;
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [feedbackPreviewOrder, setFeedbackPreviewOrder] = useState(null);
+  const [feedbackDeleteOrder, setFeedbackDeleteOrder] = useState(null);
+  const [feedbackDeleting, setFeedbackDeleting] = useState(false);
   const [showContractModal, setShowContractModal] = useState(false);
   const [showFullContractModal, setShowFullContractModal] = useState(false);
   const [contractPreviewOrder, setContractPreviewOrder] = useState(null);
@@ -112,6 +118,31 @@ function Transactions() {
     }
 
     return status === "completed" || progress >= 100;
+  };
+
+  const hasAcceptedContract = (order) => {
+    const contractStatus = String(order.contract_status || "").toLowerCase();
+    if (contractStatus !== "accepted") return false;
+
+    if (order.order_type === "walk_in_customer") {
+      return order.acceptance_method === "walk_in_signed_contract" &&
+        Boolean(order.signed_contract_url) &&
+        Boolean(order.contract_signed_date);
+    }
+
+    return order.acceptance_method === "online" && order.acceptedByCustomer === true;
+  };
+
+  const transactionOrders = orders.filter(hasAcceptedContract);
+
+  const hasVerifiedContractAcceptance = (order) => {
+    if (String(order.contract_status || "").toLowerCase() !== "accepted") return false;
+
+    if (order.order_type === "walk_in_customer") {
+      return order.acceptance_method === "walk_in_signed_contract" && Boolean(order.signed_contract_url);
+    }
+
+    return order.acceptedByCustomer === true && order.acceptance_method === "online";
   };
 
   // Warranty helpers
@@ -162,6 +193,13 @@ function Transactions() {
 
     return null;
   };
+
+  const activeWarrantyCount = transactionOrders.filter((order) => {
+    const warrantyStatus = String(order.warranty_status || "").toLowerCase();
+    if (warrantyStatus === "active") return true;
+    const expiry = getWarrantyExpiry(order);
+    return Boolean(expiry && new Date() <= expiry);
+  }).length;
 
   const hasWarrantyData = (order) => {
     if (!order) return false;
@@ -279,6 +317,32 @@ function Transactions() {
           : order
       )
     );
+  };
+
+  const handleDeleteCustomerFeedback = async () => {
+    if (!feedbackDeleteOrder) return;
+    const orderId = feedbackDeleteOrder._id || feedbackDeleteOrder.id;
+    if (!orderId) return;
+
+    setFeedbackDeleting(true);
+    try {
+      await deleteOrderReview(orderId);
+      setOrders((previous) => previous.map((order) =>
+        order._id === orderId || order.id === orderId
+          ? { ...order, review: null }
+          : order
+      ));
+      recordActivity(user, `Deleted customer feedback for order ${feedbackDeleteOrder.tracking || orderId}.`, "Transactions");
+      setFeedbackPreviewOrder((previous) =>
+        previous && (previous._id === orderId || previous.id === orderId) ? null : previous
+      );
+      setFeedbackDeleteOrder(null);
+      toast.success("Customer feedback deleted.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to delete customer feedback.");
+    } finally {
+      setFeedbackDeleting(false);
+    }
   };
 
   const buildContractDataFromOrder = (order) => {
@@ -593,7 +657,7 @@ function Transactions() {
   }, []);
 
   // Receipts & Contracts: orders that have a contract and are not cancelled/declined
-  const receipts = orders.filter((o) => {
+  const receipts = transactionOrders.filter((o) => {
     const status = (o.contract_status || "").toString().toLowerCase();
     const orderStatus = (o.status || "").toString().toLowerCase();
     const blockedStatuses = [
@@ -607,7 +671,7 @@ function Transactions() {
     ];
 
     return (
-      o.contract_status &&
+      hasVerifiedContractAcceptance(o) &&
       !blockedStatuses.includes(status) &&
       !blockedStatuses.includes(orderStatus) &&
       !isCompletedProject(o)
@@ -623,41 +687,32 @@ function Transactions() {
     return tracking.includes(q) || customer.includes(q) || project.includes(q);
   });
 
-  const cancelledTransactions = orders.filter((o) => {
+  const cancelledTransactions = transactionOrders.filter((o) => {
     const contractStatus = (o.contract_status || "").toString().toLowerCase();
     const status = (o.status || "").toString().toLowerCase();
     return ["declined", "rejected", "cancelled", "contract_declined"].includes(contractStatus) || status === "cancelled";
   });
 
   // Completed projects: orders that are completed by status or progress
-  const completedProjects = orders.filter((o) => isCompletedProject(o));
-  const feedbackOrders = orders.filter((o) => o.review?.submittedAt || o.review?.rating);
-  const filteredAllOrders = orders.filter((o) => {
+  const completedProjects = transactionOrders.filter((o) => isCompletedProject(o));
+  const feedbackOrders = transactionOrders.filter((o) => o.review?.submittedAt || o.review?.rating);
+  const filteredFeedbackOrders = feedbackOrders.filter((order) => {
+    if (!tableSearch) return true;
+    const query = tableSearch.toLowerCase();
+    const customer = (order.customer_name || order.customer?.first_name || "").toString().toLowerCase();
+    const products = (order.items || []).map((item) => item.name || item.product_name || "").join(" ").toLowerCase();
+    const tracking = (order.tracking || "").toString().toLowerCase();
+    const title = (order.review?.title || "").toLowerCase();
+    const comment = (order.review?.comment || "").toLowerCase();
+    return [customer, products, tracking, title, comment].some((value) => value.includes(query));
+  });
+  const filteredAllOrders = transactionOrders.filter((o) => {
     if (!tableSearch) return true;
     const q = tableSearch.toLowerCase();
     const customer = (o.customer_name || o.customer?.first_name || "").toString().toLowerCase();
     const project = (o.items?.[0]?.name || "").toString().toLowerCase();
     const tracking = (o.tracking || "").toString().toLowerCase();
     return tracking.includes(q) || customer.includes(q) || project.includes(q);
-  });
-
-  // Warranty classification
-  const inWarrantyProjects = orders.filter((o) => {
-    const warrantyStatus = (o.warranty_status || "").toString().toLowerCase();
-    if (warrantyStatus === "active") return true;
-    const expiry = getWarrantyExpiry(o);
-    if (!expiry) return false;
-    const now = new Date();
-    return now <= expiry;
-  });
-
-  const outOfWarrantyProjects = orders.filter((o) => {
-    const warrantyStatus = (o.warranty_status || "").toString().toLowerCase();
-    if (warrantyStatus === "expired") return true;
-    const expiry = getWarrantyExpiry(o);
-    if (!expiry) return false;
-    const now = new Date();
-    return now > expiry;
   });
 
   const receiptLastIndex =
@@ -672,8 +727,8 @@ function Transactions() {
   );
   const allTotalPages = Math.max(1, Math.ceil(filteredAllOrders.length / rowsPerPage));
   const currentAll = filteredAllOrders.slice((allPage - 1) * rowsPerPage, allPage * rowsPerPage);
-  const feedbackTotalPages = Math.max(1, Math.ceil(feedbackOrders.length / rowsPerPage));
-  const currentFeedback = feedbackOrders.slice((feedbackPage - 1) * rowsPerPage, feedbackPage * rowsPerPage);
+  const feedbackTotalPages = Math.max(1, Math.ceil(filteredFeedbackOrders.length / rowsPerPage));
+  const currentFeedback = filteredFeedbackOrders.slice((feedbackPage - 1) * rowsPerPage, feedbackPage * rowsPerPage);
 
   const receiptTotalPages = Math.max(1, Math.ceil(
     filteredReceipts.length / rowsPerPage
@@ -707,32 +762,6 @@ function Transactions() {
   const currentProjectsFiltered = filteredCompleted.slice(projectFirstIndex, projectLastIndex);
 
   const projectTotalPagesFiltered = Math.max(1, Math.ceil(filteredCompleted.length / rowsPerPage));
-
-  const warrantyInLastIndex = warrantyInPage * rowsPerPage;
-  const warrantyInFirstIndex = warrantyInLastIndex - rowsPerPage;
-  const filteredInWarranty = inWarrantyProjects.filter((o) => {
-    if (!tableSearch) return true;
-    const q = tableSearch.toLowerCase();
-    const customer = (o.customer_name || o.customer?.first_name || "").toString().toLowerCase();
-    const project = (o.items?.[0]?.name || "").toString().toLowerCase();
-    const tracking = (o.tracking || "").toString().toLowerCase();
-    return tracking.includes(q) || customer.includes(q) || project.includes(q);
-  });
-  const currentInWarranty = filteredInWarranty.slice(warrantyInFirstIndex, warrantyInLastIndex);
-  const warrantyInTotalPages = Math.max(1, Math.ceil(filteredInWarranty.length / rowsPerPage));
-
-  const warrantyOutLastIndex = warrantyOutPage * rowsPerPage;
-  const warrantyOutFirstIndex = warrantyOutLastIndex - rowsPerPage;
-  const filteredOutWarranty = outOfWarrantyProjects.filter((o) => {
-    if (!tableSearch) return true;
-    const q = tableSearch.toLowerCase();
-    const customer = (o.customer_name || o.customer?.first_name || "").toString().toLowerCase();
-    const project = (o.items?.[0]?.name || "").toString().toLowerCase();
-    const tracking = (o.tracking || "").toString().toLowerCase();
-    return tracking.includes(q) || customer.includes(q) || project.includes(q);
-  });
-  const currentOutWarranty = filteredOutWarranty.slice(warrantyOutFirstIndex, warrantyOutLastIndex);
-  const warrantyOutTotalPages = Math.max(1, Math.ceil(filteredOutWarranty.length / rowsPerPage));
 
   const cancelledLastIndex =
     cancelledPage * rowsPerPage;
@@ -772,10 +801,6 @@ function Transactions() {
       ? currentProjectsFiltered
       : activeTable === "feedback"
       ? currentFeedback
-      : activeTable === "warranty_in"
-      ? currentInWarranty
-      : activeTable === "warranty_out"
-      ? currentOutWarranty
       : currentCancelledFiltered;
 
   const activePage = activeTable === "all"
@@ -786,10 +811,6 @@ function Transactions() {
     ? projectPage
     : activeTable === "feedback"
     ? feedbackPage
-    : activeTable === "warranty_in"
-    ? warrantyInPage
-    : activeTable === "warranty_out"
-    ? warrantyOutPage
     : cancelledPage;
   const activeTotalPages = activeTable === "all"
     ? allTotalPages
@@ -799,18 +820,12 @@ function Transactions() {
     ? projectTotalPagesFiltered
     : activeTable === "feedback"
     ? feedbackTotalPages
-    : activeTable === "warranty_in"
-    ? warrantyInTotalPages
-    : activeTable === "warranty_out"
-    ? warrantyOutTotalPages
     : cancelledTotalPagesFiltered;
   const setActivePage = (page) => {
     if (activeTable === "all") setAllPage(page);
     else if (activeTable === "receipts") setReceiptPage(page);
     else if (activeTable === "projects") setProjectPage(page);
     else if (activeTable === "feedback") setFeedbackPage(page);
-    else if (activeTable === "warranty_in") setWarrantyInPage(page);
-    else if (activeTable === "warranty_out") setWarrantyOutPage(page);
     else setCancelledPage(page);
   };
 
@@ -1118,14 +1133,10 @@ function Transactions() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar isOpen={isSidebarOpen} />
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
 
       <div className="flex-1 min-h-0 flex flex-col">
-        <Navbar
-          toggleSidebar={() =>
-            setIsSidebarOpen(!isSidebarOpen)
-          }
-        />
+        <Navbar />
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
@@ -1135,7 +1146,7 @@ function Transactions() {
             stats={[
               { label: "Receipts", value: receipts.length, color: "text-blue-200" },
               { label: "Completed", value: completedProjects.length, color: "text-emerald-300" },
-              { label: "In Warranty", value: inWarrantyProjects.length, color: "text-amber-200" },
+              { label: "In Warranty", value: activeWarrantyCount, color: "text-amber-200" },
             ]}
           />
 
@@ -1183,9 +1194,12 @@ function Transactions() {
           <div className="mt-4">
             <input
               type="text"
-              placeholder="Search tracking, customer, project..."
+              placeholder={activeTable === "feedback" ? "Search customer, product, tracking, review..." : "Search tracking, customer, project..."}
               value={tableSearch}
-              onChange={(e) => setTableSearch(e.target.value)}
+              onChange={(e) => {
+                setTableSearch(e.target.value);
+                if (activeTable === "feedback") setFeedbackPage(1);
+              }}
               className="w-full md:w-1/3 pl-3 pr-3 py-2 border rounded-lg"
             />
           </div>
@@ -1197,15 +1211,13 @@ function Transactions() {
               <table className="w-full">
 
                 <thead className="bg-gray-50">
-                  {activeTable === "warranty_in" || activeTable === "warranty_out" ? (
+                  {activeTable === "feedback" ? (
                     <tr>
-                      <th className="p-4 text-left">Tracking ID</th>
-                      <th className="p-4 text-left">Customer Name</th>
-                      <th className="p-4 text-left">Project Name</th>
-                      <th className="p-4 text-left">Completion Date</th>
-                      <th className="p-4 text-left">Warranty Expiry</th>
-                      <th className="p-4 text-left">{activeTable === "warranty_in" ? "Remaining Days" : "Expired Since"}</th>
-                      <th className="p-4 text-left">Status</th>
+                      <th className="p-4 text-left">Customer</th>
+                      <th className="p-4 text-left">Product / Order</th>
+                      <th className="p-4 text-left">Rating</th>
+                      <th className="p-4 text-left">Photos</th>
+                      <th className="p-4 text-left">Submitted</th>
                       <th className="p-4 text-center">Actions</th>
                     </tr>
                   ) : (
@@ -1226,12 +1238,10 @@ function Transactions() {
                 <tbody>
 
                   {currentData.map((order, index) => {
-                    const now = new Date();
                     const customerName = order.customer_name || (order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : "N/A");
                     const productLabel = Array.isArray(order.items) && order.items.length > 0
                       ? (order.items.length > 1 ? "Batch Order" : (order.items[0].name || order.items[0].product_name || "Project"))
                       : "N/A";
-                    const projectName = productLabel;
                     const amountVal = order.contract_amount || order.total_amount || 0;
                     const paidAmount = Number(order.payment_amount || order.downpayment_amount || (order.downpayment_received ? amountVal * 0.5 : 0));
                     const amount = `₱${Number(amountVal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -1240,13 +1250,6 @@ function Transactions() {
                     const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
                     const installDate = order.estimated_installation_date ? formatDateToMMDDYYYY(order.estimated_installation_date) : "—";
                     const projectCategory = isCompletedProject(order) ? "Completed" : "In Progress";
-                    const completionDate = getCompletionDate(order);
-                    const completionLabel = completionDate ? formatDateToMMDDYYYY(completionDate) : "N/A";
-                    const expiry = getWarrantyExpiry(order);
-                    const expiryLabel = expiry ? formatDateToMMDDYYYY(expiry) : "N/A";
-                    const msPerDay = 1000 * 60 * 60 * 24;
-                    const remainingDays = expiry ? Math.ceil((expiry - now) / msPerDay) : null;
-                    const expiredDays = expiry ? Math.ceil((now - expiry) / msPerDay) : null;
                     const totalProjectAmount = Number(order.contract_amount || order.total_amount || 0);
                     const paidAmountForStatus = Number(order.payment_proof_amount ?? order.payment_amount ?? order.downpayment_amount ?? 0);
                     const proof = getCustomerPaymentProof(order);
@@ -1257,38 +1260,64 @@ function Transactions() {
 
                     return (
                       <tr key={order._id || index} className="border-t hover:bg-gray-50">
-                        { (activeTable === "warranty_in" || activeTable === "warranty_out") ? (
+                        {activeTable === "feedback" ? (
                           <>
-                            <td className="p-4">{order.tracking}</td>
                             <td className="p-4">{renderClientCell(order, customerName)}</td>
-                            <td className="p-4">{projectName}</td>
-                            <td className="p-4">{completionLabel}</td>
-                            <td className="p-4">{expiryLabel}</td>
-                            <td className="p-4">{
-                              activeTable === "warranty_in"
-                                ? (remainingDays !== null ? `${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining` : 'N/A')
-                                : (expiredDays !== null ? `Expired ${expiredDays} day${expiredDays === 1 ? '' : 's'} ago` : 'N/A')
-                            }</td>
                             <td className="p-4">
-                              <span className="inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold bg-amber-100 text-amber-700">
-                                {activeTable === "warranty_in" ? (
-                                  remainingDays !== null ? (
-                                    remainingDays > 30 ? 'Active Warranty' : remainingDays > 1 ? 'Warranty Expiring Soon' : remainingDays === 1 ? 'Warranty Ends Tomorrow' : remainingDays === 0 ? 'Ends Today' : 'Active'
-                                  ) : (order.warranty_status || 'Active')
-                                ) : (
-                                  order.warranty_status ? (order.warranty_status.replace(/_/g, ' ') ) : 'Expired'
-                                )}
-                              </span>
+                              <div className="space-y-1">
+                                {(order.items || []).map((item, itemIndex) => (
+                                  <div key={`${item.product_id || item.name || itemIndex}`} className="font-semibold text-slate-900">
+                                    {item.name || item.product_name || "Product"}
+                                  </div>
+                                ))}
+                                <div className="text-xs text-slate-500">{order.tracking || "—"}</div>
+                              </div>
                             </td>
                             <td className="p-4">
-                              <div className="flex flex-wrap justify-center gap-2">
-                                <button type="button" title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
-                                {isPaymentProofConfirmed(order) ? (
-                                  <button type="button" title="Payment proof confirmed" aria-label="Payment proof confirmed" disabled className="p-2 rounded-lg bg-slate-100 text-slate-400 cursor-not-allowed"><Lock size={18} /></button>
-                                ) : (
-                                  <button type="button" title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>
-                                )}
-                                <button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button>
+                              <div className="flex items-center gap-1" aria-label={`${Number(order.review?.rating || 0)} out of 5 stars`}>
+                                {Array.from({ length: 5 }, (_, starIndex) => (
+                                  <Star
+                                    key={starIndex}
+                                    size={15}
+                                    className={starIndex < Number(order.review?.rating || 0) ? "fill-amber-400 text-amber-400" : "text-slate-300"}
+                                  />
+                                ))}
+                                <span className="ml-1 text-sm font-semibold text-slate-700">{Number(order.review?.rating || 0)}/5</span>
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <div className="flex flex-wrap gap-2">
+                                {(order.review?.photos || []).map((photo, photoIndex) => (
+                                  <a key={`${photo}-${photoIndex}`} href={photo} target="_blank" rel="noreferrer" aria-label={`Open review photo ${photoIndex + 1}`}>
+                                    <img src={photo} alt={`Review attachment ${photoIndex + 1}`} className="h-12 w-12 rounded-md border border-slate-200 object-cover" />
+                                  </a>
+                                ))}
+                                {!(order.review?.photos || []).length && <span className="text-sm text-slate-400">None</span>}
+                              </div>
+                            </td>
+                            <td className="whitespace-nowrap p-4 text-sm text-slate-600">
+                              {order.review?.submittedAt ? formatDateToMMMDDYYYY(order.review.submittedAt) : "—"}
+                            </td>
+                            <td className="p-4 text-center">
+                              <div className="flex justify-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setFeedbackPreviewOrder(order)}
+                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${darkMode ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25" : "bg-blue-100 text-blue-600 hover:bg-blue-200"}`}
+                                  aria-label={`View feedback from ${customerName}`}
+                                  title="View feedback"
+                                >
+                                  <Eye size={17} aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setFeedbackDeleteOrder(order)}
+                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
+                                  aria-label={`Delete feedback from ${customerName}`}
+                                  title="Delete Customer Feedback"
+                                >
+                                  <Trash2 size={17} aria-hidden="true" />
+                                </button>
                               </div>
                             </td>
                           </>
@@ -1719,6 +1748,177 @@ function Transactions() {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {feedbackPreviewOrder && (
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+              role="presentation"
+              onClick={(event) => event.target === event.currentTarget && setFeedbackPreviewOrder(null)}
+            >
+              <section
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="feedback-preview-title"
+                className={`flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+              >
+                <header className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                  <div className="min-w-0">
+                    <h2 id="feedback-preview-title" className="text-lg font-semibold">Customer feedback</h2>
+                    <p className={`mt-1 truncate text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      {feedbackPreviewOrder.customer_name || `${feedbackPreviewOrder.customer?.first_name || ""} ${feedbackPreviewOrder.customer?.last_name || ""}`.trim() || "Customer"}
+                      {feedbackPreviewOrder.tracking ? ` · ${feedbackPreviewOrder.tracking}` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFeedbackPreviewOrder(null)}
+                    aria-label="Close feedback"
+                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                  >
+                    <X size={17} aria-hidden="true" />
+                  </button>
+                </header>
+
+                <div className="flex-1 space-y-4 overflow-y-auto p-5">
+                  <section className={`rounded-xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-slate-50"}`}>
+                    <h3 className={`border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${darkMode ? "border-slate-700 text-slate-400" : "border-slate-200 text-slate-500"}`}>Customer Info</h3>
+                    <dl className="mt-3 space-y-2 text-sm">
+                      <div className="flex items-start justify-between gap-4">
+                        <dt className={`shrink-0 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Full Name</dt>
+                        <dd className="min-w-0 break-words text-right font-medium">
+                          {feedbackPreviewOrder.customer_name || `${feedbackPreviewOrder.customer?.first_name || ""} ${feedbackPreviewOrder.customer?.last_name || ""}`.trim() || "N/A"}
+                        </dd>
+                      </div>
+                      <div className="flex items-start justify-between gap-4">
+                        <dt className={`shrink-0 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Email / Contact</dt>
+                        <dd className="min-w-0 break-all text-right font-medium">
+                          {feedbackPreviewOrder.customer?.email || feedbackPreviewOrder.customer_email || feedbackPreviewOrder.customer?.phone || feedbackPreviewOrder.customer_phone || "N/A"}
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
+
+                  <section className={`rounded-xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-slate-50"}`}>
+                    <h3 className={`border-b pb-2 text-[11px] font-semibold uppercase tracking-wide ${darkMode ? "border-slate-700 text-slate-400" : "border-slate-200 text-slate-500"}`}>Project Summary</h3>
+                    <dl className="mt-3 space-y-2 text-sm">
+                      <div className="flex items-start justify-between gap-4">
+                        <dt className={`shrink-0 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Product / Project</dt>
+                        <dd className="min-w-0 text-right font-medium">
+                          {(feedbackPreviewOrder.items || []).map((item) => item.name || item.product_name).filter(Boolean).join(", ") || "N/A"}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <dt className={darkMode ? "text-slate-400" : "text-slate-500"}>Category</dt>
+                        <dd className="text-right font-medium">{isCompletedProject(feedbackPreviewOrder) ? "Completed Project" : "In Progress"}</dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <dt className={darkMode ? "text-slate-400" : "text-slate-500"}>Total Amount</dt>
+                        <dd className="text-right font-semibold">₱{Number(feedbackPreviewOrder.contract_amount || feedbackPreviewOrder.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                      </div>
+                    </dl>
+                  </section>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-1" aria-label={`${Number(feedbackPreviewOrder.review?.rating || 0)} out of 5 stars`}>
+                      {Array.from({ length: 5 }, (_, index) => (
+                        <Star
+                          key={index}
+                          size={18}
+                          className={index < Number(feedbackPreviewOrder.review?.rating || 0) ? "fill-amber-400 text-amber-400" : darkMode ? "text-slate-600" : "text-slate-300"}
+                          aria-hidden="true"
+                        />
+                      ))}
+                      <span className={`ml-1 text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                        {Number(feedbackPreviewOrder.review?.rating || 0)}/5
+                      </span>
+                    </div>
+                    <span className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      {feedbackPreviewOrder.review?.submittedAt ? formatDateToMMMDDYYYY(feedbackPreviewOrder.review.submittedAt) : "—"}
+                    </span>
+                  </div>
+
+                  {feedbackPreviewOrder.review?.title && (
+                    <h3 className="text-base font-semibold">{feedbackPreviewOrder.review.title}</h3>
+                  )}
+                  <p className={`whitespace-pre-line break-words text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                    {feedbackPreviewOrder.review?.comment || "No written feedback."}
+                  </p>
+
+                  <div>
+                    <h3 className={`mb-2 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Photos</h3>
+                    {(feedbackPreviewOrder.review?.photos || []).length > 0 ? (
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        {feedbackPreviewOrder.review.photos.map((photo, index) => (
+                          <a
+                            key={`${photo}-${index}`}
+                            href={photo}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label={`Open review photo ${index + 1}`}
+                            className={`aspect-square overflow-hidden rounded-lg border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}
+                          >
+                            <img src={photo} alt={`Review photo ${index + 1}`} className="h-full w-full object-cover" />
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No photos submitted.</p>
+                    )}
+                  </div>
+                </div>
+
+                <footer className={`flex justify-end border-t px-5 py-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
+                  <button
+                    type="button"
+                    onClick={() => setFeedbackPreviewOrder(null)}
+                    className={`rounded-lg border px-4 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+                  >
+                    Close
+                  </button>
+                </footer>
+              </section>
+            </div>
+          )}
+
+          {feedbackDeleteOrder && (
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 p-4"
+              role="presentation"
+              onClick={(event) => event.target === event.currentTarget && !feedbackDeleting && setFeedbackDeleteOrder(null)}
+            >
+              <section
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="delete-feedback-title"
+                aria-describedby="delete-feedback-description"
+                className={`w-full max-w-md rounded-2xl border p-5 ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+              >
+                <h2 id="delete-feedback-title" className="text-lg font-semibold">Delete Customer Feedback?</h2>
+                <p id="delete-feedback-description" className={`mt-2 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                  This will permanently remove {feedbackDeleteOrder.customer_name || `${feedbackDeleteOrder.customer?.first_name || ""} ${feedbackDeleteOrder.customer?.last_name || ""}`.trim() || "Customer"}'s feedback. This action cannot be undone.
+                </p>
+                <div className="mt-5 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={feedbackDeleting}
+                    onClick={() => setFeedbackDeleteOrder(null)}
+                    className={`rounded-lg border px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={feedbackDeleting}
+                    onClick={handleDeleteCustomerFeedback}
+                    className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                    {feedbackDeleting ? "Deleting..." : "Delete Customer Feedback"}
+                  </button>
+                </div>
+              </section>
             </div>
           )}
 

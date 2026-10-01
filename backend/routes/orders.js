@@ -13,6 +13,7 @@ import {
   updateOrderProgress,
   generateContract,
   submitOrderReview,
+  deleteOrderReview,
   respondToContract,
   cancelCustomerOrder,
   submitCustomerPaymentProof,
@@ -37,9 +38,10 @@ router.get("/admin/list", authMiddleware, roleMiddleware("admin"), getAdminOrder
 router.get("/admin/:orderId", authMiddleware, roleMiddleware("admin"), getAdminOrderById);
 router.post("/admin/create", authMiddleware, roleMiddleware("admin"), createOrderAsAdmin);
 router.put("/admin/:orderId/status", authMiddleware, roleMiddleware("admin"), updateOrderStatus);
+router.delete("/admin/:orderId/review", authMiddleware, roleMiddleware("admin"), deleteOrderReview);
 router.put("/admin/:orderId/inspection", authMiddleware, roleMiddleware("admin"), updateOrderInspection);
 router.put("/admin/:orderId/progress", authMiddleware, roleMiddleware("admin"), updateOrderProgress);
 router.post("/admin/:orderId/contract", authMiddleware, roleMiddleware("admin"), generateContract);
-router.post("/admin/:orderId/send-approval-email", authMiddleware, roleMiddleware("admin"), sendWalkInApprovalEmail);
+router.post("/admin/:orderId/send-contract-email", authMiddleware, roleMiddleware("admin"), sendWalkInApprovalEmail);
 
 export default router;

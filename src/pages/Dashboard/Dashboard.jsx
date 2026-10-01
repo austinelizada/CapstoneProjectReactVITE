@@ -176,6 +176,7 @@ function Dashboard() {
 
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
 
+  const [recentTransactionsPage, setRecentTransactionsPage] = useState(1);
   const [contractNotifications, setContractNotifications] = useState([]);
   const [contractNotificationsLoading, setContractNotificationsLoading] = useState(false);
   const [contractPage, setContractPage] = useState(1);
@@ -491,16 +492,24 @@ function Dashboard() {
   const dashboardDay = currentDateTime.toLocaleDateString(undefined, {
     weekday: "long",
   });
+  const recentTransactionsPerPage = 5;
+  const recentTransactions = [...orders].sort((a, b) => {
+    const dateA = new Date(a.created_at || a.createdAt || a.updatedAt || 0).getTime();
+    const dateB = new Date(b.created_at || b.createdAt || b.updatedAt || 0).getTime();
+    return dateB - dateA;
+  });
+  const totalRecentTransactionPages = Math.max(1, Math.ceil(recentTransactions.length / recentTransactionsPerPage));
+  const currentRecentTransactionsPage = Math.min(recentTransactionsPage, totalRecentTransactionPages);
+  const recentTransactionStart = recentTransactions.length === 0
+    ? 0
+    : (currentRecentTransactionsPage - 1) * recentTransactionsPerPage + 1;
+  const recentTransactionEnd = Math.min(currentRecentTransactionsPage * recentTransactionsPerPage, recentTransactions.length);
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
-      <Sidebar isOpen={isSidebarOpen} />
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
 
       <div className="flex-1 min-h-0 flex flex-col">
-        <Navbar
-          toggleSidebar={() =>
-            setIsSidebarOpen(!isSidebarOpen)
-          }
-        />
+        <Navbar />
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
           {toast.open && (
@@ -557,7 +566,7 @@ function Dashboard() {
 
                 <button
                   type="button"
-                  onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+                  onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
                   className={`rounded-2xl border p-3 text-left transition ${darkMode ? "border-green-400/80 bg-green-950/50 hover:bg-green-900/70" : "border-green-500 bg-green-50/50 hover:bg-green-100"}`}
                 >
                   <ShieldCheck className="mb-2 text-green-600" size={20} />
@@ -602,7 +611,7 @@ function Dashboard() {
 
             <button
               type="button"
-              onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+              onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
               className="group rounded-3xl bg-white p-6 text-left shadow transition duration-200 hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-green-500"
             >
               <p className="text-gray-500">
@@ -665,13 +674,11 @@ function Dashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 bg-white text-sm text-gray-700">
-                  {orders.length > 0 ? [...orders]
-                    .sort((a, b) => {
-                      const dateA = new Date(a.created_at || a.createdAt || a.updatedAt || 0).getTime();
-                      const dateB = new Date(b.created_at || b.createdAt || b.updatedAt || 0).getTime();
-                      return dateB - dateA;
-                    })
-                    .slice(0, 5)
+                  {recentTransactions.length > 0 ? recentTransactions
+                    .slice(
+                      (currentRecentTransactionsPage - 1) * recentTransactionsPerPage,
+                      currentRecentTransactionsPage * recentTransactionsPerPage,
+                    )
                     .map((order) => {
                       const customerName = order.customer
                         ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
@@ -715,6 +722,41 @@ function Dashboard() {
                   )}
                 </tbody>
               </table>
+              <div className="flex flex-col items-center justify-center gap-3 border-t border-gray-200 bg-gray-50 p-4 sm:flex-row">
+                <div className="flex flex-wrap items-center justify-center gap-2" role="navigation" aria-label="Recent transactions pagination">
+                  <button
+                    type="button"
+                    onClick={() => setRecentTransactionsPage(Math.max(currentRecentTransactionsPage - 1, 1))}
+                    disabled={currentRecentTransactionsPage === 1}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  {Array.from({ length: Math.min(5, totalRecentTransactionPages) }, (_, index) => {
+                    const firstPage = Math.max(1, Math.min(currentRecentTransactionsPage - 2, totalRecentTransactionPages - 4));
+                    const pageNumber = firstPage + index;
+                    return (
+                      <button
+                        key={pageNumber}
+                        type="button"
+                        onClick={() => setRecentTransactionsPage(pageNumber)}
+                        aria-current={pageNumber === currentRecentTransactionsPage ? "page" : undefined}
+                        className={`h-10 w-10 rounded-lg ${pageNumber === currentRecentTransactionsPage ? "bg-red-600 text-white" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
+                      >
+                        {pageNumber}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setRecentTransactionsPage(Math.min(currentRecentTransactionsPage + 1, totalRecentTransactionPages))}
+                    disabled={currentRecentTransactionsPage === totalRecentTransactionPages}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -780,7 +822,7 @@ function Dashboard() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+                  onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
                   className="text-sm font-semibold text-red-600 hover:text-red-700"
                 >
                   View all
@@ -797,7 +839,7 @@ function Dashboard() {
                     <button
                       type="button"
                       key={order._id || order.id}
-                      onClick={() => navigate("/transactions", { state: { activeTable: "warranty_in" } })}
+                      onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
                       className="flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-100 p-4 text-left transition hover:border-green-200 hover:bg-green-50/40"
                     >
                       <div className="min-w-0">

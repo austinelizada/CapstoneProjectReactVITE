@@ -22,6 +22,26 @@ export const formatDateTimeToMMMDDYYYY = (value) => {
 
 export const formatDateTimeToMMDDYYYY = formatDateTimeToMMMDDYYYY;
 
+export const formatTimeAgo = (value, now = Date.now()) => {
+  if (!value) return "Recently";
+  const timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "Recently";
+
+  const elapsedSeconds = Math.max(0, Math.floor((now - timestamp) / 1000));
+  if (elapsedSeconds < 60) return "Just now";
+
+  const units = [
+    ["year", 60 * 60 * 24 * 365],
+    ["month", 60 * 60 * 24 * 30],
+    ["day", 60 * 60 * 24],
+    ["hour", 60 * 60],
+    ["minute", 60],
+  ];
+  const [unit, secondsPerUnit] = units.find(([, seconds]) => elapsedSeconds >= seconds);
+  const amount = Math.floor(elapsedSeconds / secondsPerUnit);
+  return `${amount} ${unit}${amount === 1 ? "" : "s"} ago`;
+};
+
 export const getTodayIso = () => {
   return new Date().toISOString().slice(0, 10);
 };

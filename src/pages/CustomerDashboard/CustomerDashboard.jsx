@@ -17,27 +17,32 @@ import {
   ShieldCheck,
   Ruler,
   Package,
-  CheckCircle,
   ArrowRight,
   Plus,
   Minus,
   FileText,
   Bell,
-  CheckCheck,
   Check,
+  CheckCheck,
+  CheckCircle,
   AlertTriangle,
   Star,
   StarHalf,
   Clock3,
   Wrench,
+  Moon,
+  Sun,
   ArrowLeft,
   X,
   ClipboardList,
   CreditCard,
+  Trash2,
   Paperclip,
   ChevronDown,
   ChevronUp,
   ImagePlus,
+  Scissors,
+  Truck,
 } from "lucide-react";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
@@ -55,19 +60,22 @@ import {
 } from "@/api/orders";
 import { uploadFiles } from "@/api/uploads";
 import ContractModal from "../../components/ContractModal";
-import OrderTimeline from "@/components/OrderTimeline";
+import { formatOrderItemMeasurements } from "@/components/OrderProgressTimeline";
+import OrderTimelineModal from "@/components/OrderTimelineModal";
 import { calculateEstimate } from "@/lib/estimator";
-import { buildOrderTimelineStages } from "@/lib/orderTimeline";
+import { buildOrderTimelineStages, calculateStageProgressPercent } from "@/lib/orderTimeline";
 import { getProgressColor } from "@/lib/utils";
 import { paginateItems } from "@/lib/pagination";
 import { getSystemSettings, getSystemSettingsEventsUrl } from "@/api/users";
 import { getCart, saveCart } from "@/api/cart";
-import { formatDateToMMMDDYYYY, formatDateTimeToMMMDDYYYY } from "@/lib/dateUtils";
+import { formatDateToMMMDDYYYY, formatDateTimeToMMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
+import { buildDelayNotifications, sortCustomerNotificationsNewestFirst } from "@/lib/delayNotifications";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
 
 const CUSTOMER_READ_NOTIFICATIONS_KEY = "acgc-customer-read-notifications";
+const CUSTOMER_DARK_MODE_KEY = "acgc-customer-dark-mode";
 const ORDER_REVIEW_TEMPLATES = [
   {
     value: "quality",
@@ -88,6 +96,14 @@ const ORDER_REVIEW_TEMPLATES = [
     comment: "The installation was completed carefully and as agreed. The team did a great job, and I would recommend their service.",
   },
 ];
+
+const getDelayNotificationMessage = (notification) => {
+  const stageName = notification.delayStageName || "Project stage";
+  const reason = notification.delayReason ? ` Reason: ${notification.delayReason}` : "";
+  const expectedResolution = formatDateToMMMDDYYYY(notification.delayExpectedResolution);
+  const resolutionText = expectedResolution ? ` Expected resolution: ${expectedResolution}.` : "";
+  return `${stageName} is delayed.${reason}${resolutionText}`;
+};
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -197,7 +213,13 @@ function CustomerDashboard() {
   const canShowRatings = accountPermissions.show_ratings_homepage && !accountPermissions.view_only_access;
 
   const [activeTab, setActiveTab] = useState("home");
-  const darkMode = false;
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      return localStorage.getItem(CUSTOMER_DARK_MODE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
   const [products, setProducts] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -217,6 +239,7 @@ function CustomerDashboard() {
   const [cartItems, setCartItems] = useState([]);
   const [cartLoaded, setCartLoaded] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "ft", width: "0", height: "0" });
   const [showAboutProduct, setShowAboutProduct] = useState(false);
   const [showCartDecisionModal, setShowCartDecisionModal] = useState(false);
   const [cartDecisionStep, setCartDecisionStep] = useState("choice");
@@ -242,6 +265,19 @@ function CustomerDashboard() {
   const [productReviewsLoading, setProductReviewsLoading] = useState(false);
   const [productReviewStats, setProductReviewStats] = useState({});
 
+  const toggleDarkMode = () => {
+    const nextDarkMode = !darkMode;
+    setDarkMode(nextDarkMode);
+    toast.success(`${nextDarkMode ? "Dark" : "Light"} mode activated`, {
+      id: "customer-theme-mode",
+    });
+    try {
+      localStorage.setItem(CUSTOMER_DARK_MODE_KEY, String(nextDarkMode));
+    } catch {
+      // Keep the current session theme if storage is unavailable.
+    }
+  };
+
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutMessage, setCheckoutMessage] = useState("");
   const [checkoutError, setCheckoutError] = useState("");
@@ -263,6 +299,7 @@ function CustomerDashboard() {
   const [showOrderReviewModal, setShowOrderReviewModal] = useState(false);
   const [showBatchOrderModal, setShowBatchOrderModal] = useState(false);
   const [showBatchOrderConfirmModal, setShowBatchOrderConfirmModal] = useState(false);
+  const [batchOrderAgreed, setBatchOrderAgreed] = useState(false);
   const [showBatchSuccessModal, setShowBatchSuccessModal] = useState(false);
   const [paymentProofOpenOrderId, setPaymentProofOpenOrderId] = useState(null);
   const [paymentProofForm, setPaymentProofForm] = useState({
@@ -392,11 +429,17 @@ function CustomerDashboard() {
   const permissionNoticeTimer = useRef(null);
   const customerNotificationItems = orders.flatMap((order) => {
     const orderId = order._id || order.id || order.tracking;
+    const status = String(order.status || "").toLowerCase();
+    const contractStatus = String(order.contract_status || "").toLowerCase();
+    const hasPendingContractNotification = status === "contract_sent" || contractStatus === "sent";
+    const contractVersion = order.contractVersion || order.currentContractVersion || order.contractId || order.contract_number || "current";
     const notifications = [{
       ...order,
-      notificationType: "order",
-      notificationId: orderId,
-      notificationDate: order.updatedAt || order.createdAt,
+      notificationType: hasPendingContractNotification ? "contract" : "order",
+      notificationId: hasPendingContractNotification ? `${orderId}-contract-${contractVersion}` : orderId,
+      notificationDate: hasPendingContractNotification
+        ? order.contractSentAt || order.contractGeneratedAt || order.updatedAt || order.createdAt
+        : order.updatedAt || order.createdAt,
     }];
 
     if (order.payment_proof_submitted_at) {
@@ -408,7 +451,7 @@ function CustomerDashboard() {
       });
     }
 
-    return notifications;
+    return [...notifications, ...buildDelayNotifications(order)];
   });
   const unreadNotificationCount = customerNotificationItems.filter((notification) => !readNotificationIds.has(notification.notificationId)).length;
   const readNotificationCount = customerNotificationItems.length - unreadNotificationCount;
@@ -1674,6 +1717,7 @@ function CustomerDashboard() {
 
   const handleViewProduct = (product) => {
     setSelectedProduct(product);
+    setProductEstimatorForm({ unit: "ft", width: "0", height: "0" });
     setShowAboutProduct(false);
   };
 
@@ -1701,6 +1745,36 @@ function CustomerDashboard() {
     setDeliveryConfirmError("");
     setShowDeliveryConfirmModal(true);
     setCartActionError("");
+  };
+
+  const openEstimatedProductOrder = (product) => {
+    if (!canRequestOrders) {
+      showPermissionNotice("Order requests are disabled for your account.");
+      return;
+    }
+
+    setCartDecisionProduct(product);
+    setEstimateForm({
+      unit: productEstimatorForm.unit,
+      width: productEstimatorForm.width,
+      height: productEstimatorForm.height,
+      quantity: 1,
+      notes: "",
+    });
+    setEstimateFormErrors({});
+    setDeliveryConfirmMode("estimate");
+    setDeliveryConfirmForm({
+      phone: profileForm.phone || user?.phone || "",
+      street_address: profileForm.street_address || user?.street_address || "",
+      city: profileForm.city || user?.city || "",
+      province: profileForm.province || user?.province || "",
+      zip_code: profileForm.zip_code || user?.zip_code || "",
+    });
+    setDeliveryConfirmNotes("");
+    setDeliveryConfirmError("");
+    setCartActionError("");
+    setShowDeliveryConfirmModal(true);
+    setShowCartDecisionModal(false);
   };
 
   const closeOrderNowModal = () => {
@@ -1786,7 +1860,13 @@ function CustomerDashboard() {
       setShowOrderNowModal(false);
       setOrderNowProduct(null);
     } else if (deliveryConfirmMode === "estimate") {
-      setShowCartDecisionModal(true);
+      setProductEstimatorForm({
+        unit: estimateForm.unit,
+        width: estimateForm.width,
+        height: estimateForm.height,
+      });
+      setSelectedProduct(cartDecisionProduct);
+      setCartDecisionProduct(null);
     }
   };
 
@@ -1958,6 +2038,7 @@ function CustomerDashboard() {
   const closeBatchOrderModal = () => {
     setShowBatchOrderModal(false);
     setShowBatchOrderConfirmModal(false);
+    setBatchOrderAgreed(false);
     setActiveTab("cart");
   };
 
@@ -2013,6 +2094,14 @@ function CustomerDashboard() {
 
     if (!paymentProofForm.amount || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
       setPaymentProofError("Please enter the amount you paid.");
+      return;
+    }
+
+    const paymentBaseAmount = Number(order?.contract_amount || order?.total_amount || 0);
+    const requiredPaymentAmount = Number(order?.downpayment_amount || order?.downpayment)
+      || (order?.payment_terms === "full_payment" ? paymentBaseAmount : paymentBaseAmount * 0.5);
+    if (Math.round(normalizedAmount * 100) !== Math.round(requiredPaymentAmount * 100)) {
+      setPaymentProofError(`Please enter the exact required payment amount: ${formatRequiredPaymentAmount(requiredPaymentAmount)}.`);
       return;
     }
 
@@ -2117,10 +2206,12 @@ function CustomerDashboard() {
 
     setCheckoutError("");
     setCheckoutMessage("");
+    setBatchOrderAgreed(false);
     setShowBatchOrderConfirmModal(true);
   };
 
   const handleConfirmBatchOrder = async () => {
+    if (!batchOrderAgreed) return;
     setCheckoutLoading(true);
     let orderSubmitted = false;
     try {
@@ -2155,6 +2246,7 @@ function CustomerDashboard() {
       setShowBatchSuccessModal(true);
       setShowBatchOrderModal(false);
       setShowBatchOrderConfirmModal(false);
+      setBatchOrderAgreed(false);
       orderSubmitted = true;
     } catch (error) {
       setCheckoutError(error.data?.message || error.message || "Failed to place order.");
@@ -2266,6 +2358,14 @@ function CustomerDashboard() {
     return `₱${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
+  function formatRequiredPaymentAmount(amount) {
+    const roundedAmount = Math.round(Number(amount || 0) * 100) / 100;
+    return `₱${roundedAmount.toLocaleString(undefined, {
+      minimumFractionDigits: Number.isInteger(roundedAmount) ? 0 : 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+
   function getItemPriceValue(item) {
     if (!item) return 0;
 
@@ -2324,28 +2424,7 @@ function CustomerDashboard() {
   };
 
   const getConfirmationItemDimensionText = (item) => {
-    const dimensions = item?.dimensions || {};
-    const width = Number(dimensions.width ?? item?.width ?? 0);
-    const height = Number(dimensions.height ?? item?.height ?? 0);
-    const quantity = Math.max(1, Number(item?.quantity) || 1);
-    const unit = dimensions.unit || item?.measurementUnit || item?.measurement_unit || "in";
-
-    if (!(width > 0 && height > 0)) return `Quantity: ${quantity}`;
-
-    const areaInSqFt = Number(item?.area) > 0
-      ? Number(item.area)
-      : unit === "in"
-        ? (width * height * quantity) / 144
-        : unit === "ft"
-          ? width * height * quantity
-          : unit === "cm"
-            ? (width * height * quantity) / 929.0304
-            : unit === "m"
-              ? width * height * quantity * 10.7639
-              : width * height * quantity;
-    const unitSymbol = unit === "in" ? '"' : unit;
-
-    return `Size: ${width}${unitSymbol} x ${height}${unitSymbol} (${areaInSqFt.toLocaleString(undefined, { maximumFractionDigits: 2 })} sq ft)`;
+    return formatOrderItemMeasurements(item);
   };
 
   const getOrderMeasurementRows = (order) => {
@@ -2565,6 +2644,7 @@ function CustomerDashboard() {
       case "contract_sent":
       case "contract_accepted":
       case "Cutting":
+      case "Assembly":
       case "Fabrication":
       case "Installation":
         return "bg-red-50 text-red-700 border border-red-200";
@@ -2573,61 +2653,11 @@ function CustomerDashboard() {
     }
   };
 
-  const getOrderProgressSteps = (order) => {
-    const steps = [
-      { key: "order_submitted", label: "Order Submitted" },
-      { key: "site_inspection", label: "Site Inspection" },
-      { key: "contract_sent", label: "Contract Sent" },
-      { key: "contract_accepted", label: "Contract Accepted" },
-      { key: "fabrication", label: "Fabrication" },
-      { key: "installation", label: "Installation" },
-      { key: "completed", label: "Completed" },
-    ];
-
-    const statusKey = String(order?.status || "").trim();
-    const normalizedStatus = statusKey.toLowerCase();
-    const statusStepMap = {
-      order_submitted: 0,
-      admin_review: 0,
-      site_inspection: 1,
-      contract_sent: 2,
-      contract_accepted: 3,
-      processing: 4,
-      fabrication: 4,
-      installation: 5,
-      completed: 6,
-    };
-    const activeIndex = statusStepMap[normalizedStatus] ?? 0;
-
-    if (statusKey === "cancelled") {
-      return steps.map((step) => ({
-        ...step,
-        done: false,
-        active: false,
-        future: true,
-      }));
-    }
-
-    return steps.map((step, index) => ({
-      ...step,
-      done: index < activeIndex,
-      active: index === activeIndex && activeIndex < steps.length - 1,
-      future: index > activeIndex,
-    }));
-  };
-
   const getOrderProgressPercent = (order) => {
     if (!order || order.status === "cancelled") return 0;
 
     const steps = buildOrderTimelineStages(order).filter((step) => step.key !== "installation_agreement");
-    const completedCount = steps.filter((step) => step.status === "completed").length;
-    const totalCount = steps.length || 1;
-    const percent = Math.round((completedCount / totalCount) * 100);
-
-    const installationStep = steps.find((step) => step.key === "installation");
-    const installationIncomplete = installationStep && installationStep.status !== "completed";
-
-    return installationIncomplete ? Math.min(percent, 90) : percent;
+    return calculateStageProgressPercent(steps);
   };
 
   const activeOrdersCount = orders.filter((order) => order.status !== "completed" && order.status !== "cancelled").length;
@@ -2685,6 +2715,23 @@ function CustomerDashboard() {
     customization: cartDecisionProduct.customization || false,
     customization_fee: cartDecisionProduct.customization_fee || 0,
   }) : { estimated_area: 0, estimated_price: 0, rate: 0, areaDisplay: '—', rateNote: '' };
+
+  const productEstimatorWidth = Number(productEstimatorForm.width) || 0;
+  const productEstimatorHeight = Number(productEstimatorForm.height) || 0;
+  const productEstimatorResult = selectedProduct ? calculateEstimate({
+    productName: selectedProduct.product_name || selectedProduct.name,
+    categoryKey: selectedProduct.product_type || selectedProduct.category,
+    variantName: selectedProduct.variant,
+    width: productEstimatorWidth,
+    height: productEstimatorHeight,
+    measurementUnit: productEstimatorForm.unit,
+    quantity: 1,
+    blade_count: selectedProduct.blade_count || 0,
+    base_price: selectedProduct.base_price || undefined,
+    overrideRate: selectedProduct.price_per_sqft || (selectedProduct.unit_price ? Number(selectedProduct.unit_price) / 144 : undefined),
+    customization: selectedProduct.customization || false,
+    customization_fee: selectedProduct.customization_fee || 0,
+  }) : null;
 
   const estimateArea = estimateResult.estimated_area || 0;
   const estimateTotalArea = estimateArea;
@@ -2895,7 +2942,23 @@ function CustomerDashboard() {
             >
               About Us
             </button>
-            <div className="relative order-2">
+            <button
+              type="button"
+              onClick={toggleDarkMode}
+              className={`order-7 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition focus:outline-none focus:ring-2 focus:ring-red-500/40 ${
+                darkMode
+                  ? "text-slate-200 hover:bg-slate-800"
+                  : "text-slate-700 hover:bg-slate-100"
+              }`}
+              aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
+              aria-pressed={darkMode}
+              title={darkMode ? "Switch to day mode" : "Switch to night mode"}
+            >
+              {darkMode
+                ? <Moon size={22} strokeWidth={1.8} className="text-sky-300" />
+                : <Sun size={22} strokeWidth={1.8} className="text-amber-500" />}
+            </button>
+            <div className="relative order-6">
               <button
                 onClick={() => setNotificationsOpen((s) => !s)}
                 className={`relative p-2.5 text-sm font-semibold transition ${
@@ -2970,18 +3033,26 @@ function CustomerDashboard() {
                   ) : (
                     <div className={darkMode ? "max-h-96 divide-y divide-slate-700 overflow-y-auto" : "max-h-96 divide-y divide-slate-200 overflow-y-auto"}>
                       {[...filteredNotifications]
-                        .sort((a, b) => new Date(b.notificationDate || 0) - new Date(a.notificationDate || 0))
+                        .sort(sortCustomerNotificationsNewestFirst)
                         .slice(0, 5)
                         .map((order) => {
                           const product = order.items?.[0] || {};
                           const status = String(order.status || "").toLowerCase();
                           const contractStatus = String(order.contract_status || "").toLowerCase();
                           const isPaymentNotification = order.notificationType === "payment";
+                          const isDelayNotification = order.notificationType === "delay";
                           const isContractReady =
                             status === "contract_sent" ||
                             (status === "site_inspection" && contractStatus === "sent") ||
                             contractStatus === "sent";
                           const notificationDetails = () => {
+                            if (isDelayNotification) {
+                              return {
+                                title: "Project delay reported",
+                                message: getDelayNotificationMessage(order),
+                                color: "text-amber-600",
+                              };
+                            }
                             if (isPaymentNotification) {
                               return {
                                 title: "Payment proof submitted",
@@ -3021,7 +3092,8 @@ function CustomerDashboard() {
                             status === "contract_sent" ||
                             contractStatus === "sent" ||
                             (status === "site_inspection" && contractStatus === "sent");
-                          const isContractNotification = !isPaymentNotification && (
+                          const isContractNotification = !isPaymentNotification && !isDelayNotification && (
+                            order.notificationType === "contract" ||
                             hasContractBeenSent ||
                             ["contract_accepted"].includes(status) ||
                             ["accepted"].includes(contractStatus)
@@ -3039,14 +3111,14 @@ function CustomerDashboard() {
                                   setSelectedOrderForModal(null);
                                   setExpandedOrderId(orderId);
                                 } else if (isContractNotification && canShowContractForOrder(order)) {
-                                  openContractModal(order);
+                                  setContractHistoryTab("accepted");
+                                  setWarrantyHistoryTab(null);
                                   setActiveTab("contracts");
                                 } else {
                                   setSelectedOrderForModal(order);
                                   setActiveTab("orders");
                                 }
                                 setNotificationsOpen(false);
-                                setActiveTab(isPaymentNotification ? "orders" : activeTab);
                               }}
                               className={`w-full px-4 py-3 text-left transition ${darkMode ? "hover:bg-slate-700" : "hover:bg-slate-50"}`}
                             >
@@ -3057,12 +3129,14 @@ function CustomerDashboard() {
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center justify-between gap-3">
                                     <p className={`truncate text-sm font-semibold ${darkMode ? "text-white" : "text-slate-950"}`}>{details.title}</p>
-                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${getOrderStatusClasses(order.status)}`}>{getOrderStatusLabel(order.status)}</span>
+                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${getOrderStatusClasses(isDelayNotification ? "Delayed" : order.status)}`}>{isDelayNotification ? "Delayed" : getOrderStatusLabel(order.status)}</span>
                                   </div>
                                   <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                                     {details.message}
                                   </p>
-                                  <p className="mt-1 text-xs text-slate-400">{product.name || "Project"} · {order.tracking || "Order update"}</p>
+                                  <p className="mt-1 text-xs text-slate-400">
+                                    {product.name || "Project"} · {order.tracking || "Order update"} · <span title={formatDateTimeToMMMDDYYYY(order.notificationDate) || undefined}>{formatTimeAgo(order.notificationDate)}</span>
+                                  </p>
                                 </div>
                               </div>
                             </button>
@@ -3082,7 +3156,7 @@ function CustomerDashboard() {
                 </div>
               )}
             </div>
-            <div className="relative order-6">
+            <div className="relative order-8">
               <button
                 onClick={() => setMenuOpen((s) => !s)}
                 className={`flex items-center gap-2 rounded-full px-4 py-2 text-base font-semibold transition ${
@@ -3346,7 +3420,7 @@ function CustomerDashboard() {
         </div>
       )}
 
-      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col p-6">
+      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col p-3 sm:p-4 md:p-6">
         {activeTab === "products" && (
           <>
             <div>
@@ -3444,30 +3518,18 @@ function CustomerDashboard() {
                           <div className={`border-t pt-4 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
                             <p className="text-2xl font-black text-red-500">{getProductPrice(product)}</p>
                           </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openCartDecisionModal(product, "estimate");
-                              }}
-                              className="inline-flex items-center justify-center gap-1 rounded-xl bg-slate-950 px-2 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-red-700"
-                              title="Estimate"
-                            >
-                              <Ruler size={14} />
-                              <span className="hidden sm:inline">Estimate</span>
-                            </button>
+                          <div className="grid grid-cols-2 gap-2">
                             <button
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 openOrderNowModal(product);
                               }}
-                              className="inline-flex items-center justify-center gap-1 rounded-xl border border-red-200 bg-red-50 px-2 py-2 text-[11px] font-bold text-red-700 shadow-sm transition hover:bg-red-100"
+                              className={`inline-flex items-center justify-center gap-1 rounded-xl border bg-transparent px-2 py-2 text-[11px] font-bold shadow-sm transition ${darkMode ? "border-red-400/50 text-red-300 hover:border-red-300 hover:bg-red-900/40 hover:text-red-200" : "border-red-200 text-red-700 hover:bg-red-100"}`}
+                              aria-label="Place order"
                               title="Place order"
                             >
-                              <Package size={14} />
-                              <span className="hidden sm:inline">Order</span>
+                              <Package size={28} />
                             </button>
                             <button
                               type="button"
@@ -3475,11 +3537,11 @@ function CustomerDashboard() {
                                 event.stopPropagation();
                                 handleAddToCart(product);
                               }}
-                              className={`inline-flex items-center justify-center gap-1 rounded-xl border px-2 py-2 text-[11px] font-bold shadow-sm transition hover:bg-slate-950 hover:text-white ${darkMode ? "border-slate-600 bg-slate-700 text-slate-100" : "border-slate-200 bg-white text-slate-700"}`}
+                              className={`inline-flex items-center justify-center gap-1 rounded-xl border bg-transparent px-2 py-2 text-[11px] font-bold shadow-sm transition ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700 hover:text-white" : "border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-slate-900"}`}
+                              aria-label="Add to cart"
                               title="Add to cart"
                             >
-                              <ShoppingCart size={14} />
-                              <span className="hidden sm:inline">Add</span>
+                              <ShoppingCart size={28} />
                             </button>
                           </div>
                         </div>
@@ -3570,16 +3632,16 @@ function CustomerDashboard() {
             </div>
 
             {selectedProduct && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
-                <div className={`order-flow-modal w-full max-h-[95vh] max-w-5xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4">
+                <div className={`order-flow-modal flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Header with shared brand gradient */}
-                  <div className="flex-shrink-0 bg-red-600 px-6 py-5">
-                    <div className="flex items-center justify-between gap-4">
+                  <div className="flex-shrink-0 bg-red-600 px-5 py-3.5 sm:px-6">
+                    <div className="flex min-w-0 items-center justify-between gap-4">
                       <div className="text-white">
-                        <h3 className="text-2xl font-bold">{selectedProduct.name}</h3>
-                        <p className="text-red-100 mt-1">{selectedProduct.category || "General"}</p>
+                        <h3 className="truncate text-xl font-bold sm:text-2xl">{selectedProduct.name}</h3>
+                        <p className="mt-0.5 text-sm text-red-100">{selectedProduct.category || selectedProduct.product_type || "General"}</p>
                       </div>
-                      <button onClick={closeProductModal} className="text-white hover:bg-white/10 p-2 rounded-full transition flex-shrink-0">
+                      <button type="button" onClick={closeProductModal} aria-label="Close product details" className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-white transition hover:bg-white/15">
                         <span className="text-3xl">×</span>
                       </button>
                     </div>
@@ -3587,26 +3649,24 @@ function CustomerDashboard() {
 
                   {/* Scrollable Content */}
                   <div className="flex-1 overflow-y-auto">
-                    <div className="grid gap-8 lg:grid-cols-[1.5fr_1fr] p-6 lg:p-8">
+                    <div className="grid items-start gap-5 p-4 sm:p-5 md:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.9fr)] lg:gap-7 lg:p-6">
                       {/* Left: Product Image & Description */}
-                      <div className="space-y-6">
-                        <img src={getProductImage(selectedProduct)} alt={selectedProduct.name} className="w-full h-96 rounded-3xl object-cover bg-red-50 shadow-lg" />
-                        <div className="space-y-4">
-                          <div className={`rounded-3xl border p-5 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
-                            <h4 className={`text-lg font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>About this product</h4>
-                            <p className={`mt-2 leading-relaxed ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                      <div className="min-w-0 space-y-4">
+                        <img src={getProductImage(selectedProduct)} alt={selectedProduct.name} className="aspect-[4/3] max-h-[300px] w-full rounded-2xl bg-slate-100 object-cover shadow-sm" />
+                        <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                            <h4 className={`text-base font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Product Details</h4>
+                            <p className={`mt-1.5 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                               {selectedProduct.description || "No description available."}
                             </p>
-                          </div>
                         </div>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="text-xs text-slate-500 font-medium uppercase tracking-[0.2em]">Type</p>
-                            <p className="text-lg font-bold text-slate-900 mt-2">{selectedProduct.type || selectedProduct.product_type || "N/A"}</p>
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                            <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Type</p>
+                            <p className={`mt-1 truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{selectedProduct.type || selectedProduct.product_type || "N/A"}</p>
                           </div>
-                          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="text-xs text-slate-500 font-medium uppercase tracking-[0.2em]">Dimensions</p>
-                            <p className="text-lg font-bold text-slate-900 mt-2">
+                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                            <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Dimensions</p>
+                            <p className={`mt-1 truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
                               {selectedProduct.dimensions
                                 ? selectedProduct.dimensions
                                 : selectedProduct.standard_size
@@ -3616,51 +3676,162 @@ function CustomerDashboard() {
                                 : "N/A"}
                             </p>
                           </div>
-                          <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                            <p className="text-xs text-slate-500 font-medium uppercase tracking-[0.2em]">Unit Rate</p>
-                            <p className="text-lg font-bold text-slate-900 mt-2">{getProductUnitRate(selectedProduct)}</p>
+                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                            <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Unit Rate</p>
+                            <p className={`mt-1 truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{getProductUnitRate(selectedProduct)}</p>
                           </div>
                         </div>
                       </div>
 
                       {/* Right: Action Buttons & Info */}
-                      <div className="space-y-4">
+                      <div className="min-w-0 space-y-3">
                         {/* Price Card */}
-                        <div className="rounded-3xl bg-red-50 border-2 border-red-200 p-6">
-                          <p className="text-sm text-slate-600 font-medium uppercase tracking-[0.2em]">Starting from</p>
-                          <p className="text-4xl font-bold text-white-600 mt-2">{getProductPrice(selectedProduct)}</p>
-                          <p className="text-xs text-slate-500 mt-3">*Price may vary based on specifications</p>
+                        <div className={`rounded-2xl border p-4 ${darkMode ? "border-red-900 bg-red-950/40" : "border-red-200 bg-red-50"}`}>
+                          <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${darkMode ? "text-red-200" : "text-slate-500"}`}>Starting from</p>
+                          <p className={`mt-1 text-3xl font-black ${darkMode ? "text-white" : "text-red-700"}`}>{getProductPrice(selectedProduct)}</p>
+                          <p className={`mt-1 text-[11px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Price may vary based on specifications</p>
                         </div>
+
+                        <section className={`overflow-hidden rounded-xl border border-t-2 p-3.5 ${darkMode ? "border-slate-700 border-t-red-500 bg-slate-900" : "border-slate-200 border-t-red-600 bg-white"}`} aria-labelledby="product-estimator-title">
+                          <div className="flex items-center gap-2">
+                            <Ruler size={16} className="text-red-600" aria-hidden="true" />
+                            <h4 id="product-estimator-title" className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Price Estimator</h4>
+                          </div>
+                          <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(88px,0.8fr)]">
+                            <label className="min-w-0">
+                              <span className={`mb-1 block text-[9px] font-bold uppercase tracking-wider ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Width</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={productEstimatorForm.width}
+                                onChange={(event) => setProductEstimatorForm((current) => ({ ...current, width: event.target.value }))}
+                                className={`h-9 w-full rounded-lg border px-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15 ${darkMode ? "border-slate-600 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                              />
+                            </label>
+                            <span className={`mt-6 text-sm ${darkMode ? "text-slate-500" : "text-slate-400"}`} aria-hidden="true">×</span>
+                            <label className="min-w-0">
+                              <span className={`mb-1 block text-[9px] font-bold uppercase tracking-wider ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Height</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={productEstimatorForm.height}
+                                onChange={(event) => setProductEstimatorForm((current) => ({ ...current, height: event.target.value }))}
+                                className={`h-9 w-full rounded-lg border px-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15 ${darkMode ? "border-slate-600 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                              />
+                            </label>
+                            <label className="col-span-3 min-w-0 sm:col-span-1">
+                              <span className={`mb-1 block text-[9px] font-bold uppercase tracking-wider ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Unit</span>
+                              <select
+                                value={productEstimatorForm.unit}
+                                onChange={(event) => setProductEstimatorForm((current) => ({ ...current, unit: event.target.value }))}
+                                className={`h-9 w-full rounded-lg border px-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15 ${darkMode ? "border-slate-600 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                              >
+                                <option value="in">in</option>
+                                <option value="ft">ft</option>
+                                <option value="cm">cm</option>
+                                <option value="m">m</option>
+                              </select>
+                            </label>
+                          </div>
+                          {productEstimatorWidth > 0 && productEstimatorHeight > 0 ? (
+                            <div className={`mt-4 space-y-3 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`} aria-live="polite">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />Area</span>
+                                <span className={`font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                                  {Number(productEstimatorResult?.estimated_area) > 0
+                                    ? `${Number(productEstimatorResult.estimated_area).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft`
+                                    : productEstimatorResult?.areaDisplay || "—"}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span>Base Rate</span>
+                                <span className={`font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                                  {Number(productEstimatorResult?.rate) > 0
+                                    ? `${formatCurrency(productEstimatorResult.rate)} / ${productEstimatorResult?.areaDisplay?.includes("blade") ? "blade" : Number(productEstimatorResult?.estimated_area) > 0 ? "sq ft" : "unit"}`
+                                    : "Contact us"}
+                                </span>
+                              </div>
+                              <div className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 ${darkMode ? "border-red-900 bg-slate-800 text-red-300" : "border-red-100 bg-white text-red-800"}`}>
+                                <span className="font-bold">Estimated Total</span>
+                                <span className="text-base font-black">
+                                  {Number(productEstimatorResult?.estimated_price) > 0
+                                    ? formatCurrency(productEstimatorResult.estimated_price)
+                                    : "Contact us"}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3 px-1">
+                                <span>50% Downpayment</span>
+                                <span className={`font-bold ${darkMode ? "text-red-300" : "text-red-800"}`}>
+                                  {Number(productEstimatorResult?.estimated_price) > 0
+                                    ? formatCurrency(productEstimatorResult.estimated_price * 0.5)
+                                    : "Contact us"}
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className={`mt-3 flex min-h-12 items-center justify-center rounded-lg px-3 py-2.5 text-center text-xs ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-50 text-slate-500"}`}>
+                              Enter width &amp; height to calculate your estimate.
+                            </div>
+                          )}
+                          <p className={`mt-2 text-[11px] font-bold leading-4 ${darkMode ? "text-slate-500" : "text-slate-700"}`}>
+                            Final pricing is subject to negotiation during shop discussion or on-site inspection.
+                          </p>
+                        </section>
 
                         {/* Action Buttons */}
                         <button
+                          type="button"
                           onClick={() => {
-                            openCartDecisionModal(selectedProduct, "estimate");
+                            const hasEstimate =
+                              Number(productEstimatorForm.width) > 0 &&
+                              Number(productEstimatorForm.height) > 0 &&
+                              Number(productEstimatorResult?.estimated_price) > 0;
+                            if (hasEstimate) {
+                              openEstimatedProductOrder(selectedProduct);
+                            } else {
+                              openOrderNowModal(selectedProduct);
+                            }
                             closeProductModal();
                           }}
-                          className="w-full rounded-2xl bg-gray-600 text-white font-bold py-4 hover:bg-gray-700 transition shadow-md flex items-center justify-center gap-2"
-                        >
-                          <Ruler size={20} />
-                          Estimate Product
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            openOrderNowModal(selectedProduct);
-                            closeProductModal();
-                          }}
-                          className="w-full rounded-2xl bg-red-600 text-white font-bold py-4 hover:bg-red-700 transition shadow-md flex items-center justify-center gap-2"
+                          className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-red-700"
                         >
                           <Package size={20} />
                           Place Order
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => {
-                            openCartDecisionModal(selectedProduct);
+                            const hasEstimate =
+                              Number(productEstimatorForm.width) > 0 &&
+                              Number(productEstimatorForm.height) > 0 &&
+                              Number(productEstimatorResult?.estimated_price) > 0;
+
+                            if (hasEstimate) {
+                              if (!canEstimatePricing) {
+                                showPermissionNotice("Pricing estimates are disabled for your account.");
+                                return;
+                              }
+                              handleAddEstimateToCart({
+                                product: selectedProduct,
+                                width: productEstimatorForm.width,
+                                height: productEstimatorForm.height,
+                                quantity: 1,
+                                notes: "",
+                                measurementUnit: productEstimatorForm.unit,
+                              });
+                            } else {
+                              if (!canRequestOrders) {
+                                showPermissionNotice("Order requests are disabled for your account.");
+                                return;
+                              }
+                              handleAddToCart(selectedProduct);
+                            }
                             closeProductModal();
                           }}
-                          className="w-full rounded-2xl bg-[#101114] text-white font-bold py-4 hover:bg-[#050608] transition shadow-md flex items-center justify-center gap-2"
+                          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#101114] py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#050608]"
                         >
                           <ShoppingCart size={20} />
                           Add to Cart
@@ -3669,44 +3840,39 @@ function CustomerDashboard() {
                         <button
                           type="button"
                           onClick={openProductReviewModal}
-                          className="w-full rounded-[28px] border border-slate-200 bg-white p-5 mt-4 text-left shadow-sm transition hover:shadow-lg hover:border-slate-300"
+                          aria-label={`View customer reviews for ${selectedProduct?.name || "this product"}`}
+                          className={`group mt-2 w-full rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md ${darkMode ? "border-slate-700 bg-slate-800 hover:border-slate-600" : "border-slate-200 bg-white hover:border-slate-300"}`}
                         >
-                          <div className="flex items-center gap-4">
-                            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-slate-50">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className={`h-12 w-12 shrink-0 overflow-hidden rounded-lg border ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-50"}`}>
                               <img src={getProductImage(selectedProduct)} alt={selectedProduct?.name || "Product"} className="h-full w-full object-cover" />
                             </div>
-                            <div className="min-w-0">
-                              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Customer Reviews</p>
-                              <div className="mt-2 flex items-center gap-2">
-                                {renderRatingStars(averageProductReviewRating, 18)}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customer Reviews</p>
+                                <ArrowRight size={15} className={`shrink-0 transition-transform group-hover:translate-x-0.5 ${darkMode ? "text-slate-400" : "text-slate-500"}`} aria-hidden="true" />
                               </div>
-                              <p className="mt-2 text-2xl font-semibold text-slate-900 truncate">
-                                {productReviewAverageRating || "—"} / 5
-                              </p>
-                              <p className="mt-2 text-sm text-slate-500">
-                                {productReviews[0]?.title ? `Latest review: ${productReviews[0].title}` : "View all reviews for this product."}
+                              <div className="mt-1 flex items-center gap-2">
+                                <span className="inline-flex items-center gap-0.5">{renderRatingStars(averageProductReviewRating, 14)}</span>
+                                <span className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                                  {productReviewAverageRating ? `${productReviewAverageRating} / 5` : "— / 5"}
+                                </span>
+                              </div>
+                              <p className={`mt-1 truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                {productReviews[0]?.title || (totalRatedReviews ? "Read the latest customer feedback" : "No reviews yet")}
                               </p>
                             </div>
                           </div>
-                          <div className="mt-4 flex items-center justify-between gap-3 text-sm text-slate-600">
-                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 font-medium">{totalRatedReviews} rating{totalRatedReviews === 1 ? "" : "s"}</span>
-                            <span className="inline-flex items-center gap-2 font-semibold text-slate-900">
+                          <div className={`mt-3 flex items-center justify-between gap-3 border-t pt-2.5 text-xs ${darkMode ? "border-slate-700 text-slate-300" : "border-slate-100 text-slate-600"}`}>
+                            <span className={`rounded-full border px-2.5 py-1 font-medium ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-50"}`}>
+                              {totalRatedReviews} rating{totalRatedReviews === 1 ? "" : "s"}
+                            </span>
+                            <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
                               View reviews
-                              <ArrowRight size={18} />
                             </span>
                           </div>
                         </button>
 
-                        {/* Info Box */}
-                        <div className="rounded-2xl bg-red-50 border border-red-200 p-4 mt-6">
-                          <div className="flex items-start gap-3">
-                            <Info size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
-                            <div className="text-sm text-slate-700">
-                              <p className="font-semibold text-red-700">Need help?</p>
-                              <p className="mt-1 text-slate-600">Use the estimate tool for quick pricing guidance.</p>
-                            </div>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -4031,9 +4197,9 @@ function CustomerDashboard() {
             )}
 
             {showDeliveryConfirmModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-                <div className={`order-flow-modal w-full max-w-5xl overflow-hidden rounded-3xl shadow-2xl max-h-[95vh] flex flex-col ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
-                  <div className={`flex-shrink-0 border-b px-6 py-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
+                <div className={`order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
+                  <div className={`flex-shrink-0 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                     <div className="flex items-center justify-between gap-4">
                       <button
                         type="button"
@@ -4059,8 +4225,8 @@ function CustomerDashboard() {
                   </div>
 
                   <div className="flex-1 overflow-y-auto">
-                    <div className={`grid gap-6 lg:grid-cols-[1.2fr_0.9fr] p-6 min-h-0 ${darkMode ? "bg-slate-950" : "bg-slate-50"}`}>
-                      <div className={`space-y-5 rounded-3xl border p-6 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
+                    <div className={`grid gap-5 p-5 min-h-0 lg:grid-cols-[1.2fr_0.9fr] ${darkMode ? "bg-slate-950" : "bg-slate-50"}`}>
+                      <div className={`space-y-4 rounded-3xl border p-5 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
                         <div className="flex items-center justify-between gap-4">
                           <div>
                             <h4 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>Customer Information</h4>
@@ -4125,7 +4291,7 @@ function CustomerDashboard() {
                         )}
                       </div>
 
-                      <div className={`rounded-3xl border p-6 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
+                      <div className={`rounded-3xl border p-5 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
                         <div className="flex items-start gap-4">
                           <div className="h-24 w-24 overflow-hidden rounded-3xl border border-gray-200 bg-gray-100">
                             <img
@@ -4187,11 +4353,11 @@ function CustomerDashboard() {
                     </div>
                   </div>
 
-                  <div className={`sticky bottom-0 z-10 flex justify-end gap-3 border-t px-6 py-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-gray-50"}`}>
+                  <div className={`sticky bottom-0 z-10 flex flex-col-reverse gap-2 border-t px-4 py-3 sm:flex-row sm:justify-end sm:gap-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-gray-50"}`}>
                     <button
                       type="button"
                       onClick={handleCancelDeliveryConfirm}
-                      className={`rounded-xl border px-5 py-3 text-sm font-semibold transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
+                      className={`w-full rounded-xl border px-5 py-3 text-sm font-semibold transition sm:w-auto ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
                     >
                       Cancel
                     </button>
@@ -4199,7 +4365,7 @@ function CustomerDashboard() {
                       type="button"
                       onClick={handleConfirmAndContinue}
                       disabled={!isDeliveryConfirmValid || orderRequestLoading}
-                      className="rounded-xl bg-gradient-to-r from-red-600 to-red-700 px-5 py-3 text-sm font-semibold text-white hover:from-red-700 hover:to-red-800 transition shadow-lg disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="w-full rounded-xl bg-gradient-to-r from-red-600 to-red-700 px-5 py-3 text-sm font-semibold text-white transition shadow-lg hover:from-red-700 hover:to-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                     >
                       Submit Order Request
                     </button>
@@ -4338,42 +4504,44 @@ function CustomerDashboard() {
             )}
 
             {showBatchOrderModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-                <div className={`w-full max-w-4xl overflow-hidden rounded-[20px] shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
-                  <div className={`flex items-center justify-between border-b px-6 py-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
-                    <button
-                      type="button"
-                      onClick={closeBatchOrderModal}
-                      className={`inline-flex items-center gap-2 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}
-                    >
-                      <ArrowLeft size={16} />
-                      Back to Cart
-                    </button>
-                    <button
-                      type="button"
-                      onClick={closeBatchOrderModal}
-                      className={`rounded-full border p-2 transition ${darkMode ? "border-slate-600 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-500 hover:bg-slate-100"}`}
-                    >
-                      <X size={18} />
-                    </button>
-                  </div>
-
-                  <div className={`px-6 pb-6 pt-5 ${darkMode ? "bg-slate-900" : "bg-white"}`}>
-                    <h3 className={`text-3xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
+                <div className={`order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
+                  <div className={`flex-shrink-0 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                    <div className="flex items-center justify-between gap-4">
+                      <button
+                        type="button"
+                        onClick={closeBatchOrderModal}
+                        className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition ${darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"}`}
+                      >
+                        <ArrowLeft size={16} />
+                        Back to Cart
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeBatchOrderModal}
+                        aria-label="Close order request"
+                        className={`rounded-full border p-2 transition ${darkMode ? "border-slate-600 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-500 hover:bg-slate-100"}`}
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+                    <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
                       {selectedItemCount === 1 ? "Place Order Request" : "Place Batch Order Request"}
                     </h3>
-                    <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                       {selectedItemCount === 1
                         ? "Review your contact data and selected item before submitting your request."
                         : "Review your contact data and selected items to compile requests."}
                     </p>
+                  </div>
 
-                    <div className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.9fr]">
+                  <div className={`min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 ${darkMode ? "bg-slate-950" : "bg-slate-50"}`}>
+                    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)] xl:gap-6">
                       <div className="flex flex-col gap-5">
-                        <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
-                          <div className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-[0.2em] text-red-600">
-                            <User size={16} />
-                            Customer Information
+                        <div className={`space-y-4 rounded-3xl border p-5 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                          <div>
+                            <h4 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>Customer Information</h4>
+                            <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-gray-500"}`}>Review your details before submitting your request.</p>
                           </div>
 
                           <div className="space-y-4">
@@ -4428,13 +4596,13 @@ function CustomerDashboard() {
                       </div>
 
                       <div className="flex flex-col gap-5">
-                        <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                        <div className={`space-y-4 rounded-3xl border p-5 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                           <div className="mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-[0.2em] text-red-600">
                             <ClipboardList size={16} />
                             {selectedItemCount === 1 ? "Order Review (1 item)" : `Batch Review (${selectedItemCount} items)`}
                           </div>
 
-                          <div className="max-h-[260px] space-y-3 overflow-y-auto pr-2">
+                          <div className={`max-h-[320px] space-y-3 overflow-y-auto pr-2`}>
                             {selectedCartItems.map((item) => (
                               <div key={item.cartId || item._id} className={`rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                                 <div className="flex items-start gap-3">
@@ -4482,25 +4650,27 @@ function CustomerDashboard() {
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={handleCheckout}
-                          disabled={checkoutLoading || selectedItemCount === 0}
-                          className="mt-auto w-full rounded-xl bg-red-600 px-4 py-4 text-base font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <span className="inline-flex items-center justify-center gap-2">
-                            <CheckCircle size={18} />
-                            {checkoutLoading
-                              ? selectedItemCount === 1
-                                ? "Submitting Order Request..."
-                                : "Submitting Order Requests..."
-                              : selectedItemCount === 1
-                                ? "Submit Order Request"
-                                : "Submit Order Requests Bunch"}
-                          </span>
-                        </button>
                       </div>
                     </div>
+                  </div>
+
+                  <div className={`sticky bottom-0 z-10 flex flex-shrink-0 flex-col-reverse gap-2 border-t px-4 py-3 sm:flex-row sm:justify-end sm:gap-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
+                    <button
+                      type="button"
+                      onClick={closeBatchOrderModal}
+                      className={`w-full rounded-xl border px-5 py-3 text-sm font-semibold transition sm:w-auto ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCheckout}
+                      disabled={checkoutLoading || selectedItemCount === 0}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-red-700 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:from-red-700 hover:to-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                    >
+                      <CheckCircle size={18} />
+                      {selectedItemCount === 1 ? "Submit Order Request" : "Submit Order Requests"}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -4563,6 +4733,16 @@ function CustomerDashboard() {
                       </div>
                     </section>
 
+                    <label className={`flex cursor-pointer items-start gap-3 rounded-md border px-3 py-3 text-sm ${darkMode ? "border-slate-700 bg-slate-800 text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>
+                      <input
+                        type="checkbox"
+                        checked={batchOrderAgreed}
+                        onChange={(event) => setBatchOrderAgreed(event.target.checked)}
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 accent-red-600 focus:ring-red-500"
+                      />
+                      <span>I understand the 50% downpayment policy and agree to proceed.</span>
+                    </label>
+
                     <div className={`rounded-md border px-3 py-2 text-xs ${darkMode ? "border-amber-700 bg-amber-950/40 text-amber-100" : "border-amber-300 bg-amber-50 text-slate-600"}`}>
                       <p>Final pricing will be confirmed during shop discussion or site inspection.</p>
                       <p className="mt-1">Contact: <span className="font-semibold">09123456789</span></p>
@@ -4578,7 +4758,10 @@ function CustomerDashboard() {
                   <div className={`flex justify-end gap-2 border-t px-5 py-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200"}`}>
                     <button
                       type="button"
-                      onClick={() => setShowBatchOrderConfirmModal(false)}
+                      onClick={() => {
+                        setShowBatchOrderConfirmModal(false);
+                        setBatchOrderAgreed(false);
+                      }}
                       disabled={checkoutLoading}
                       className={`rounded-lg border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
                     >
@@ -4587,7 +4770,7 @@ function CustomerDashboard() {
                     <button
                       type="button"
                       onClick={handleConfirmBatchOrder}
-                      disabled={checkoutLoading}
+                      disabled={checkoutLoading || !batchOrderAgreed}
                       className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <CheckCircle size={16} />
@@ -4906,9 +5089,13 @@ function CustomerDashboard() {
                   const orderTotal = getOrderTotalValue(order);
                   const recordedPaidAmount = Number(order.paid_amount || order.amount_paid || order.downpayment_amount || order.downpayment || 0) || 0;
                   const downpaymentAmount = Math.max(recordedPaidAmount, Number(order.downpayment_amount || order.downpayment || 0) || orderTotal * 0.5);
+                  const paymentBaseAmount = Number(order.contract_amount || order.total_amount || orderTotal);
+                  const requiredPaymentAmount = Number(order.downpayment_amount || order.downpayment)
+                    || (order.payment_terms === "full_payment" ? paymentBaseAmount : paymentBaseAmount * 0.5);
                   const balanceAmount = Math.max(0, orderTotal - downpaymentAmount);
+                  const isFullyPaid = orderTotal > 0 && downpaymentAmount >= orderTotal;
                   const paymentStatus = (() => {
-                    if (orderTotal > 0 && downpaymentAmount >= orderTotal) {
+                    if (isFullyPaid) {
                       return { label: "FULLY PAID", className: darkMode ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border border-emerald-200 bg-emerald-50 text-emerald-700" };
                     }
                     if (downpaymentAmount > 0) {
@@ -5143,7 +5330,22 @@ function CustomerDashboard() {
                           </div>
 
                           {!isProjectFinished && <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                            {paymentProofSubmission || lastPaymentProofUrl ? (
+                            {isFullyPaid ? (
+                              <div className={`rounded-xl border px-4 py-3 text-sm font-bold sm:col-span-2 ${darkMode ? "border-emerald-800 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                                <p>Payment is fully paid. No additional payment submission is needed.</p>
+                                {lastPaymentProofUrl && (
+                                  <a
+                                    href={ensureAbsoluteUrl(lastPaymentProofUrl)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className={`mt-2 inline-flex items-center gap-1.5 font-bold underline underline-offset-2 ${darkMode ? "text-emerald-200 hover:text-white" : "text-emerald-800 hover:text-emerald-950"}`}
+                                  >
+                                    <Paperclip size={14} aria-hidden="true" />
+                                    View payment proof
+                                  </a>
+                                )}
+                              </div>
+                            ) : paymentProofSubmission || lastPaymentProofUrl ? (
                               <div className={`rounded-xl border px-4 py-3 text-sm font-medium sm:col-span-2 ${darkMode ? "border-sky-800 bg-sky-950/50 text-sky-200" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
                                 <p>
                                   We've notified admin that you paid {formatCurrency(paymentProofSubmission?.amount ?? order.payment_proof_amount ?? 0)}. This is pending confirmation — we'll notify you here once it's verified.
@@ -5167,6 +5369,9 @@ function CustomerDashboard() {
                                     <label htmlFor={`payment-amount-${orderId}`} className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                                       Amount paid <span className="text-red-500">(required)</span>
                                     </label>
+                                    <p className={`mb-1.5 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                      Enter exactly {formatRequiredPaymentAmount(requiredPaymentAmount)}.
+                                    </p>
                                     <input
                                       id={`payment-amount-${orderId}`}
                                       type="text"
@@ -5334,132 +5539,15 @@ function CustomerDashboard() {
         )}
 
         {selectedOrderForModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="order-timeline-title"
-              className={`order-details-modal flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}
-            >
-              <div className={`border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <h3 id="order-timeline-title" className={`truncate text-lg font-bold sm:text-xl ${darkMode ? "text-white" : "text-slate-950"}`}>Order Timeline</h3>
-                    <p className={`mt-0.5 truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                      {selectedOrderForModal.tracking || selectedOrderForModal._id || "Order"}
-                      {selectedOrderForModal.updatedAt || selectedOrderForModal.createdAt
-                        ? ` · ${formatDateToMMMDDYYYY(selectedOrderForModal.updatedAt || selectedOrderForModal.createdAt)}`
-                        : ""}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedOrderForModal(null)}
-                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}
-                    aria-label="Close order timeline"
-                  >
-                    <X size={17} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-
-              <div className={`flex-1 overflow-y-auto p-4 sm:p-5 ${darkMode ? "bg-slate-950" : "bg-slate-50"}`}>
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <h4 className={`text-xs font-bold uppercase tracking-wide ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Items &amp; progress</h4>
-                  <span className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                    {(selectedOrderForModal.items || []).length} item{(selectedOrderForModal.items || []).length === 1 ? "" : "s"}
-                  </span>
-                </div>
-                {(selectedOrderForModal.items || []).length === 0 ? (
-                  <div className={`rounded-xl border border-dashed p-8 text-center text-sm ${darkMode ? "border-slate-700 text-slate-400" : "border-slate-300 text-slate-500"}`}>
-                    No items are listed for this order.
-                  </div>
-                ) : (
-                  <div className={`divide-y overflow-hidden rounded-xl border ${darkMode ? "divide-slate-700 border-slate-700 bg-slate-900" : "divide-slate-200 border-slate-200 bg-white"}`}>
-                    {(selectedOrderForModal.items || []).map((item, itemIndex) => {
-                      const productName = item?.name || item?.product_name || `Product ${itemIndex + 1}`;
-                      const productSize = getConfirmationItemDimensionText(item);
-                      const progressSteps = getOrderProgressSteps(selectedOrderForModal);
-                      const normalizedStatus = String(selectedOrderForModal.status || "").toLowerCase();
-                      const statusClass = getOrderStatusClasses(selectedOrderForModal.status);
-
-                      return (
-                        <article key={`${selectedOrderForModal._id || selectedOrderForModal.id || "order"}-detail-${itemIndex}`} className="p-3 sm:p-4">
-                          <div className="flex min-w-0 items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-3">
-                              <div className={`h-11 w-11 shrink-0 overflow-hidden rounded-lg border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
-                                <img
-                                  src={getOrderItemImage(item)}
-                                  alt={productName}
-                                  className="h-full w-full object-cover"
-                                  onError={(event) => {
-                                    event.currentTarget.onerror = null;
-                                    event.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
-                                  }}
-                                />
-                              </div>
-                              <div className="min-w-0">
-                                <p className={`truncate text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{productName}</p>
-                                <p className={`mt-0.5 truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Size: {productSize}</p>
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusClass}`}>{getOrderStatusLabel(selectedOrderForModal.status)}</span>
-                              <p className="mt-1 text-sm font-bold text-red-600">{formatCurrency(getItemPriceValue(item))}</p>
-                            </div>
-                          </div>
-
-                          <div className={`mt-3 grid grid-cols-4 gap-x-2 gap-y-3 rounded-lg p-3 sm:grid-cols-8 ${darkMode ? "bg-slate-800/70" : "bg-slate-50"}`}>
-                            {progressSteps.map((step, stepIndex) => {
-                              const isCompleted = step.done || (normalizedStatus === "completed" && step.key === "completed");
-                              const isCancelled = normalizedStatus === "cancelled";
-                              const circleClass = isCancelled && stepIndex === 0
-                                ? "border-red-600 bg-red-600 text-white"
-                                : isCompleted
-                                  ? "border-emerald-600 bg-emerald-600 text-white"
-                                  : step.active
-                                    ? "border-amber-500 bg-amber-500 text-white"
-                                    : darkMode
-                                      ? "border-slate-600 bg-slate-900 text-slate-400"
-                                      : "border-slate-300 bg-white text-slate-500";
-                              const labelClass = isCancelled && stepIndex === 0
-                                ? "text-red-600"
-                                : isCompleted
-                                  ? "text-emerald-700"
-                                  : step.active
-                                    ? "text-amber-700"
-                                    : darkMode
-                                      ? "text-slate-400"
-                                      : "text-slate-500";
-
-                              return (
-                                <div key={`${productName}-${step.key}`} className="flex min-w-0 flex-col items-center gap-1 text-center" aria-current={step.active ? "step" : undefined}>
-                                  <span className={`flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${circleClass}`}>
-                                    {isCompleted ? <Check size={12} aria-hidden="true" /> : stepIndex + 1}
-                                  </span>
-                                  <span className={`text-[9px] font-medium leading-tight ${labelClass}`}>{step.label}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className={`flex justify-end border-t px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedOrderForModal(null)}
-                  className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
+          <OrderTimelineModal
+            key={selectedOrderForModal._id || selectedOrderForModal.id}
+            order={selectedOrderForModal}
+            darkMode={darkMode}
+            onClose={() => setSelectedOrderForModal(null)}
+            getItemImage={getOrderItemImage}
+            getItemDimension={getConfirmationItemDimensionText}
+            fallbackImage={PRODUCT_IMAGE_PLACEHOLDER}
+          />
         )}
 
         {showCustomerReviewModal && selectedReviewOrder && (
@@ -5626,116 +5714,158 @@ function CustomerDashboard() {
 
         {showProductReviewModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-            <div className="w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl ring-1 ring-slate-200">
-              <div className="flex flex-col gap-4 border-b border-slate-200 bg-slate-50 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="product-reviews-title"
+              className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200"
+            >
+              <div className="flex flex-col gap-3 border-b border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-950">Customer Reviews</h2>
-                  <p className="mt-1 text-sm text-slate-600">Reviews for {selectedProduct?.product_name || selectedProduct?.name || "this product"}.</p>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-red-600">Product feedback</p>
+                  <h2 id="product-reviews-title" className="mt-1 text-xl font-black text-slate-950">Customer Reviews</h2>
+                  <p className="mt-1 text-sm text-slate-600">{selectedProduct?.product_name || selectedProduct?.name || "Product"}</p>
                 </div>
                 <button
                   type="button"
                   onClick={closeProductReviewModal}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 transition"
+                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
                   Close
                 </button>
               </div>
-              <div className="max-h-[82vh] overflow-y-auto p-6 space-y-6">
-                <div className="rounded-[28px] bg-gradient-to-r from-slate-100 via-white to-slate-100 p-5 shadow-sm">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Average Rating</p>
-                      <p className="mt-2 text-3xl font-semibold text-slate-950">{productReviewAverageRating || "—"} / 5</p>
-                    </div>
-                    <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-800">
-                      <span className="inline-flex items-center gap-1">
-                        {renderRatingStars(averageProductReviewRating, 16)}
-                      </span>
+              <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
+                <section className="grid gap-5 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-[180px_minmax(0,1fr)] sm:p-5" aria-label="Product rating summary">
+                  <div className="flex flex-col items-center justify-center text-center sm:border-r sm:border-slate-200 sm:pr-5">
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Average rating</p>
+                    {totalRatedReviews > 0 ? (
+                      <>
+                        <p className="mt-2 text-5xl font-black leading-none text-slate-950">{productReviewAverageRating}</p>
+                        <div className="mt-2 flex items-center gap-0.5 text-amber-500" aria-label={`${productReviewAverageRating} out of 5 stars`}>
+                          {renderRatingStars(averageProductReviewRating, 16)}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="mt-3 text-lg font-bold text-slate-700">No ratings yet</p>
+                    )}
+                    <p className="mt-2 text-xs font-medium text-slate-500">
                       {totalRatedReviews} rating{totalRatedReviews === 1 ? "" : "s"}
-                    </div>
+                    </p>
                   </div>
-                </div>
+                  <div className="flex flex-col justify-center gap-2.5">
+                    {[5, 4, 3, 2, 1].map((star) => {
+                      const count = reviewRatingCounts.find((entry) => entry.star === star)?.count || 0;
+                      const percentage = totalRatedReviews ? Math.round((count / totalRatedReviews) * 100) : 0;
+                      return (
+                        <div key={star} className="grid grid-cols-[42px_minmax(0,1fr)_28px] items-center gap-3 text-xs">
+                          <span className="inline-flex items-center gap-1 font-semibold text-slate-600">
+                            {star}<Star size={12} fill="currentColor" className="text-amber-500" aria-hidden="true" />
+                          </span>
+                          <div className="h-2 overflow-hidden rounded-full bg-slate-200" aria-hidden="true">
+                            <div className="h-full rounded-full bg-amber-400 transition-[width]" style={{ width: `${percentage}%` }} />
+                          </div>
+                          <span className="text-right font-medium text-slate-500">{count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
 
-                <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex flex-wrap gap-2">
-                    {reviewRatingCounts.map(({ star, count }) => (
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <h3 className="shrink-0 text-sm font-bold text-slate-900">
+                    Reviews <span className="font-medium text-slate-500">({productReviews.length})</span>
+                  </h3>
+                  <div className="flex min-w-0 flex-1 justify-end overflow-hidden">
+                    <div className="flex w-max gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Filter reviews by rating">
                       <button
-                        key={star}
                         type="button"
-                        onClick={() => setSelectedReviewRatingTab(star)}
-                        className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                          selectedReviewRatingTab === star
-                            ? "border-red-500 bg-red-50 text-red-700"
-                            : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+                        onClick={() => setSelectedReviewRatingTab(0)}
+                        aria-pressed={selectedReviewRatingTab === 0}
+                        className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                          selectedReviewRatingTab === 0
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                         }`}
                       >
-                        {star} star{star === 1 ? "" : "s"} ({count})
+                        All
                       </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setSelectedReviewRatingTab(0)}
-                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                        selectedReviewRatingTab === 0
-                          ? "border-slate-900 bg-slate-900 text-white"
-                          : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
-                      }`}
-                    >
-                      All ({productReviews.length})
-                    </button>
+                      {reviewRatingCounts.map(({ star, count }) => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setSelectedReviewRatingTab(star)}
+                          aria-pressed={selectedReviewRatingTab === star}
+                          className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                            selectedReviewRatingTab === star
+                              ? "border-amber-400 bg-amber-50 text-amber-900"
+                              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          {star} star ({count})
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
                 {filteredProductReviews.length === 0 ? (
-                  <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
-                    <p className="text-lg font-semibold">No reviews yet</p>
-                    <p className="mt-2 text-sm">Be the first customer to leave a review for this product.</p>
+                  <div className="rounded-xl border border-dashed border-slate-300 px-6 py-12 text-center">
+                    <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-amber-50 text-amber-500">
+                      <Star size={20} aria-hidden="true" />
+                    </span>
+                    <h3 className="mt-3 text-base font-bold text-slate-900">
+                      {productReviews.length === 0 ? "No reviews yet" : `No ${selectedReviewRatingTab}-star reviews`}
+                    </h3>
+                    <p className="mx-auto mt-1 max-w-sm text-sm leading-5 text-slate-500">
+                      {productReviews.length === 0
+                        ? "Customer feedback for this product will appear here."
+                        : "Try another rating filter to see more customer feedback."}
+                    </p>
+                    {productReviews.length > 0 && selectedReviewRatingTab > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedReviewRatingTab(0)}
+                        className="mt-4 rounded-lg px-3 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-50"
+                      >
+                        Show all reviews
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white">
                     {filteredProductReviews.map((review, index) => (
-                      <div key={`${review.orderId || index}-${review.submittedAt || index}`} className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <article key={`${review.orderId || index}-${review.submittedAt || index}`} className="p-4 sm:p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Customer</p>
-                            <p className="mt-1 text-lg font-semibold text-slate-950 truncate">{review.customerName || "Anonymous"}</p>
+                            <p className="truncate text-sm font-bold text-slate-900">{review.customerName || "Anonymous"}</p>
+                            <p className="mt-1 text-xs text-slate-500">{formatDateToMMMDDYYYY(review.submittedAt) || "Date unavailable"}</p>
                           </div>
-                          <div className="inline-flex items-center gap-3 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-800">
-                            <span className="inline-flex items-center gap-1">
-                              {Array.from({ length: review.rating || 0 }).map((_, starIndex) => (
-                                <Star key={starIndex} size={14} />
-                              ))}
-                            </span>
-                            <span>{review.rating?.toFixed?.(1) ?? review.rating ?? "0"}</span>
-                          </div>
-                        </div>
-                        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Title</p>
-                            <p className="mt-2 font-semibold text-slate-900">{review.title || "No title provided"}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Submitted</p>
-                            <p className="mt-2 font-semibold text-slate-900">{formatDateToMMMDDYYYY(review.submittedAt) || "—"}</p>
+                          <div className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-900">
+                            {Number(review.rating) > 0 ? (
+                              <>
+                                <span className="inline-flex items-center gap-0.5 text-amber-500" aria-label={`${review.rating} out of 5 stars`}>
+                                  {renderRatingStars(review.rating, 13)}
+                                </span>
+                                <span>{Number(review.rating).toFixed(1)}</span>
+                              </>
+                            ) : "No rating"}
                           </div>
                         </div>
-                        <div className="mt-4 rounded-3xl bg-slate-50 p-4">
-                          <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Comment</p>
-                          <p className="mt-2 text-sm leading-6 text-slate-700">{review.comment || "No review comment."}</p>
-                        </div>
+                        <h4 className="mt-3 text-base font-bold text-slate-900">{review.title || "Customer review"}</h4>
+                        <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-slate-600">{review.comment || "No review comment."}</p>
                         {review.photos?.length > 0 && (
-                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                             {review.photos.map((photo, photoIndex) => (
                               <img
                                 key={photoIndex}
                                 src={photo}
                                 alt={`Review photo ${photoIndex + 1}`}
-                                className="h-36 w-full rounded-3xl object-cover"
+                                className="aspect-[4/3] w-full rounded-lg object-cover"
                               />
                             ))}
                           </div>
                         )}
-                      </div>
+                      </article>
                     ))}
                   </div>
                 )}
@@ -5745,19 +5875,54 @@ function CustomerDashboard() {
         )}
 
         {activeTab === "cart" && (
-          <div className={`rounded-3xl shadow p-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
-            <div className="flex flex-col items-center gap-4 md:flex-row md:justify-between">
+          <div className={`flex min-h-0 flex-1 flex-col rounded-2xl border p-4 shadow-sm sm:p-6 ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}>
+            <div className="flex flex-col gap-3 border-b pb-5 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Shopping Cart</h2>
-                <p className={darkMode ? "text-slate-300" : "text-gray-500"}>Review the items you’ve added for checkout.</p>
+                <p className={`text-xs font-bold uppercase tracking-[0.16em] ${darkMode ? "text-red-300" : "text-red-700"}`}>Your order</p>
+                <h2 className={`mt-1 text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Shopping Cart</h2>
               </div>
-              <div className="rounded-full bg-red-100 px-4 py-2 text-red-700">{cartQuantity} item{cartQuantity === 1 ? "" : "s"}</div>
+              <div className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold ${darkMode ? "bg-slate-800 text-slate-200" : "bg-slate-100 text-slate-700"}`}>
+                <ShoppingCart size={16} aria-hidden="true" />
+                {cartQuantity} item{cartQuantity === 1 ? "" : "s"}
+              </div>
             </div>
-            {cartItems.length === 0 ? (<div className={`mt-10 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Your cart is empty. Add a product to start shopping.</div>) : (<>
-              <div className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.8fr)]">
-                <div className={`rounded-[22px] border p-4 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
-                  <div className={`flex flex-col gap-4 rounded-[18px] border p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                    <label className={`inline-flex items-center gap-3 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-gray-700"}`}>
+            {!cartLoaded ? (
+              <div className="mt-5 grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_280px] xl:gap-6" aria-live="polite" aria-busy="true">
+                <section className="flex min-h-0 min-w-0 flex-col">
+                  <div className={`flex min-h-[53px] items-center border-b pb-4 text-sm font-semibold ${darkMode ? "border-slate-700 text-slate-300" : "border-slate-200 text-slate-600"}`}>
+                    Loading your cart...
+                  </div>
+                  <div className={`mt-1 flex h-[min(560px,60dvh)] flex-none items-center justify-center rounded-lg ${darkMode ? "bg-slate-800/50 text-slate-400" : "bg-slate-50 text-slate-500"}`}>
+                    <span className="animate-pulse text-sm">Retrieving saved items</span>
+                  </div>
+                </section>
+                <aside className={`min-h-[220px] rounded-2xl border p-5 ${darkMode ? "border-slate-700 bg-slate-800/50" : "border-slate-200 bg-slate-50"}`} aria-hidden="true">
+                  <div className={`h-5 w-32 animate-pulse rounded ${darkMode ? "bg-slate-700" : "bg-slate-200"}`} />
+                  <div className={`mt-6 h-4 animate-pulse rounded ${darkMode ? "bg-slate-700" : "bg-slate-200"}`} />
+                  <div className={`mt-4 h-10 animate-pulse rounded ${darkMode ? "bg-slate-700" : "bg-slate-200"}`} />
+                  <div className={`mt-5 h-11 animate-pulse rounded ${darkMode ? "bg-slate-700" : "bg-slate-200"}`} />
+                </aside>
+              </div>
+            ) : cartItems.length === 0 ? (
+              <div className="flex min-h-64 flex-col items-center justify-center py-12 text-center">
+                <span className={`flex h-14 w-14 items-center justify-center rounded-full ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-500"}`}>
+                  <ShoppingCart size={24} aria-hidden="true" />
+                </span>
+                <h3 className={`mt-4 text-lg font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Your cart is empty</h3>
+                <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Browse products and add something to get started.</p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("products")}
+                  className="mt-5 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
+                >
+                  Browse Products
+                </button>
+              </div>
+            ) : (<>
+              <div className="mt-5 grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_280px] xl:gap-6">
+                <section className="flex min-h-0 min-w-0 flex-col">
+                  <div className={`flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                    <label className={`inline-flex items-center gap-3 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                       <input
                         type="checkbox"
                         checked={allSelected}
@@ -5766,129 +5931,119 @@ function CustomerDashboard() {
                       />
                       Select All ({cartItems.length} Item{cartItems.length === 1 ? "" : "s"})
                     </label>
-                    <div className={darkMode ? "text-sm text-slate-300" : "text-sm text-gray-600"}>
-                      Selected: {selectedItemCount} of {cartItems.length} Item{cartItems.length === 1 ? "" : "s"}
+                    <div className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      {selectedItemCount} of {cartItems.length} selected
                     </div>
                   </div>
 
                   <div
-                    className="mt-4 max-h-[560px] space-y-4 overflow-y-auto overflow-x-hidden pr-2 [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar]:w-2.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-400 hover:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:[&::-webkit-scrollbar-track]:bg-slate-700 dark:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
+                    className={`mt-1 h-[min(560px,60dvh)] flex-none divide-y overflow-y-auto overflow-x-hidden pr-2 ${darkMode ? "divide-slate-700" : "divide-slate-200"} [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-400 hover:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:[&::-webkit-scrollbar-track]:bg-slate-700 dark:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:hover:[&::-webkit-scrollbar-thumb]:bg-slate-400`}
                     style={{ scrollbarWidth: "thin", scrollbarColor: darkMode ? "#64748b #334155" : "#94a3b8 #e2e8f0" }}
                   >
                     {cartItems.map((item) => (
-                      <div key={item.cartId || item._id || item.name} className={`flex flex-col gap-4 rounded-[18px] border p-5 md:flex-row md:items-center md:justify-between ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                        <div className="flex items-start gap-4">
-                          <label className="inline-flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(item.selected)}
-                              onChange={() => handleToggleCartItem(item.cartId)}
-                              className="h-5 w-5 rounded border-gray-300 text-red-600 focus:ring-red-500"
-                            />
-                          </label>
-                          <div className="flex items-center gap-4">
-                            <div className="h-20 w-20 overflow-hidden rounded-[16px] border border-slate-200 bg-slate-100">
-                              <img src={getProductImage(item)} alt={item.name} className="h-full w-full object-cover" />
-                            </div>
-                            <div>
-                              <p className={darkMode ? "font-semibold text-white" : "font-semibold text-gray-900"}>{item.name}</p>
-                              {(() => {
-                                const measurementDetails = getCartItemMeasurementDetails(item);
-                                if (measurementDetails) {
-                                  return (
-                                    <div className={`mt-2 space-y-1 text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
-                                      <div>
-                                        {measurementDetails.dimensions} = {measurementDetails.area}
-                                      </div>
-                                      <div className={darkMode ? "text-slate-200" : "text-slate-700"}>
-                                        {measurementDetails.unitRate}
-                                      </div>
-                                    </div>
-                                  );
-                                }
-
-                                return (
-                                  <div className={`mt-2 flex flex-wrap items-center gap-3 text-sm ${darkMode ? "text-slate-300" : "text-gray-500"}`}>
-                                    <span>Qty: {item.quantity}</span>
-                                    {item.is_estimate && item.width && item.height && (
-                                      <span>Measurements: {item.width} {item.measurementUnit || item.unit || ""} × {item.height} {item.measurementUnit || item.unit || ""}</span>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-                              <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-gray-500"}`}>
-                                {item.is_estimate ? `₱${Number(item.estimated_price || 0).toLocaleString()} (estimated)` : getProductPrice(item)}
-                              </p>
-                            </div>
-                          </div>
+                      <article key={item.cartId || item._id || item.name} className="grid grid-cols-[auto_64px_minmax(0,1fr)] items-center gap-3 py-4 sm:grid-cols-[auto_72px_minmax(0,1fr)_auto] sm:gap-4">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(item.selected)}
+                          onChange={() => handleToggleCartItem(item.cartId)}
+                          aria-label={`Select ${item.name || "item"}`}
+                          className="h-5 w-5 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                        />
+                        <div className={`h-16 w-16 overflow-hidden rounded-xl border sm:h-[72px] sm:w-[72px] ${darkMode ? "border-slate-600 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
+                          <img src={getProductImage(item)} alt={item.name} className="h-full w-full object-cover" />
                         </div>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <div className={`inline-flex overflow-hidden rounded-full border ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-100"}`}>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+                            <p className={`min-w-0 truncate font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{item.name}</p>
+                            <p className="text-sm font-bold text-red-600">{formatCurrency(getItemPriceValue(item))}</p>
+                          </div>
+                          {(() => {
+                            const measurementDetails = getCartItemMeasurementDetails(item);
+                            if (measurementDetails) {
+                              return (
+                                <div className={`mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                  <span>{measurementDetails.dimensions} · {measurementDetails.area}</span>
+                                  {!item.is_estimate && <span>{measurementDetails.unitRate}</span>}
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div className={`mt-1 flex flex-wrap items-center gap-3 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                <span>Qty: {item.quantity}</span>
+                                {item.is_estimate && item.width && item.height && (
+                                  <span>{item.width} {item.measurementUnit || item.unit || ""} × {item.height} {item.measurementUnit || item.unit || ""}</span>
+                                )}
+                              </div>
+                            );
+                          })()}
+                          {item.is_estimate && (
+                            <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${darkMode ? "bg-amber-500/10 text-amber-300" : "bg-amber-50 text-amber-700"}`}>
+                              Estimated price
+                            </span>
+                          )}
+                        </div>
+                        <div className="col-span-3 flex items-center justify-between gap-3 sm:col-span-1 sm:justify-end">
+                          <div className={`inline-flex items-center overflow-hidden rounded-lg border ${darkMode ? "border-slate-600 bg-slate-800" : "border-slate-200 bg-white"}`}>
                             <button
+                              type="button"
                               onClick={() => handleUpdateCartQuantity(item.cartId, -1)}
-                              className={`px-4 py-2 ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                              aria-label={`Decrease ${item.name || "item"} quantity`}
+                              className={`inline-flex h-9 w-9 items-center justify-center transition ${darkMode ? "text-slate-200 hover:bg-slate-700" : "text-slate-700 hover:bg-slate-100"}`}
                             >
-                              −
+                              <Minus size={15} />
                             </button>
-                            <div className={`min-w-[52px] px-4 py-2 text-center text-sm font-semibold ${darkMode ? "bg-slate-800 text-white" : "bg-white text-slate-900"}`}>
+                            <div className={`min-w-9 text-center text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
                               {item.quantity}
                             </div>
                             <button
+                              type="button"
                               onClick={() => handleUpdateCartQuantity(item.cartId, 1)}
-                              className={`px-4 py-2 ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+                              aria-label={`Increase ${item.name || "item"} quantity`}
+                              className={`inline-flex h-9 w-9 items-center justify-center transition ${darkMode ? "text-slate-200 hover:bg-slate-700" : "text-slate-700 hover:bg-slate-100"}`}
                             >
-                              +
+                              <Plus size={15} />
                             </button>
                           </div>
                           <button
                             type="button"
                             onClick={() => handleRemoveFromCart(item.cartId)}
                             aria-label={`Remove ${item.name || "item"} from cart`}
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 transition hover:bg-red-100"
+                            title="Remove item"
+                            className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border transition ${darkMode ? "border-red-900/70 text-red-300 hover:bg-red-950/50" : "border-red-200 text-red-600 hover:bg-red-50"}`}
                           >
-                            <svg
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.8"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              className="h-5 w-5"
-                              aria-hidden="true"
-                            >
-                              <path d="M3 6h18" />
-                              <path d="M8 6V4.8A1.8 1.8 0 0 1 9.8 3h4.4A1.8 1.8 0 0 1 16 4.8V6" />
-                              <path d="M6 6l1 13.2A1.8 1.8 0 0 0 8.8 21h6.4a1.8 1.8 0 0 0 1.8-1.8L18 6" />
-                              <path d="M10 11v5" />
-                              <path d="M14 11v5" />
-                            </svg>
+                            <Trash2 size={16} aria-hidden="true" />
                           </button>
                         </div>
-                      </div>
+                      </article>
                     ))}
                   </div>
-                </div>
+                </section>
 
-                <aside className={`rounded-[22px] border p-5 shadow-sm ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                  <h3 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Order Summary</h3>
+                <aside className={`sticky bottom-3 z-20 self-start rounded-2xl border p-4 shadow-lg sm:p-5 lg:top-24 lg:bottom-auto lg:shadow-none ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                  <h3 className={`text-lg font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Order Summary</h3>
 
-                  <div className="mt-5 space-y-4">
-                    <div className={`flex items-center justify-between gap-4 py-2 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
-                      <span>Subtotal ({selectedItemCount} selected)</span>
-                      <span className="font-semibold">₱{Number(selectedSubtotal || 0).toLocaleString()}</span>
+                  <div className={`mt-4 flex items-center justify-between gap-4 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                    <span>{selectedItemCount} selected · {selectedQuantityTotal} total</span>
+                    <span>{formatCurrency(selectedSubtotal)}</span>
+                  </div>
+                  <div className={`mt-3 border-t pt-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                    <div className={`flex items-center justify-between gap-4 font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                      <span>Estimated total</span>
+                      <span className="text-lg font-bold text-red-600">{formatCurrency(selectedSubtotal)}</span>
                     </div>
-                    <div className={`flex items-center justify-between gap-4 border-t py-3 ${darkMode ? "border-slate-700 text-slate-200" : "border-slate-200 text-slate-900"}`}>
-                      <span className="font-semibold">Estimated Total</span>
-                      <span className="font-bold text-red-600">₱{Number(selectedSubtotal || 0).toLocaleString()}</span>
+                    <div className={`mt-2 flex items-center justify-between gap-4 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      <span>50% downpayment</span>
+                      <span>{formatCurrency(selectedSubtotal * 0.5)}</span>
                     </div>
                   </div>
 
-                  <div className="mt-6 space-y-3">
+                  <div className="mt-5 space-y-2.5">
                     <button
                       type="button"
                       onClick={openBatchOrderModal}
                       disabled={checkoutLoading || selectedItemCount === 0}
-                      className="w-full rounded-[14px] border border-red-300 bg-white px-4 py-3 text-base font-bold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="w-full rounded-lg bg-red-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Checkout Selected ({selectedItemCount})
                     </button>
@@ -5896,7 +6051,7 @@ function CustomerDashboard() {
                       type="button"
                       onClick={handleDeleteSelectedItems}
                       disabled={selectedItemCount === 0}
-                      className="w-full rounded-[14px] bg-red-600 px-4 py-3 text-base font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      className={`w-full rounded-lg border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-red-900 text-red-300 hover:bg-red-950/40" : "border-red-200 text-red-700 hover:bg-red-50"}`}
                     >
                       Delete Selected ({selectedItemCount})
                     </button>
@@ -5993,7 +6148,7 @@ function CustomerDashboard() {
 
             <div className={`mb-6 inline-flex flex-wrap gap-1 rounded-2xl border p-1 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
               {[
-                ["all", "All", orders.length],
+                ["all", "All", customerNotificationItems.length],
                 ["unread", "Unread", unreadNotificationCount],
                 ["read", "Read", readNotificationCount],
               ].map(([filter, label, count]) => (
@@ -6029,17 +6184,25 @@ function CustomerDashboard() {
             ) : (
               <div className="space-y-4">
                 {[...filteredNotifications]
-                  .sort((a, b) => new Date(b.notificationDate || 0) - new Date(a.notificationDate || 0))
+                  .sort(sortCustomerNotificationsNewestFirst)
                   .map((order) => {
                     const product = order.items?.[0] || {};
                     const status = String(order.status || "").toLowerCase();
                     const contractStatus = String(order.contract_status || "").toLowerCase();
                     const isPaymentNotification = order.notificationType === "payment";
+                    const isDelayNotification = order.notificationType === "delay";
                     const isContractReady =
                       status === "contract_sent" ||
                       (status === "site_inspection" && contractStatus === "sent") ||
                       contractStatus === "sent";
+                    const isContractNotification = !isPaymentNotification && !isDelayNotification && (
+                      order.notificationType === "contract" ||
+                      isContractReady ||
+                      status === "contract_accepted" ||
+                      contractStatus === "accepted"
+                    );
                     const notificationMessage = () => {
+                      if (isDelayNotification) return getDelayNotificationMessage(order);
                       if (isPaymentNotification) {
                         return `Your payment proof for ${formatCurrency(order.payment_proof_amount)} has been sent for confirmation.`;
                       }
@@ -6094,13 +6257,15 @@ function CustomerDashboard() {
                                 <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{notificationMessage()}</p>
                                 <p className="mt-2 text-xs text-slate-400">{order.tracking}</p>
                               </div>
-                              <span className={`inline-flex shrink-0 items-center rounded-full px-3 py-1 text-xs font-semibold ${getOrderStatusClasses(order.status)}`}>
-                                {getOrderStatusLabel(order.status)}
+                              <span className={`inline-flex shrink-0 items-center rounded-full px-3 py-1 text-xs font-semibold ${getOrderStatusClasses(isDelayNotification ? "Delayed" : order.status)}`}>
+                                {isDelayNotification ? "Delayed" : getOrderStatusLabel(order.status)}
                               </span>
                             </div>
 
                             <div className={`mt-3 flex items-center justify-between text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                              <span>{formatDateToMMMDDYYYY(order.notificationDate) || "—"}</span>
+                              <span title={formatDateTimeToMMMDDYYYY(order.notificationDate) || undefined}>
+                                {formatTimeAgo(order.notificationDate)}
+                              </span>
                               <button
                                 onClick={() => {
                                   markCustomerNotificationRead(order.notificationId);
@@ -6110,14 +6275,18 @@ function CustomerDashboard() {
                                     setOrderPage(1);
                                     setSelectedOrderForModal(null);
                                     setExpandedOrderId(orderId);
+                                  } else if (isContractNotification && canShowContractForOrder(order)) {
+                                    setContractHistoryTab("accepted");
+                                    setWarrantyHistoryTab(null);
+                                    setActiveTab("contracts");
                                   } else {
                                     setSelectedOrderForModal(order);
+                                    setActiveTab("orders");
                                   }
-                                  setActiveTab("orders");
                                 }}
                                 className={darkMode ? "text-white hover:text-red-300 font-semibold transition" : "text-slate-950 hover:text-red-600 font-semibold transition"}
                               >
-                                View Order
+                                {isContractNotification ? "View Contract" : "View Order"}
                               </button>
                             </div>
                           </div>
