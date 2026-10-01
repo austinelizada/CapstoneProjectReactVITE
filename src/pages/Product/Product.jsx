@@ -1664,7 +1664,7 @@ function Products() {
                             <div className="mt-auto flex items-end justify-between gap-2 pt-2">
                               <div>
                                 <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
-                                  {Number(product.estimated_price_override) > 0 ? "OEC-Override Estimated Cost" : "Est. Cost"}
+                                  {Number(product.estimated_price_override) > 0 ? "Override EST. Cost" : "Est. Cost"}
                                 </p>
                                 <p className={`mt-0.5 whitespace-nowrap text-[21px] font-medium ${darkMode ? "text-red-300" : "text-red-700"}`}>
                                   ₱{estimatedCost.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
