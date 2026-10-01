@@ -8,15 +8,18 @@ import {
   Trash2,
   X,
   ChevronDown,
+  Star,
 } from "lucide-react";
+import toast, { Toaster } from "react-hot-toast";
 import * as catalogApi from '@/api/catalog';
 import { API_BASE } from "@/api/client";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
-import { calculateEstimate } from "../../lib/estimator";
+import { calculateEstimate, toSquareFeet } from "../../lib/estimator";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import {
   getProducts,
   createProduct as createProductApi,
@@ -35,6 +38,7 @@ const MEASUREMENT_UNITS = [
 ];
 
 function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, disabled = false }) {
+  const { darkMode } = useAdminTheme();
   const actionLabel = label.replace(/\s*\*+\s*$/, "");
   const [isOpen, setIsOpen] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
@@ -129,14 +133,14 @@ function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, di
           if (!isOpen) updateMenuPosition();
           setIsOpen((open) => !open);
         }}
-        className="flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border border-rose-200 bg-[#fffafa] px-4 py-3 text-left text-sm text-slate-900 outline-none transition hover:border-rose-300 focus:border-red-700 focus:ring-2 focus:ring-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+        className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left text-sm outline-none transition focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100 hover:border-slate-500 focus:border-red-400 focus:ring-red-400/20" : "border-rose-200 bg-[#fffafa] text-slate-900 hover:border-rose-300 focus:border-red-700 focus:ring-red-100"}`}
       >
         <span className={value ? "truncate" : "truncate text-slate-400"}>{value || placeholder}</span>
         <ChevronDown size={16} className={`shrink-0 text-slate-400 transition ${isOpen ? "rotate-180" : ""}`} />
       </button>
 
       {isOpen && !disabled && menuPosition && createPortal(
-        <div ref={menuRef} style={menuPosition} className="z-[100] overflow-y-auto rounded-xl border border-red-700 bg-white shadow-xl">
+        <div ref={menuRef} style={menuPosition} className={`z-[100] overflow-y-auto rounded-xl border shadow-xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-red-700 bg-white text-slate-900"}`}>
           <div className="max-h-56 overflow-y-auto py-1" role="listbox" aria-label={label}>
             {options.map((option) => (
               <button
@@ -149,16 +153,16 @@ function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, di
                   setIsOpen(false);
                   setIsAdding(false);
                 }}
-                className={`w-full px-4 py-3 text-left text-sm transition hover:bg-rose-50 ${value === option ? "bg-rose-100 font-semibold text-red-900" : "text-slate-800"}`}
+                className={`w-full px-4 py-3 text-left text-sm transition ${darkMode ? "hover:bg-slate-800" : "hover:bg-rose-50"} ${value === option ? darkMode ? "bg-red-950/50 font-semibold text-red-200" : "bg-rose-100 font-semibold text-red-900" : darkMode ? "text-slate-200" : "text-slate-800"}`}
               >
-                {value === option && <span className="mr-2 text-red-800" aria-hidden="true">✓</span>}
+                {value === option && <span className={`mr-2 ${darkMode ? "text-red-300" : "text-red-800"}`} aria-hidden="true">✓</span>}
                 {option}
               </button>
             ))}
-            {options.length === 0 && <p className="px-4 py-3 text-sm text-slate-500">No options yet.</p>}
+            {options.length === 0 && <p className={`px-4 py-3 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No options yet.</p>}
           </div>
 
-          <div className="border-t border-rose-100 p-2">
+          <div className={`border-t p-2 ${darkMode ? "border-slate-700" : "border-rose-100"}`}>
             {isAdding ? (
               <form onSubmit={saveOption} className="space-y-2">
                 <input
@@ -166,12 +170,12 @@ function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, di
                   value={newOption}
                   onChange={(event) => setNewOption(event.target.value)}
                   placeholder={`New ${actionLabel.toLowerCase()}`}
-                  className="w-full rounded-lg border border-rose-200 px-3 py-2 text-sm outline-none focus:border-red-600"
+                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-red-500 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100 placeholder:text-slate-400" : "border-rose-200 bg-white text-slate-900"}`}
                 />
-                {error && <p className="text-xs text-red-600">{error}</p>}
+                {error && <p className={`text-xs ${darkMode ? "text-red-300" : "text-red-600"}`}>{error}</p>}
                 <div className="flex justify-end gap-2">
-                  <button type="button" onClick={() => setIsAdding(false)} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100">Cancel</button>
-                  <button type="submit" disabled={savingOption || !newOption.trim()} className="rounded-lg bg-red-800 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                  <button type="button" onClick={() => setIsAdding(false)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}>Cancel</button>
+                  <button type="submit" disabled={savingOption || !newOption.trim()} className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 ${darkMode ? "bg-red-700 hover:bg-red-600" : "bg-red-800"}`}>
                     {savingOption ? "Adding..." : "Add"}
                   </button>
                 </div>
@@ -180,7 +184,7 @@ function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, di
               <button
                 type="button"
                 onClick={() => setIsAdding(true)}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-semibold text-red-900 hover:bg-rose-50"
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-semibold ${darkMode ? "text-red-300 hover:bg-slate-800" : "text-red-900 hover:bg-rose-50"}`}
               >
                 <Plus size={16} aria-hidden="true" />
                 Add new {actionLabel.toLowerCase()}...
@@ -189,6 +193,71 @@ function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, di
           </div>
         </div>,
         document.body,
+      )}
+    </div>
+  );
+}
+
+function FilterDropdown({ label, value, options, onChange, darkMode }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const closeOnOutsideClick = (event) => {
+      if (!dropdownRef.current?.contains(event.target)) setIsOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setIsOpen(false);
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isOpen]);
+
+  const selectedOption = options.find(([optionValue]) => optionValue === value);
+
+  return (
+    <div ref={dropdownRef} className="relative min-w-0">
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((open) => !open)}
+        className={`flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border px-2.5 text-left text-xs font-semibold outline-none transition focus:ring-2 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-500 focus:border-red-400 focus:ring-red-400/20" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 focus:border-red-400 focus:ring-red-100"}`}
+      >
+        <span className="truncate">{selectedOption?.[1] || label}</span>
+        <ChevronDown size={14} className={`shrink-0 transition ${isOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+      </button>
+      {isOpen && (
+        <div
+          role="listbox"
+          aria-label={label}
+          className={`absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-lg border p-1 shadow-xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}
+        >
+          {options.map(([optionValue, optionLabel]) => (
+            <button
+              key={optionValue}
+              type="button"
+              role="option"
+              aria-selected={value === optionValue}
+              onClick={() => {
+                onChange(optionValue);
+                setIsOpen(false);
+              }}
+              className={`flex min-h-8 w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs ${value === optionValue ? darkMode ? "bg-red-950/50 font-semibold text-red-200" : "bg-rose-50 font-semibold text-red-800" : darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"}`}
+            >
+              <span className="truncate">{optionLabel}</span>
+              {value === optionValue && <span aria-hidden="true">✓</span>}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -211,6 +280,7 @@ function ProductFormModal({
   cancelUpload,
   saveCatalogOption,
 }) {
+  const { darkMode } = useAdminTheme();
   const updateField = (field, value) => setNewProduct((product) => ({ ...product, [field]: value }));
   const mainImage = uploaderSections.find(([key]) => key === "main");
   const angleImages = uploaderSections.filter(([key]) => key !== "main");
@@ -236,7 +306,7 @@ function ProductFormModal({
     <div key={key}>
       <p className="mb-2 text-sm font-semibold text-slate-700">{label}</p>
       <label
-        className={`group relative flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed border-rose-200 bg-[#fffafa] text-center transition hover:border-red-500 hover:bg-rose-50 ${isMain ? "min-h-36 px-5 py-6" : "aspect-square min-h-24 px-2 py-3"}`}
+        className={`group relative flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border border-dashed text-center transition ${darkMode ? "border-slate-700 bg-slate-800 hover:border-red-400 hover:bg-slate-700" : "border-rose-200 bg-[#fffafa] hover:border-red-500 hover:bg-rose-50"} ${isMain ? "min-h-36 px-5 py-6" : "aspect-square min-h-24 px-2 py-3"}`}
         onDrop={(event) => {
           event.preventDefault();
           setImageFile(key, event.dataTransfer.files?.[0]);
@@ -256,10 +326,10 @@ function ProductFormModal({
           <img src={newProduct.images[key]} alt={`${label} preview`} className="absolute inset-0 h-full w-full object-cover" />
         ) : (
           <>
-            <span className="mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-rose-100 text-red-900" aria-hidden="true">
+            <span className={`mb-2 flex h-9 w-9 items-center justify-center rounded-full ${darkMode ? "bg-slate-700 text-red-300" : "bg-rose-100 text-red-900"}`} aria-hidden="true">
               <Plus size={18} />
             </span>
-            <span className="text-xs font-semibold text-slate-700">{label}</span>
+            <span className={`text-xs font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{label}</span>
             {isMain && <span className="mt-1 text-xs text-slate-400">Drag and drop or browse</span>}
           </>
         )}
@@ -270,9 +340,9 @@ function ProductFormModal({
         )}
       </label>
       <div className="mt-1 flex min-h-5 items-center justify-between gap-2">
-        <span className="min-w-0 truncate text-xs text-slate-500" title={imageName(key)}>{imageName(key) || ""}</span>
+        <span className={`min-w-0 truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`} title={imageName(key)}>{imageName(key) || ""}</span>
         {newProduct.images?.[key] && (
-          <button type="button" onClick={() => removeImage(key)} className="shrink-0 text-xs font-semibold text-red-700 hover:text-red-900">
+          <button type="button" onClick={() => removeImage(key)} className={`shrink-0 text-xs font-semibold ${darkMode ? "text-red-300 hover:text-red-200" : "text-red-700 hover:text-red-900"}`}>
             Remove
           </button>
         )}
@@ -282,13 +352,13 @@ function ProductFormModal({
 
   const sectionHeading = (title) => (
     <div className="mb-5 flex items-center gap-3">
-      <h3 className="shrink-0 text-xs font-bold uppercase tracking-[0.14em] text-slate-700">{title}</h3>
-      <div className="h-px flex-1 bg-slate-200" />
+      <h3 className={`shrink-0 text-xs font-bold uppercase tracking-[0.14em] ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{title}</h3>
+      <div className={`h-px flex-1 ${darkMode ? "bg-slate-700" : "bg-slate-200"}`} />
     </div>
   );
 
-  const fieldClass = "min-h-12 w-full rounded-xl border border-rose-200 bg-[#fffafa] px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-700 focus:ring-2 focus:ring-red-100";
-  const labelClass = "mb-2 block text-sm font-semibold text-slate-700";
+  const fieldClass = `min-h-12 w-full rounded-xl border px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:ring-2 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100 focus:border-red-400 focus:ring-red-400/20" : "border-rose-200 bg-[#fffafa] text-slate-900 focus:border-red-700 focus:ring-red-100"}`;
+  const labelClass = `mb-2 block text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`;
   const displayedEstimatedPrice = Number(newProduct.estimated_price_override) > 0
     ? Number(newProduct.estimated_price_override)
     : Number(newProduct.estimated_price || 0);
@@ -299,14 +369,14 @@ function ProductFormModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="product-form-title"
-        className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-rose-100 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.28)]"
+        className={`flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(15,23,42,0.28)] ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-rose-100 bg-white"}`}
       >
-        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-rose-100 bg-[#fff8f7] px-5 py-4 sm:px-7">
+        <header className={`flex shrink-0 items-start justify-between gap-4 border-b px-5 py-4 sm:px-7 ${darkMode ? "border-slate-700 bg-slate-800" : "border-rose-100 bg-[#fff8f7]"}`}>
           <div>
-            <h2 id="product-form-title" className="text-xl font-bold text-slate-950">
+            <h2 id="product-form-title" className={`text-xl font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>
               {editingProduct ? "Edit Product" : "Add New Product"}
             </h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
               {editingProduct ? "Update the product details and availability." : "Fill in the details to create a new product."}
             </p>
           </div>
@@ -314,13 +384,13 @@ function ProductFormModal({
             type="button"
             onClick={closeModal}
             aria-label="Close product form"
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-rose-100 bg-white text-slate-500 transition hover:bg-rose-50 hover:text-slate-900"
+            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition ${darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-rose-100 bg-white text-slate-500 hover:bg-rose-50 hover:text-slate-900"}`}
           >
             <X size={18} />
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 space-y-7 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+        <div className={`min-h-0 flex-1 space-y-7 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6 ${darkMode ? "bg-slate-900" : "bg-white"}`}>
           {modalError && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
               {modalError}
@@ -430,7 +500,7 @@ function ProductFormModal({
                 </>
               )}
 
-              {newProduct.pricing_method === "fixed" && (
+              {newProduct.pricing_method === "fixed" && !editingProduct && (
                 <>
                   <div>
                     <label className={labelClass}>Standard Size</label>
@@ -443,14 +513,14 @@ function ProductFormModal({
                 </>
               )}
 
-              <div className="md:col-span-3 rounded-xl border border-rose-200 bg-rose-50/80 px-5 py-4">
+              <div className={`md:col-span-3 rounded-xl border px-5 py-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-rose-200 bg-rose-50/80"}`}>
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm font-bold text-red-950">Estimated Cost</p>
-                    <p className="mt-1 text-xs text-red-800/70">Auto-calculated from dimensions and pricing</p>
-                    <p className="mt-1 text-xs text-red-800/70">Estimated area: {Number(newProduct.estimated_area || 0).toFixed(2)} sq ft</p>
+                    <p className={`text-sm font-bold ${darkMode ? "text-red-300" : "text-red-950"}`}>Estimated Cost</p>
+                    <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-red-800/70"}`}>Auto-calculated from dimensions and pricing</p>
+                    <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-red-800/70"}`}>Estimated area: {Number(newProduct.estimated_area || 0).toFixed(2)} sq ft</p>
                   </div>
-                  <p className="shrink-0 text-2xl font-black text-red-950">₱{displayedEstimatedPrice.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                  <p className={`shrink-0 text-2xl font-black ${darkMode ? "text-red-300" : "text-red-950"}`}>₱{displayedEstimatedPrice.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                 </div>
               </div>
 
@@ -471,9 +541,9 @@ function ProductFormModal({
               </div>
             </div>
             {uploading && (
-              <div className="mt-4 flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 sm:flex-row sm:items-center sm:justify-between">
+              <div className={`mt-4 flex flex-col gap-3 rounded-xl border p-3 text-sm sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-emerald-800 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
                 <span>Uploading images...</span>
-                <button type="button" onClick={cancelUpload} className="self-start rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 sm:self-auto">
+                <button type="button" onClick={cancelUpload} className={`self-start rounded-lg border px-3 py-2 text-xs font-semibold sm:self-auto ${darkMode ? "border-emerald-700 bg-slate-800 text-emerald-300 hover:bg-slate-700" : "border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-100"}`}>
                   Cancel upload
                 </button>
               </div>
@@ -487,24 +557,24 @@ function ProductFormModal({
               role="switch"
               aria-checked={Boolean(newProduct.is_active)}
               onClick={() => updateField("is_active", !newProduct.is_active)}
-              className="flex w-full items-center justify-between gap-4 rounded-xl border border-rose-100 bg-[#fffafa] p-4 text-left transition hover:border-rose-200"
+              className={`flex w-full items-center justify-between gap-4 rounded-xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 ${darkMode ? "border-slate-700 bg-slate-800 hover:border-slate-600 hover:bg-slate-700 focus-visible:ring-offset-slate-900" : "border-rose-100 bg-[#fffafa] hover:border-rose-200 focus-visible:ring-offset-white"}`}
             >
               <span>
-                <span className="block text-sm font-semibold text-slate-800">Active Product</span>
-                <span className="mt-1 block text-xs text-slate-500">{newProduct.is_active ? "This product is live and visible." : "This product is hidden from customers."}</span>
+                <span className={`block text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>Active Product</span>
+                <span className={`mt-1 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{newProduct.is_active ? "This product is live and visible." : "This product is hidden from customers."}</span>
               </span>
-              <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${newProduct.is_active ? "bg-emerald-500" : "bg-slate-300"}`}>
+              <span className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${newProduct.is_active ? "bg-emerald-500" : darkMode ? "bg-slate-600" : "bg-slate-300"}`}>
                 <span className={`h-5 w-5 rounded-full bg-white shadow transition ${newProduct.is_active ? "translate-x-5" : "translate-x-0.5"}`} />
               </span>
             </button>
           </section>
         </div>
 
-        <footer className="flex shrink-0 justify-end gap-3 border-t border-rose-100 bg-[#fff8f7] px-5 py-3 sm:px-7">
-          <button type="button" onClick={closeModal} className="rounded-xl border border-rose-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-rose-50">
+        <footer className={`flex shrink-0 justify-end gap-3 border-t px-5 py-3 sm:px-7 ${darkMode ? "border-slate-700 bg-slate-800" : "border-rose-100 bg-[#fff8f7]"}`}>
+          <button type="button" onClick={closeModal} className={`rounded-xl border px-5 py-2.5 text-sm font-semibold transition ${darkMode ? "border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-700" : "border-rose-200 bg-white text-slate-700 hover:bg-rose-50"}`}>
             Cancel
           </button>
-          <button type="button" onClick={saveProduct} disabled={uploading} className="inline-flex items-center gap-2 rounded-xl bg-red-900 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60">
+          <button type="button" onClick={saveProduct} disabled={uploading} className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-red-700 hover:bg-red-600" : "bg-red-900 hover:bg-red-800"}`}>
             <span aria-hidden="true">✓</span>
             {editingProduct ? "Update Product" : "Create Product"}
           </button>
@@ -515,6 +585,7 @@ function ProductFormModal({
 }
 
 function Products() {
+  const { darkMode } = useAdminTheme();
   const API_HOST = (function getApiHost() {
     try {
       return (API_BASE || "").replace(/\/api$/, "");
@@ -565,10 +636,19 @@ function Products() {
   };
 
   const getProductPriceLabel = (product) => {
-    const pricingMethod = product.pricing_method || PRICING_METHOD[product.product_name] || "";
     const sqftPrice = Number(product.price_per_sqft || 0);
     const bladePrice = Number(product.price_per_blade || 0);
     const unitPrice = Number(product.unit_price || 0);
+    const basePrice = Number(product.base_price || 0);
+    const pricingMethod = product.pricing_method || PRICING_METHOD[product.product_name] || (
+      sqftPrice > 0 || product.unit === "per_sqft"
+        ? "sqft"
+        : bladePrice > 0
+        ? "blade"
+        : unitPrice > 0 || basePrice > 0
+        ? "fixed"
+        : ""
+    );
 
     if (pricingMethod === "blade") {
       if (bladePrice > 0) return `₱${bladePrice.toLocaleString()} / blade`;
@@ -583,8 +663,10 @@ function Products() {
     }
 
     if (pricingMethod === "fixed") {
-      if (unitPrice > 0) return `₱${unitPrice.toLocaleString()}`;
+      const fixedPrice = unitPrice || basePrice;
+      if (fixedPrice > 0) return `₱${fixedPrice.toLocaleString()}`;
       if (bladePrice > 0) return `₱${bladePrice.toLocaleString()} / blade`;
+      if (sqftPrice > 0) return `₱${sqftPrice.toLocaleString()} / sq ft`;
       return "Contact us";
     }
 
@@ -593,6 +675,30 @@ function Products() {
     }
 
     return "Contact us";
+  };
+
+  const getProductEstimatedCost = (product) => {
+    const override = Number(product.estimated_price_override || 0);
+    if (override > 0) return override;
+
+    const savedEstimate = Number(product.estimated_price || 0);
+    if (savedEstimate > 0) return savedEstimate;
+
+    return calculateEstimate({
+      productName: product.product_name || product.name,
+      categoryKey: product.product_type || product.category,
+      variantName: product.variant,
+      width: Number(product.width) || 0,
+      height: Number(product.height) || 0,
+      measurementUnit: product.measurement_unit || "in",
+      blade_count: Number(product.blade_count) || 0,
+      base_price: Number(product.base_price) || (product.pricing_method === "fixed" ? Number(product.unit_price) : undefined),
+      overrideRate: Number(product.price_per_sqft) > 0
+        ? Number(product.price_per_sqft)
+        : product.pricing_method === "blade"
+        ? Number(product.price_per_blade) || undefined
+        : undefined,
+    }).estimated_price;
   };
 
   const [isSidebarOpen, setIsSidebarOpen] =
@@ -949,7 +1055,7 @@ function Products() {
     ["bottom", "Back Angle"],
   ];
 
-  const rowsPerPage = 5;
+  const rowsPerPage = 12;
 
   const filteredProducts = products.filter((product) => {
     const normalizedSearch = search.toLowerCase();
@@ -962,7 +1068,7 @@ function Products() {
     const matchCategory =
       categoryFilter === "All"
         ? true
-        : String(product.category || "").toLowerCase() === categoryFilter.toLowerCase();
+        : String(product.category || "").trim().toLowerCase() === categoryFilter.trim().toLowerCase();
 
     const productType =
       product.type ||
@@ -1026,6 +1132,30 @@ function Products() {
     }
   };
 
+  const toggleFeaturedProduct = async (product) => {
+    try {
+      const updated = await updateProductApi(product.id, {
+        is_featured: !product.is_featured,
+      });
+      const payload = updated.product || updated;
+      setProducts((current) =>
+        current.map((item) =>
+          item.id === product.id || item._id === product.id
+            ? normalizeProductForState({ ...item, ...payload }, item)
+            : item
+        )
+      );
+      recordActivity(
+        user,
+        `${payload.is_featured ? "Featured" : "Removed from featured products"} ${product.product_name || product.name}.`,
+        "Products",
+      );
+      toast.success(payload.is_featured ? "Product marked as Top Product." : "Product removed from Top Products.");
+    } catch (error) {
+      console.error("Failed to update featured product status", error);
+    }
+  };
+
   useEffect(() => {
     const loadProducts = async () => {
       try {
@@ -1057,18 +1187,18 @@ function Products() {
           category: safeProduct.category || DEFAULT_CATEGORY,
           variant: safeProduct.variant || "",
           base_price: product.base_price || product.unit_price || "",
-          price_per_sqft: product.price_per_sqft || "",
-          price_per_blade: product.price_per_blade || "",
+          price_per_sqft: product.price_per_sqft ?? "",
+          price_per_blade: product.price_per_blade ?? "",
           customization: product.customization || false,
           customization_fee: product.customization_fee || 700,
           standard_size: product.standard_size || "",
-          width: product.width || "",
-          height: product.height || "",
+          width: product.width ?? "",
+          height: product.height ?? "",
           unit: product.measurement_unit || "in",
-          blade_count: product.blade_count || "",
-          estimated_area: product.estimated_area || 0,
-          estimated_price: product.estimated_price || 0,
-          estimated_price_override: product.estimated_price_override || "",
+          blade_count: product.blade_count ?? "",
+          estimated_area: product.estimated_area ?? 0,
+          estimated_price: product.estimated_price ?? 0,
+          estimated_price_override: Number(product.estimated_price_override) > 0 ? String(product.estimated_price_override) : "",
           images: product.images || {},
           imageFiles: {},
           description: product.description || "",
@@ -1219,6 +1349,8 @@ function Products() {
       }
     }
 
+    const numberIfEntered = (value) => (value === "" || value == null ? undefined : Number(value));
+
     try {
       // If there are local files, upload them and replace previews with server URLs
       let finalImages = newProduct.images;
@@ -1248,15 +1380,16 @@ function Products() {
         pricing_method: pricingMethod,
         category: newProduct.category || DEFAULT_CATEGORY,
         variant,
-        base_price: Number(newProduct.base_price) || undefined,
-        price_per_sqft: Number(newProduct.price_per_sqft) || undefined,
-        price_per_blade: Number(newProduct.price_per_blade) || undefined,
+        base_price: numberIfEntered(newProduct.base_price),
+        price_per_sqft: numberIfEntered(newProduct.price_per_sqft),
+        price_per_blade: numberIfEntered(newProduct.price_per_blade),
         standard_size: newProduct.standard_size || "",
-        width: newProduct.width ? Number(newProduct.width) : undefined,
-        height: newProduct.height ? Number(newProduct.height) : undefined,
-        blade_count: newProduct.blade_count ? Number(newProduct.blade_count) : undefined,
-        estimated_area: Number(newProduct.estimated_area) || undefined,
-        estimated_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || undefined,
+        width: numberIfEntered(newProduct.width),
+        height: numberIfEntered(newProduct.height),
+        blade_count: numberIfEntered(newProduct.blade_count),
+        estimated_area: Number(newProduct.estimated_area) || 0,
+        estimated_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || 0,
+        estimated_price_override: Number(newProduct.estimated_price_override) || 0,
         images: finalImages,
         description: newProduct.description,
         is_active: newProduct.is_active,
@@ -1273,12 +1406,14 @@ function Products() {
           )
         );
         recordActivity(user, `Updated product ${productName}.`, "Products");
+        toast.success("Product updated successfully.");
       } else {
         const created = await createProductApi(payload);
         const product = created.product || created;
         const refreshedProducts = await getProducts({ adminOnly: true });
         setProducts((refreshedProducts.products || []).map((item) => normalizeProductForState(item)));
         recordActivity(user, `Created product ${productName}.`, "Products");
+        toast.success("Product added successfully.");
       }
 
       closeModal();
@@ -1338,6 +1473,10 @@ function Products() {
 
   const productTypeOptions = withSelectedOption(productTypesList, newProduct.product_type);
   const categoryOptions = withSelectedOption(categoryOptionsList, newProduct.category);
+  const productCategoryFilterOptions = mergeOptionValues(
+    categoryOptionsList,
+    products.map((product) => String(product.category || "").trim()).filter(Boolean),
+  );
   const variantProductName = Object.keys(variantsList).find(
     (productName) => productName.trim().toLowerCase() === newProduct.product_name.trim().toLowerCase(),
   ) || newProduct.product_name;
@@ -1346,33 +1485,36 @@ function Products() {
     newProduct.variant
   );
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-100">
+    <div className={`flex h-screen overflow-hidden ${darkMode ? "bg-slate-950" : "bg-[#f8f3f2]"}`}>
       <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
 
       <div className="flex-1 min-h-0 flex flex-col">
 
         <Navbar />
 
-        <main className="flex-1 min-h-0 overflow-y-auto p-6">
+        <main className={`min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6 ${darkMode ? "text-slate-100" : ""}`}>
 
           <AdminPageHeader
-            title="Products"
-            description="Manage product listings, pricing, and availability from one unified dashboard."
+            title="Product Management"
+            description="Glass & Aluminum Business · Admin Panel"
+            className={`!rounded-2xl !px-5 !py-4 shadow-[0_4px_18px_rgba(15,23,42,0.06)] ${darkMode ? "!bg-slate-900 !text-white" : "!bg-none bg-white"}`}
+            statsClassName="grid-cols-4 gap-2"
             stats={[
-              { label: "Products", value: products.length, color: "text-blue-200" },
-              { label: "Active", value: products.filter((product) => product.is_active).length, color: "text-emerald-300" },
-              { label: "Inactive", value: products.filter((product) => !product.is_active).length, color: "text-red-300" },
+              { label: "Total Products", value: products.length, color: "text-red-800" },
+              { label: "Active", value: products.filter((product) => product.is_active).length, color: "text-emerald-600" },
+              { label: "Inactive", value: products.filter((product) => !product.is_active).length, color: "text-slate-500" },
+              { label: "Showing", value: filteredProducts.length, color: "text-indigo-600" },
             ]}
           />
 
           {/* FILTERS */}
-          <div className="bg-white rounded-3xl shadow mt-6 p-6">
+            <div className={`mt-4 rounded-2xl border p-2 shadow-[0_4px_16px_rgba(15,23,42,0.04)] sm:p-2.5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
 
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="relative flex-1">
+              <div className="grid grid-cols-1 gap-2 lg:grid-cols-[minmax(0,1fr)_auto_repeat(3,minmax(120px,160px))] lg:items-center">
+                <div className="relative w-full min-w-0">
                   <Search
-                    size={18}
-                    className="absolute left-4 top-4 text-gray-400"
+                    size={16}
+                    className="absolute left-3 top-2.5 text-gray-400"
                   />
                   <input
                     type="text"
@@ -1381,69 +1523,58 @@ function Products() {
                     onChange={(e) =>
                       setSearch(e.target.value)
                     }
-                    className="w-full pl-12 pr-4 py-3 border rounded-xl"
+                    className={`h-9 w-full rounded-xl border py-1.5 pl-10 pr-3 text-xs outline-none ${darkMode ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400" : "border-slate-200 bg-white text-slate-900"}`}
                   />
                 </div>
+                <button
+                  onClick={() => openModal()}
+                  disabled={!isAdmin}
+                  className={`inline-flex h-9 items-center justify-center rounded-xl px-3 text-xs font-semibold text-white shadow-sm transition ${isAdmin ? "bg-red-600 hover:bg-red-700" : "bg-gray-300 cursor-not-allowed"}`}
+                >
+                  <Plus size={16} className="mr-1.5" />
+                  Add Product
+                </button>
+                <FilterDropdown
+                  label="All types"
+                  value={typeFilter}
+                  onChange={setTypeFilter}
+                  darkMode={darkMode}
+                  options={[
+                    ["All", "All types"],
+                    ["Default Type", "Default Type"],
+                    ["Glass", "Glass"],
+                    ["Aluminum", "Aluminum"],
+                  ]}
+                />
 
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      onClick={() => openModal()}
-                      disabled={!isAdmin}
-                      className={`inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition ${isAdmin ? "bg-red-600 hover:bg-red-700" : "bg-gray-300 cursor-not-allowed"}`}
-                    >
-                      <Plus size={18} className="mr-2" />
-                      Add Product
-                    </button>
+                <FilterDropdown
+                  label="All categories"
+                  value={categoryFilter}
+                  onChange={setCategoryFilter}
+                  darkMode={darkMode}
+                  options={[
+                    ["All", "All categories"],
+                    ...productCategoryFilterOptions.map((option) => [option, option]),
+                  ]}
+                />
 
-                  </div>
-                </div>
+                <FilterDropdown
+                  label="All statuses"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  darkMode={darkMode}
+                  options={[
+                    ["All", "All statuses"],
+                    ["Active", "Active"],
+                    ["Inactive", "Inactive"],
+                  ]}
+                />
               </div>
               {!isAdmin && (
-                <p className="mt-3 text-sm text-yellow-700">
+                <p className="mt-2 text-sm text-yellow-700">
                   Product creation and editing are available only to admin users.
                 </p>
               )}
-
-              <div className="grid gap-4 mt-4 lg:grid-cols-3">
-                <select
-                  value={typeFilter}
-                  onChange={(e) =>
-                    setTypeFilter(e.target.value)
-                  }
-                  className="px-4 py-3 border rounded-xl"
-                >
-                  <option value="All">All types</option>
-                  <option value="Default Type">Default Type</option>
-                  <option value="Glass">Glass</option>
-                  <option value="Aluminum">Aluminum</option>
-                </select>
-
-                <select
-                  value={categoryFilter}
-                  onChange={(e) =>
-                    setCategoryFilter(e.target.value)
-                  }
-                  className="px-4 py-3 border rounded-xl"
-                >
-                  <option value="All">All categories</option>
-                  {categoryOptionsList.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-
-                <select
-                  value={statusFilter}
-                  onChange={(e) =>
-                    setStatusFilter(e.target.value)
-                  }
-                  className="px-4 py-3 border rounded-xl"
-                >
-                  <option value="All">All statuses</option>
-                  <option value="Active">Active</option>
-                  <option value="Inactive">Inactive</option>
-                </select>
-              </div>
 
             </div>
 
@@ -1451,109 +1582,136 @@ function Products() {
 
               <div className="mt-6">
                 {currentProducts.length === 0 ? (
-                  <div className="bg-white rounded-3xl p-10 shadow text-center">
-                    <p className="text-gray-500">No products match the selected filters.</p>
+                  <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "border border-slate-700 bg-slate-900" : "bg-white"}`}>
+                    <p className={darkMode ? "text-slate-400" : "text-gray-500"}>No products match the selected filters.</p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-3xl border border-gray-200 bg-white shadow-sm">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">No.</th>
-                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Product</th>
-                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Category</th>
-                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Variant</th>
-                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Price</th>
-                          <th className="px-6 py-4 text-left text-sm font-bold uppercase tracking-wider text-gray-900">Status</th>
-                          <th className="px-4 py-4 text-right text-sm font-bold uppercase tracking-wider text-gray-900">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200 bg-white">
-                        {currentProducts.map((product, index) => {
-                          const imageSrc = resolveProductImage(product);
-                          const productName = product.product_name || product.name;
-                          const productType = product.product_type || "Default Type";
-                          const rowNumber = firstIndex + index + 1;
-                          return (
-                            <tr key={product._id || product.id} className="hover:bg-gray-50">
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{rowNumber}</td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <div className="flex items-center gap-3">
-                                  <div className="h-14 w-14 overflow-hidden rounded-2xl bg-gray-100">
-                                    <img
-                                      src={imageSrc}
-                                      alt={productName}
-                                      className="h-full w-full object-cover"
-                                      onError={(e) => {
-                                        e.currentTarget.onerror = null;
-                                        e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
-                                      }}
-                                    />
-                                  </div>
-                                  <div>
-                                    <div className="text-sm font-semibold text-gray-900">{productName}</div>
-                                    <div className="text-xs text-gray-500">{productType}</div>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.category || "—"}</td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{product.variant || "—"}</td>
-                              <td className="px-6 py-4 whitespace-nowrap text-m text-green-500">{getProductPriceLabel(product)}</td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${product.is_active ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-700"}`}>
-                                  {product.is_active ? "Active" : "Inactive"}
-                                </span>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                <div className="flex items-center justify-end gap-2">
-                                  <button
-                                    className="p-2 rounded-lg text-orange-500 hover:bg-orange-50 transition"
-                                    onClick={() => openModal(product)}
-                                    title="Edit product"
-                                    aria-label="Edit product"
-                                  >
-                                    <Pencil size={20} />
-                                  </button>
-                                  <button
-                                    className="p-2 rounded-lg text-red-600 hover:bg-red-50 transition"
-                                    onClick={() => openDeleteConfirm(product)}
-                                    title="Delete product"
-                                    aria-label="Delete product"
-                                  >
-                                    <Trash2 size={20} />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-[18px]">
+                    {currentProducts.map((product) => {
+                      const imageSrc = resolveProductImage(product);
+                      const productName = product.product_name || product.name || "Unnamed Product";
+                      const productType = product.product_type || product.type || "General";
+                      const estimatedCost = getProductEstimatedCost(product);
+                      const productWidth = Number(product.width) || 0;
+                      const productHeight = Number(product.height) || 0;
+                      const productAreaSqft = toSquareFeet(productWidth, productHeight, product.measurement_unit || "in");
+                      const pricingMethod = product.pricing_method || PRICING_METHOD[product.product_name] || "";
+                      const hasEstimatedCostOverride = Number(product.estimated_price_override) > 0;
+                      const unitPriceLabel = hasEstimatedCostOverride
+                        ? `₱${Number(product.price_per_sqft || 0).toLocaleString("en-PH", { maximumFractionDigits: 2 })} / sq ft / OEC`
+                        : pricingMethod !== "blade" && productAreaSqft > 0 && estimatedCost > 0
+                        ? `₱${(Number(product.price_per_sqft) || estimatedCost / productAreaSqft).toLocaleString("en-PH", { maximumFractionDigits: 2 })} / sq ft`
+                        : getProductPriceLabel(product);
+                      const productDimensions = productWidth > 0 && productHeight > 0
+                        ? `${productWidth.toLocaleString()} × ${productHeight.toLocaleString()} ${product.measurement_unit || "in"}`
+                        : product.standard_size || "";
+                      return (
+                        <article key={product._id || product.id} className={`group flex h-full flex-col overflow-hidden rounded-2xl border transition duration-150 hover:-translate-y-0.5 ${product.is_featured ? "border-amber-400 hover:border-amber-500 glow-bar-amber" : darkMode ? "border-slate-700 hover:border-slate-500" : "border-slate-200 hover:border-slate-400"} ${darkMode ? "bg-slate-900" : "bg-white"} motion-reduce:animate-none motion-reduce:transition-none motion-reduce:hover:transform-none`}>
+                          <div className={`relative aspect-[4/3] overflow-hidden ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
+                            <img
+                              src={imageSrc}
+                              alt={productName}
+                              className="h-full w-full object-cover"
+                              onError={(event) => {
+                                event.currentTarget.onerror = null;
+                                event.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+                              }}
+                            />
+                            {product.is_featured && (
+                              <span className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full border border-amber-500 bg-amber-300 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.08em] text-amber-950">
+                                <Star size={12} fill="currentColor" aria-hidden="true" /> Top Product
+                              </span>
+                            )}
+                            <div className="absolute bottom-3 right-3 z-10 flex gap-1.5">
+                              <button
+                                type="button"
+                                className={`inline-flex h-[34px] w-[34px] items-center justify-center rounded-[10px] border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? product.is_featured ? "border-amber-400 bg-amber-300 text-amber-950 hover:border-amber-300 hover:bg-amber-400" : "border-slate-700 bg-slate-900 text-slate-400 hover:border-amber-400 hover:text-amber-300" : product.is_featured ? "border-amber-500 bg-amber-50 text-amber-600 hover:bg-amber-100" : "border-slate-300 bg-white text-slate-500 hover:border-amber-400 hover:text-amber-600"}`}
+                                onClick={() => toggleFeaturedProduct(product)}
+                                title={product.is_featured ? "Remove from Top Products" : "Make Top Product"}
+                                aria-label={`${product.is_featured ? "Remove from Top Products" : "Make Top Product"}: ${productName}`}
+                                aria-pressed={Boolean(product.is_featured)}
+                              >
+                                <Star size={17} fill={product.is_featured ? "currentColor" : "none"} aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                className={`inline-flex h-[34px] w-[34px] items-center justify-center rounded-[10px] border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "border-amber-800/70 bg-slate-900 text-amber-300 hover:border-amber-500 hover:bg-amber-950/60 hover:text-amber-200" : "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-400 hover:bg-amber-100 hover:text-amber-800"}`}
+                                onClick={() => openModal(product)}
+                                title="Edit product"
+                                aria-label={`Edit product: ${productName}`}
+                              >
+                                <Pencil size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                className={`inline-flex h-[34px] w-[34px] items-center justify-center rounded-[10px] border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "border-red-900/70 bg-slate-900 text-red-300 hover:border-red-500 hover:bg-red-950/60 hover:text-red-200" : "border-red-200 bg-red-50 text-red-700 hover:border-red-400 hover:bg-red-100 hover:text-red-800"}`}
+                                onClick={() => openDeleteConfirm(product)}
+                                title="Delete product"
+                                aria-label={`Delete product: ${productName}`}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex flex-1 flex-col gap-3 p-4">
+                            <div>
+                              <span className={`inline-flex max-w-full truncate rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "border-slate-700 bg-slate-800 text-red-300" : "border-slate-200 bg-slate-50 text-red-700"}`}>
+                                {product.category || "General"}
+                              </span>
+                              <h3 title={productName} className={`mt-2 truncate text-[17px] font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{productName}</h3>
+                              <p className={`mt-1 truncate text-[13px] font-normal ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{productType}{product.variant ? ` · ${product.variant}` : ""}</p>
+                            </div>
+                            <div className="mt-auto flex items-end justify-between gap-2 pt-2">
+                              <div>
+                                <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
+                                  {Number(product.estimated_price_override) > 0 ? "OEC-Override Estimated Cost" : "Est. Cost"}
+                                </p>
+                                <p className={`mt-0.5 whitespace-nowrap text-[21px] font-medium ${darkMode ? "text-red-300" : "text-red-700"}`}>
+                                  ₱{estimatedCost.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </p>
+                              </div>
+                              <div className={`max-w-[48%] min-w-0 text-right text-xs ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+                                {productDimensions && <p className="truncate" title={productDimensions}>{productDimensions}</p>}
+                                <p className="whitespace-normal break-words leading-4" title={unitPriceLabel}>{unitPriceLabel}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <footer className={`flex items-center justify-between gap-3 border-t px-4 py-2.5 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                            <span className={`flex min-w-0 items-center gap-2 truncate text-xs font-normal ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                              <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${product.is_active ? "bg-emerald-500" : "bg-slate-400"}`} aria-hidden="true" />
+                              {product.is_active ? "Active product" : "Inactive product"}
+                            </span>
+                          </footer>
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
               {/* PAGINATION */}
-              <div className="mt-6 flex flex-col gap-4 items-center sm:flex-row sm:justify-center sm:items-center">
-                <span className="text-gray-500 text-center">
+              <div className={`mt-6 flex flex-col items-center justify-center gap-3 border-t p-4 sm:flex-row ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-gray-50"}`}>
+                <span className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                   Showing {firstShown}-{lastShown} of {filteredProducts.length} products
                 </span>
-                <div className="flex flex-wrap gap-2 justify-center">
+                <div className="flex flex-wrap items-center justify-center gap-2">
                   <button
                     disabled={currentPage === 1}
+                    aria-disabled={currentPage === 1}
                     onClick={() => setCurrentPage(currentPage - 1)}
-                    className="px-4 py-2 border rounded-lg"
+                    className={`h-10 rounded-lg border px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border bg-white text-slate-700 hover:bg-gray-100"}`}
                   >
                     Previous
                   </button>
                   {[...Array(totalPages)].map((_, index) => (
                     <button
                       key={index}
+                      aria-current={currentPage === index + 1 ? "page" : undefined}
                       onClick={() => setCurrentPage(index + 1)}
-                      className={`w-10 h-10 rounded-lg ${
+                      className={`h-10 w-10 rounded-lg ${
                         currentPage === index + 1
                           ? "bg-red-600 text-white"
-                          : "bg-white border"
+                          : darkMode ? "border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border bg-white text-slate-700 hover:bg-gray-100"
                       }`}
                     >
                       {index + 1}
@@ -1561,8 +1719,9 @@ function Products() {
                   ))}
                   <button
                     disabled={currentPage === totalPages}
+                    aria-disabled={currentPage === totalPages}
                     onClick={() => setCurrentPage(currentPage + 1)}
-                    className="px-4 py-2 border rounded-lg"
+                    className={`h-10 rounded-lg border px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border bg-white text-slate-700 hover:bg-gray-100"}`}
                   >
                     Next
                   </button>
@@ -1570,6 +1729,8 @@ function Products() {
               </div>
         </main>
       </div>
+
+      <Toaster position="bottom-right" />
 
       {showModal && (
         <ProductFormModal

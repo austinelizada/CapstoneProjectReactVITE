@@ -100,6 +100,11 @@ const ProductSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    estimated_price_override: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     images: {
       type: Object,
       default: {},

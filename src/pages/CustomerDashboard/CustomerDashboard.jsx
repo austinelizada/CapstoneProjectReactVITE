@@ -239,7 +239,8 @@ function CustomerDashboard() {
   const [cartItems, setCartItems] = useState([]);
   const [cartLoaded, setCartLoaded] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "ft", width: "0", height: "0" });
+  const [selectedProductImageIndex, setSelectedProductImageIndex] = useState(0);
+  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0" });
   const [showAboutProduct, setShowAboutProduct] = useState(false);
   const [showCartDecisionModal, setShowCartDecisionModal] = useState(false);
   const [cartDecisionStep, setCartDecisionStep] = useState("choice");
@@ -986,7 +987,9 @@ function CustomerDashboard() {
         });
         if (!active) return;
 
-        const productsList = response.products || [];
+        const productsList = (response.products || []).sort(
+          (firstProduct, secondProduct) => Number(Boolean(secondProduct.is_featured)) - Number(Boolean(firstProduct.is_featured)),
+        );
         setProducts(productsList);
 
         if (!canUploadFeedback) {
@@ -1717,12 +1720,14 @@ function CustomerDashboard() {
 
   const handleViewProduct = (product) => {
     setSelectedProduct(product);
-    setProductEstimatorForm({ unit: "ft", width: "0", height: "0" });
+    setSelectedProductImageIndex(0);
+    setProductEstimatorForm({ unit: "in", width: "0", height: "0" });
     setShowAboutProduct(false);
   };
 
   const closeProductModal = () => {
     setSelectedProduct(null);
+    setSelectedProductImageIndex(0);
     setShowAboutProduct(false);
   };
 
@@ -2344,6 +2349,36 @@ function CustomerDashboard() {
     return ensureAbsoluteUrl(candidate);
   };
 
+  const getProductImages = (product) => {
+    if (!product) return [{ url: PRODUCT_IMAGE_PLACEHOLDER, label: "Main photo" }];
+
+    const images = [];
+    const seen = new Set();
+    const addImage = (value, label) => {
+      if (Array.isArray(value)) {
+        value.forEach((item) => addImage(item, label));
+        return;
+      }
+      const rawUrl = typeof value === "object" && value ? value.url : value;
+      if (typeof rawUrl !== "string" || !rawUrl.trim()) return;
+      const url = ensureAbsoluteUrl(rawUrl);
+      if (seen.has(url) || url === PRODUCT_IMAGE_PLACEHOLDER) return;
+      seen.add(url);
+      images.push({ url, label });
+    };
+
+    addImage(product.image_url, "Main photo");
+    addImage(product.image, "Main photo");
+    if (product.images && typeof product.images === "object") {
+      Object.entries(product.images).forEach(([key, value]) => {
+        const label = key === "main" ? "Main photo" : `${key.charAt(0).toUpperCase()}${key.slice(1)} angle`;
+        addImage(value, label);
+      });
+    }
+
+    return images.length ? images : [{ url: PRODUCT_IMAGE_PLACEHOLDER, label: "Product photo" }];
+  };
+
   function getOrderItemImage(item) {
     if (!item) return PRODUCT_IMAGE_PLACEHOLDER;
     let candidate = null;
@@ -2813,6 +2848,8 @@ function CustomerDashboard() {
   const sectionTextClass = darkMode ? "text-slate-100" : "text-slate-900";
   const sectionMutedTextClass = darkMode ? "text-slate-300" : "text-slate-600";
   const panelClass = darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200";
+  const selectedProductImages = getProductImages(selectedProduct);
+  const activeProductImage = selectedProductImages[Math.min(selectedProductImageIndex, selectedProductImages.length - 1)];
 
   if (loading) {
     return (
@@ -3652,7 +3689,35 @@ function CustomerDashboard() {
                     <div className="grid items-start gap-5 p-4 sm:p-5 md:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.9fr)] lg:gap-7 lg:p-6">
                       {/* Left: Product Image & Description */}
                       <div className="min-w-0 space-y-4">
-                        <img src={getProductImage(selectedProduct)} alt={selectedProduct.name} className="aspect-[4/3] max-h-[300px] w-full rounded-2xl bg-slate-100 object-cover shadow-sm" />
+                        <div className="space-y-2">
+                          <div className="overflow-hidden rounded-2xl bg-slate-100 shadow-sm">
+                            <img
+                              src={activeProductImage.url}
+                              alt={`${selectedProduct.name} - ${activeProductImage.label}`}
+                              className="aspect-[4/3] max-h-[300px] w-full object-cover"
+                              onError={(event) => {
+                                event.currentTarget.onerror = null;
+                                event.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+                              }}
+                            />
+                          </div>
+                          {selectedProductImages.length > 1 && (
+                            <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Product photo angles">
+                              {selectedProductImages.map((image, index) => (
+                                <button
+                                  key={`${image.url}-${index}`}
+                                  type="button"
+                                  onClick={() => setSelectedProductImageIndex(index)}
+                                  aria-label={`View ${image.label}`}
+                                  aria-pressed={selectedProductImageIndex === index}
+                                  className={`h-16 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition ${selectedProductImageIndex === index ? "border-red-600" : "border-transparent hover:border-red-300"}`}
+                                >
+                                  <img src={image.url} alt="" className="h-full w-full object-cover" />
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
                             <h4 className={`text-base font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Product Details</h4>
                             <p className={`mt-1.5 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
@@ -3729,7 +3794,6 @@ function CustomerDashboard() {
                                 className={`h-9 w-full rounded-lg border px-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15 ${darkMode ? "border-slate-600 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
                               >
                                 <option value="in">in</option>
-                                <option value="ft">ft</option>
                                 <option value="cm">cm</option>
                                 <option value="m">m</option>
                               </select>

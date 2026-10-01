@@ -71,6 +71,7 @@ export const createProduct = async (req, res) => {
       blade_count,
       estimated_area,
       estimated_price,
+      estimated_price_override,
       images,
     } = req.body;
 
@@ -107,6 +108,7 @@ export const createProduct = async (req, res) => {
       blade_count: Number(blade_count) || 0,
       estimated_area: Number(estimated_area) || 0,
       estimated_price: Number(estimated_price) || 0,
+      estimated_price_override: Number(estimated_price_override) || 0,
       images: images || {},
       is_active: req.body.is_active !== undefined ? Boolean(req.body.is_active) : true,
     });
@@ -152,6 +154,7 @@ export const updateProduct = async (req, res) => {
       blade_count: req.body.blade_count != null ? Number(req.body.blade_count) : product.blade_count,
       estimated_area: req.body.estimated_area != null ? Number(req.body.estimated_area) : product.estimated_area,
       estimated_price: req.body.estimated_price != null ? Number(req.body.estimated_price) : product.estimated_price,
+      estimated_price_override: req.body.estimated_price_override != null ? Number(req.body.estimated_price_override) : product.estimated_price_override || 0,
       images: req.body.images ?? product.images,
       is_active: req.body.is_active != null ? Boolean(req.body.is_active) : product.is_active,
     };
