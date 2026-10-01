@@ -1,7 +1,17 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 
-export default function ProtectedRoute({ children, roles = [] }) {
+const STAFF_MODULE_PATHS = [
+  ["dashboard", "/dashboard"],
+  ["product_management", "/product"],
+  ["site_inspection", "/site-inspection"],
+  ["progress_monitoring", "/progress-monitor"],
+  ["transactions", "/transactions"],
+  ["settings", "/settings"],
+  ["profile", "/profile"],
+];
+
+export default function ProtectedRoute({ children, roles = [], requiredModule }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -17,8 +27,18 @@ export default function ProtectedRoute({ children, roles = [] }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  const canViewStaffModule = (moduleKey) => (
+    user.staff_access?.modules?.[moduleKey]?.enabled === true &&
+    user.staff_access?.modules?.[moduleKey]?.actions?.view === true
+  );
+
+  if (user.role === "skilled_worker" && requiredModule && !canViewStaffModule(requiredModule)) {
+    const firstAllowedPath = STAFF_MODULE_PATHS.find(([moduleKey]) => canViewStaffModule(moduleKey))?.[1];
+    return <Navigate to={firstAllowedPath || "/"} replace />;
+  }
+
   if (roles.length > 0 && !roles.includes(user.role)) {
-    const fallback = user.role === "customer" ? "/customer-dashboard" : "/dashboard";
+    const fallback = user.role === "customer" ? "/customer-dashboard" : user.role === "skilled_worker" ? "/" : "/dashboard";
     return <Navigate to={fallback} replace />;
   }
 

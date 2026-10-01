@@ -61,6 +61,10 @@ const UserSchema = new mongoose.Schema(
       enum: ["customer", "skilled_worker", "admin"],
       default: "customer",
     },
+    session_version: {
+      type: Number,
+      default: 0,
+    },
     is_active: {
       type: Boolean,
       default: true,
@@ -92,6 +96,10 @@ const UserSchema = new mongoose.Schema(
       can_track_products: { type: Boolean, default: true },
       can_upload_feedback: { type: Boolean, default: true },
       show_ratings_homepage: { type: Boolean, default: true },
+    },
+    staff_access: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({}),
     },
   },
   {

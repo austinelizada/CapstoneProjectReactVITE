@@ -1,5 +1,5 @@
 import express from "express";
-import { authMiddleware, permissionMiddleware, roleMiddleware } from "../middleware/auth.js";
+import { authMiddleware, permissionMiddleware, roleMiddleware, staffModulePermission } from "../middleware/auth.js";
 import {
   createOrder,
   createOrderAsAdmin,
@@ -34,8 +34,8 @@ router.put("/:orderId/review", authMiddleware, roleMiddleware("customer"), permi
 router.get("/reviews/product/:productId", authMiddleware, permissionMiddleware("can_upload_feedback"), getProductReviews);
 
 // Admin routes
-router.get("/admin/list", authMiddleware, roleMiddleware("admin"), getAdminOrders);
-router.get("/admin/:orderId", authMiddleware, roleMiddleware("admin"), getAdminOrderById);
+router.get("/admin/list", authMiddleware, staffModulePermission((req) => req.query.module), getAdminOrders);
+router.get("/admin/:orderId", authMiddleware, staffModulePermission((req) => req.query.module), getAdminOrderById);
 router.post("/admin/create", authMiddleware, roleMiddleware("admin"), createOrderAsAdmin);
 router.put("/admin/:orderId/status", authMiddleware, roleMiddleware("admin"), updateOrderStatus);
 router.delete("/admin/:orderId/review", authMiddleware, roleMiddleware("admin"), deleteOrderReview);

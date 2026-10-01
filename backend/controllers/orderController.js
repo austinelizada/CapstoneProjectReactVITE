@@ -407,8 +407,8 @@ export const trackOrder = async (req, res) => {
 
 export const getAdminOrders = async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "Admin access required" });
+    if (!["admin", "skilled_worker"].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: "Staff access required" });
     }
 
     const { status, contract_status, payment_proof_submitted } = req.query;
@@ -441,8 +441,8 @@ export const getAdminOrders = async (req, res) => {
 
 export const getAdminOrderById = async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "Admin access required" });
+    if (!["admin", "skilled_worker"].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: "Staff access required" });
     }
 
     const { orderId } = req.params;

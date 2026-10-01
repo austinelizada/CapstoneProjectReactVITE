@@ -5,7 +5,7 @@ import User from "../models/User.js";
  * Authentication Middleware
  * Verifies JWT token from Authorization header
  */
-export const authMiddleware = (req, res, next) => {
+export const authMiddleware = async (req, res, next) => {
   try {
     // Get token from Authorization header
     const token = req.headers.authorization?.split(" ")[1];
@@ -22,6 +22,17 @@ export const authMiddleware = (req, res, next) => {
       token,
       process.env.JWT_SECRET || "your-secret-key"
     );
+
+    if (decoded.role !== "admin") {
+      const user = await User.findById(decoded.id).select("session_version").lean();
+      if (!user || Number(decoded.session_version || 0) !== Number(user.session_version || 0)) {
+        return res.status(401).json({
+          success: false,
+          code: "SESSION_REVOKED",
+          message: "Your account role changed. Please sign in again.",
+        });
+      }
+    }
 
     // Attach user info to request
     req.user = decoded;
@@ -62,6 +73,30 @@ export const roleMiddleware = (requiredRoles) => {
 
     next();
   };
+};
+
+export const staffModulePermission = (moduleFromRequest, action = "view") => async (req, res, next) => {
+  try {
+    if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
+    if (req.user.role === "admin") return next();
+    if (req.user.role !== "skilled_worker") {
+      return res.status(403).json({ success: false, message: "Insufficient permissions" });
+    }
+
+    const moduleKey = typeof moduleFromRequest === "function" ? moduleFromRequest(req) : moduleFromRequest;
+    const user = await User.findById(req.user.id).select("staff_access").lean();
+    const moduleAccess = user?.staff_access?.modules?.[moduleKey];
+    if (!moduleAccess?.enabled || moduleAccess.actions?.[action] !== true) {
+      return res.status(403).json({ success: false, message: "This staff module or action is disabled for your account." });
+    }
+
+    req.staffAccessModule = moduleKey;
+    req.staffAccess = user.staff_access;
+    next();
+  } catch (error) {
+    console.error("Staff module permission error:", error);
+    res.status(500).json({ success: false, message: "Unable to verify staff access." });
+  }
 };
 
 export const permissionMiddleware = (permission) => async (req, res, next) => {

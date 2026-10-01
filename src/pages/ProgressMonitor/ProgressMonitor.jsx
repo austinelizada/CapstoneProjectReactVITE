@@ -310,7 +310,7 @@ function ProgressMonitor() {
     const fetchProjects = async () => {
       setProjectLoading(true);
       try {
-        const response = await getAdminOrders();
+        const response = await getAdminOrders({ module: "progress_monitoring" });
         const orders = response.orders || [];
         const projects = orders
           .filter((order) =>

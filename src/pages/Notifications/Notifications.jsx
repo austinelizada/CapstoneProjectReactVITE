@@ -15,10 +15,10 @@ export default function Notifications() {
       setLoading(true);
       try {
         const [acceptedResp, declinedResp, sentResp, paymentResp] = await Promise.all([
-          getAdminOrders({ contract_status: "accepted" }),
-          getAdminOrders({ contract_status: "declined" }),
-          getAdminOrders({ contract_status: "sent" }),
-          getAdminOrders({ payment_proof_submitted: "true" }),
+          getAdminOrders({ contract_status: "accepted", module: "dashboard" }),
+          getAdminOrders({ contract_status: "declined", module: "dashboard" }),
+          getAdminOrders({ contract_status: "sent", module: "dashboard" }),
+          getAdminOrders({ payment_proof_submitted: "true", module: "dashboard" }),
         ]);
         const items = [
           ...(acceptedResp.orders || []).map((o) => ({ ...o, notificationType: "accepted", read: false })),

@@ -197,6 +197,25 @@ function CustomerDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
   const [maintenanceMode, setMaintenanceMode] = useState(false);
+  useEffect(() => {
+    if (loading || user?.role !== "customer") return undefined;
+
+    const refreshCustomerPermissions = () => {
+      if (document.visibilityState !== "visible") return;
+      refreshUser().catch((error) => console.warn("Unable to refresh customer permissions", error));
+    };
+    refreshCustomerPermissions();
+    const intervalId = window.setInterval(refreshCustomerPermissions, 30000);
+    window.addEventListener("focus", refreshCustomerPermissions);
+    document.addEventListener("visibilitychange", refreshCustomerPermissions);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshCustomerPermissions);
+      document.removeEventListener("visibilitychange", refreshCustomerPermissions);
+    };
+  }, [loading, refreshUser, user?.id, user?.role]);
+
   const accountPermissions = {
     can_request_orders: true,
     can_estimate_pricing: true,
@@ -3685,18 +3704,36 @@ function CustomerDashboard() {
             {selectedProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4">
                 <div className={`order-flow-modal relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
-                  {/* Header with shared brand gradient */}
-                  {!isProductModalReadOnly && <div className="flex-shrink-0 bg-red-600 px-5 py-3.5 sm:px-6">
-                    <div className="flex min-w-0 items-center justify-between gap-4">
-                      <div className="text-white">
-                        <h3 className="truncate text-xl font-bold sm:text-2xl">{selectedProduct.name}</h3>
-                        <p className="mt-0.5 text-sm text-red-100">{selectedProduct.category || selectedProduct.product_type || "General"}</p>
+                  {/* Header with cleaner elevated styling */}
+                  {!isProductModalReadOnly && (
+                    <div className="flex-shrink-0 border-b border-red-500/30 bg-gradient-to-r from-red-600 via-red-600 to-red-700 px-5 py-4 shadow-[0_12px_24px_rgba(220,38,38,0.18)] sm:px-6">
+                      <div className="flex min-w-0 items-center justify-between gap-4">
+                        <div className="flex min-w-0 items-center gap-3 text-white">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/12 ring-1 ring-white/20 backdrop-blur-sm">
+                            <Package size={20} aria-hidden="true" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-100/90">Product details</p>
+                            <h3 className="truncate text-lg font-black sm:text-2xl">{selectedProduct.name}</h3>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={closeProductModal}
+                          aria-label="Close product details"
+                          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/60"
+                        >
+                          <X size={20} aria-hidden="true" />
+                        </button>
                       </div>
-                      <button type="button" onClick={closeProductModal} aria-label="Close product details" className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-white transition hover:bg-white/15">
-                        <span className="text-3xl">×</span>
-                      </button>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-white/25 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-red-50">
+                          {selectedProduct.category || selectedProduct.product_type || "General"}
+                        </span>
+                        <span className="text-xs text-red-100/90">Ready for inquiry</span>
+                      </div>
                     </div>
-                  </div>}
+                  )}
                   {isProductModalReadOnly && (
                     <button
                       type="button"
@@ -3961,41 +3998,51 @@ function CustomerDashboard() {
                         </button>
                         </>}
 
-                        {canUploadFeedback && <button
-                          type="button"
-                          onClick={openProductReviewModal}
-                          aria-label={`View customer reviews for ${selectedProduct?.name || "this product"}`}
-                          className={`group mt-2 w-full rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md ${darkMode ? "border-slate-700 bg-slate-800 hover:border-slate-600" : "border-slate-200 bg-white hover:border-slate-300"}`}
-                        >
-                          <div className="flex min-w-0 items-center gap-3">
-                            <div className={`h-12 w-12 shrink-0 overflow-hidden rounded-lg border ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-50"}`}>
-                              <img src={getProductImage(selectedProduct)} alt={selectedProduct?.name || "Product"} className="h-full w-full object-cover" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customer Reviews</p>
-                                <ArrowRight size={15} className={`shrink-0 transition-transform group-hover:translate-x-0.5 ${darkMode ? "text-slate-400" : "text-slate-500"}`} aria-hidden="true" />
+                        {canUploadFeedback && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={openProductReviewModal}
+                              aria-label={`View customer reviews for ${selectedProduct?.name || "this product"}`}
+                              className={`group mt-2 w-full rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md ${darkMode ? "border-slate-700 bg-slate-800 hover:border-slate-600" : "border-slate-200 bg-white hover:border-slate-300"}`}
+                            >
+                              <div className="flex min-w-0 items-center gap-3">
+                                <div className={`h-12 w-12 shrink-0 overflow-hidden rounded-lg border ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-50"}`}>
+                                  <img src={getProductImage(selectedProduct)} alt={selectedProduct?.name || "Product"} className="h-full w-full object-cover" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customer Reviews</p>
+                                    <ArrowRight size={15} className={`shrink-0 transition-transform group-hover:translate-x-0.5 ${darkMode ? "text-slate-400" : "text-slate-500"}`} aria-hidden="true" />
+                                  </div>
+                                  <div className="mt-1 flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-0.5">{renderRatingStars(averageProductReviewRating, 14)}</span>
+                                    <span className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                                      {productReviewAverageRating ? `${productReviewAverageRating} / 5` : "— / 5"}
+                                    </span>
+                                  </div>
+                                  <p className={`mt-1 truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                    {productReviews[0]?.title || (totalRatedReviews ? "Read the latest customer feedback" : "No reviews yet")}
+                                  </p>
+                                </div>
                               </div>
-                              <div className="mt-1 flex items-center gap-2">
-                                <span className="inline-flex items-center gap-0.5">{renderRatingStars(averageProductReviewRating, 14)}</span>
-                                <span className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                                  {productReviewAverageRating ? `${productReviewAverageRating} / 5` : "— / 5"}
+                              <div className={`mt-3 flex items-center justify-between gap-3 border-t pt-2.5 text-xs ${darkMode ? "border-slate-700 text-slate-300" : "border-slate-100 text-slate-600"}`}>
+                                <span className={`rounded-full border px-2.5 py-1 font-medium ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-50"}`}>
+                                  {totalRatedReviews} rating{totalRatedReviews === 1 ? "" : "s"}
+                                </span>
+                                <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                                  View reviews
                                 </span>
                               </div>
-                              <p className={`mt-1 truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                                {productReviews[0]?.title || (totalRatedReviews ? "Read the latest customer feedback" : "No reviews yet")}
-                              </p>
-                            </div>
-                          </div>
-                          <div className={`mt-3 flex items-center justify-between gap-3 border-t pt-2.5 text-xs ${darkMode ? "border-slate-700 text-slate-300" : "border-slate-100 text-slate-600"}`}>
-                            <span className={`rounded-full border px-2.5 py-1 font-medium ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-50"}`}>
-                              {totalRatedReviews} rating{totalRatedReviews === 1 ? "" : "s"}
-                            </span>
-                            <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                              View reviews
-                            </span>
-                          </div>
-                        </button>}
+                            </button>
+                            {!canRequestOrders && (
+                              <div className={`mt-2 flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold ${darkMode ? "border-slate-700 bg-slate-800 text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                                <Phone size={14} aria-hidden="true" />
+                                <span>Call for inquiries: <strong className={darkMode ? "text-slate-100" : "text-slate-900"}>09123456789</strong></span>
+                              </div>
+                            )}
+                          </>
+                        )}
                         {!canUploadFeedback && (
                           <div className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-xs ${darkMode ? "border-slate-700 bg-slate-800 text-slate-400" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
                             <Info size={14} aria-hidden="true" />

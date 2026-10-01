@@ -131,6 +131,12 @@ export async function apiFetch(path, options = {}) {
   }
 
   if (!response.ok) {
+    if (response.status === 401 && data.code === "SESSION_REVOKED" && typeof window !== "undefined" && localStorage.getItem("token") === token) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.dispatchEvent(new Event("auth:session-revoked"));
+    }
+
     const errorMessage =
       data.message ||
       data.error ||

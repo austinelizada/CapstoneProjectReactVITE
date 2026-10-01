@@ -8,7 +8,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
-import { getOrders, getAdminOrders, getAdminOrder, updateOrderStatus } from "@/api/orders";
+import { getAdminOrders, getAdminOrder, updateOrderStatus } from "@/api/orders";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { recordActivity } from "@/lib/activityLog";
 import { useAuth } from "@/contexts/AuthContext";
@@ -217,7 +217,7 @@ function Dashboard() {
     if (!orderId) return;
     try {
       setSelectedOrderLoading(true);
-      const resp = await getAdminOrder(orderId);
+      const resp = await getAdminOrder(orderId, "dashboard");
       setSelectedOrder(resp.order || resp);
     } catch (error) {
       console.error("Failed to fetch admin order:", error);
@@ -292,7 +292,7 @@ function Dashboard() {
     const fetchOrders = async () => {
       setOrdersLoading(true);
       try {
-        const response = await getOrders();
+        const response = await getAdminOrders({ module: "dashboard" });
         setOrders(response.orders || []);
       } catch (error) {
         console.error("Failed to load orders:", error);
@@ -310,8 +310,8 @@ function Dashboard() {
     setContractNotificationsLoading(true);
     try {
       const [acceptedResp, declinedResp] = await Promise.all([
-        getAdminOrders({ contract_status: "accepted" }),
-        getAdminOrders({ contract_status: "declined" }),
+        getAdminOrders({ contract_status: "accepted", module: "dashboard" }),
+        getAdminOrders({ contract_status: "declined", module: "dashboard" }),
       ]);
 
       const notifications = [

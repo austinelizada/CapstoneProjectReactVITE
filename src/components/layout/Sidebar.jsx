@@ -23,8 +23,12 @@ function Sidebar({ isOpen, onToggle }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const location = useLocation();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const { darkMode } = useAdminTheme();
+  const canViewStaffModule = (moduleKey) => user?.role !== "skilled_worker" || (
+    user.staff_access?.modules?.[moduleKey]?.enabled === true &&
+    user.staff_access?.modules?.[moduleKey]?.actions?.view === true
+  );
 
   const handleLogout = () => {
     setShowLogoutModal(false);
@@ -81,68 +85,68 @@ function Sidebar({ isOpen, onToggle }) {
         {/* MENU */}
         <nav className="mt-3 flex flex-col gap-1.5 px-2 py-1">
 
-          <MenuItem
+          {canViewStaffModule("dashboard") && <MenuItem
             to="/dashboard"
             icon={<Gauge size={20} />}
             label="Dashboard"
             isOpen={isOpen}
             active={location.pathname === "/dashboard"}
             darkMode={darkMode}
-          />
+          />}
 
-          <MenuItem
+          {canViewStaffModule("site_inspection") && <MenuItem
             to="/site-inspection"
             icon={<ClipboardCheck size={20} />}
             label="Site Inspection"
             isOpen={isOpen}
             active={location.pathname === "/site-inspection"}
             darkMode={darkMode}
-          />
+          />}
 
-          <MenuItem
+          {canViewStaffModule("transactions") && <MenuItem
             to="/transactions"
             icon={<ReceiptText size={20} />}
             label="Transactions"
             isOpen={isOpen}
             active={location.pathname === "/transactions"}
             darkMode={darkMode}
-          />
+          />}
 
-          <MenuItem
+          {canViewStaffModule("progress_monitoring") && <MenuItem
             to="/progress-monitor"
             icon={<ChartNoAxesCombined size={20} />}
             label="Progress Monitor"
             isOpen={isOpen}
             active={location.pathname === "/progress-monitor"}
             darkMode={darkMode}
-          />
+          />}
 
-          <MenuItem
+          {canViewStaffModule("product_management") && <MenuItem
             to="/product"
             icon={<Package size={20} />}
             label="Products"
             isOpen={isOpen}
             active={location.pathname === "/product"}
             darkMode={darkMode}
-          />
+          />}
 
-          <MenuItem
+          {canViewStaffModule("profile") && <MenuItem
             to="/profile"
             icon={<UserCog size={20} />}
-            label="Admin Profile"
+            label={user?.role === "skilled_worker" ? "Staff Profile" : "Admin Profile"}
             isOpen={isOpen}
             active={location.pathname === "/profile"}
             darkMode={darkMode}
-          />
+          />}
 
-          <MenuItem
+          {canViewStaffModule("settings") && <MenuItem
             to="/settings"
             icon={<Settings size={20} />}
             label="Settings"
             isOpen={isOpen}
             active={location.pathname === "/settings"}
             darkMode={darkMode}
-          />
+          />}
 
           {/* LOGOUT */}
           <button

@@ -30,6 +30,8 @@ function AdminProfile() {
     return stored !== null ? JSON.parse(stored) : true;
   });
   const { user, loading, updateProfile } = useAuth();
+  const isStaff = user?.role === "skilled_worker";
+  const profileType = isStaff ? "Staff" : "Admin";
   const [profile, setProfile] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -55,7 +57,7 @@ function AdminProfile() {
         last_name: user.last_name || "",
         email: user.email || "",
         username: user.username || "",
-        role: user.role || "admin",
+        role: isStaff ? user.staff_access?.subrole || "Staff" : user.role || "admin",
         phone: user.phone || "",
         street_address: user.street_address || "",
         city: user.city || "",
@@ -93,7 +95,7 @@ function AdminProfile() {
       const orderResults = await Promise.all(
         orderIds.map(async (orderId) => {
           try {
-            const response = await getAdminOrder(orderId);
+            const response = await getAdminOrder(orderId, "profile");
             return [orderId, response.order || response];
           } catch {
             return [orderId, null];
@@ -350,7 +352,7 @@ function AdminProfile() {
   if (loading || !profile) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-gray-500">Loading admin profile...</p>
+        <p className="text-gray-500">Loading {profileType.toLowerCase()} profile...</p>
       </div>
     );
   }
@@ -364,8 +366,8 @@ function AdminProfile() {
 
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
           <AdminPageHeader
-            title="Admin Profile"
-            description="Manage your administrator account settings and security."
+            title={`${profileType} Profile`}
+            description={`Manage your ${profileType.toLowerCase()} account settings and security.`}
           />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
@@ -374,7 +376,7 @@ function AdminProfile() {
                 <div className="relative">
                   <img
                     src="https://i.pravatar.cc/300"
-                    alt="Admin"
+                    alt={profileType}
                     className="w-36 h-36 rounded-full object-cover border-4 border-red-100"
                   />
                   <button className="absolute bottom-2 right-2 bg-red-600 text-white p-3 rounded-full shadow-lg hover:bg-red-700">

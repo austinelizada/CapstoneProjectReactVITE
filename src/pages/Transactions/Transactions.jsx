@@ -657,7 +657,7 @@ function Transactions() {
     const fetchOrders = async () => {
       setLoading(true);
       try {
-        const res = await getAdminOrders();
+        const res = await getAdminOrders({ module: "transactions" });
         if (res && res.orders) {
           setOrders(res.orders);
         }

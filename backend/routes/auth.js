@@ -4,8 +4,74 @@ import { createHash, randomBytes, randomInt } from "crypto";
 import User from "../models/User.js";
 import Admin from "../models/Admin.js";
 import SystemSetting from "../models/SystemSetting.js";
-import { authMiddleware, roleMiddleware } from "../middleware/auth.js";
+import { authMiddleware, roleMiddleware, staffModulePermission } from "../middleware/auth.js";
 import { sendMail } from "../config/mailer.js";
+
+const STAFF_MODULE_KEYS = ["dashboard", "product_management", "site_inspection", "progress_monitoring", "transactions", "settings", "profile"];
+const STAFF_MODULE_ACTIONS = {
+  dashboard: ["view"],
+  product_management: ["view", "add", "edit", "delete"],
+  site_inspection: ["view", "view_details", "edit", "cancel", "generate_contract", "send_email", "download_contract", "manual_approve"],
+  progress_monitoring: ["view", "view_details", "edit", "delete_proof"],
+  transactions: ["view", "view_details", "edit", "view_contract", "download_contract", "send_email"],
+  settings: ["view", "manage_access", "back_up"],
+  profile: ["view", "edit"],
+};
+const STAFF_DEFAULT_ENABLED_ACTIONS = {
+  dashboard: ["view"],
+  product_management: ["view"],
+  site_inspection: [],
+  progress_monitoring: ["view", "view_details"],
+  transactions: ["view", "view_details"],
+  settings: ["view", "manage_access", "back_up"],
+  profile: ["view"],
+};
+
+const createDefaultStaffAccess = () => ({
+  profile_version: 2,
+  subrole: "Helper",
+  custom_subroles: [],
+  modules: Object.fromEntries(STAFF_MODULE_KEYS.map((moduleKey) => [moduleKey, {
+    enabled: moduleKey !== "site_inspection",
+    actions: Object.fromEntries(STAFF_MODULE_ACTIONS[moduleKey].map((actionKey) => [
+      actionKey,
+      STAFF_DEFAULT_ENABLED_ACTIONS[moduleKey].includes(actionKey),
+    ])),
+  }])),
+});
+
+const sanitizeStaffAccess = (staffAccess) => {
+  if (!staffAccess || typeof staffAccess !== "object" || Array.isArray(staffAccess)) return null;
+
+  const modules = Object.fromEntries(STAFF_MODULE_KEYS.map((moduleKey) => {
+    const moduleAccess = staffAccess.modules?.[moduleKey] || {};
+    return [moduleKey, {
+      enabled: moduleAccess.enabled === true,
+      actions: Object.fromEntries(STAFF_MODULE_ACTIONS[moduleKey].map((actionKey) => [actionKey, moduleAccess.actions?.[actionKey] === true])),
+    }];
+  }));
+
+  return {
+    profile_version: Number(staffAccess.profile_version) || 1,
+    subrole: typeof staffAccess.subrole === "string" ? staffAccess.subrole.trim().slice(0, 40) : "Helper",
+    custom_subroles: Array.isArray(staffAccess.custom_subroles)
+      ? [...new Set(staffAccess.custom_subroles.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean))].slice(0, 20)
+      : [],
+    modules,
+  };
+};
+
+const migrateStaffAccess = (staffAccess) => {
+  const migrated = sanitizeStaffAccess(staffAccess || createDefaultStaffAccess()) || createDefaultStaffAccess();
+  if (migrated.profile_version < 2) {
+    migrated.modules.settings.enabled = true;
+    migrated.modules.settings.actions.view = true;
+    migrated.modules.settings.actions.manage_access = true;
+    migrated.modules.settings.actions.back_up = true;
+    migrated.profile_version = 2;
+  }
+  return migrated;
+};
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -477,28 +543,67 @@ router.get("/customers", authMiddleware, roleMiddleware("admin"), async (req, re
   }
 });
 
-router.get("/users", authMiddleware, roleMiddleware("admin"), async (req, res) => {
+router.get("/users", authMiddleware, staffModulePermission("settings", "view"), async (req, res) => {
   try {
     const { role, search } = req.query;
     const query = {};
+    const requestedRole = role === "staff" ? "skilled_worker" : role;
 
-    if (role && role !== "all") query.role = role;
+    if (requestedRole && requestedRole !== "all") query.role = requestedRole;
+    let searchRegex;
     if (search?.trim()) {
       const queryText = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(queryText, "i");
-      query.$or = [{ first_name: regex }, { last_name: regex }, { email: regex }, { username: regex }];
+      searchRegex = new RegExp(queryText, "i");
+      query.$or = [{ first_name: searchRegex }, { last_name: searchRegex }, { email: searchRegex }, { username: searchRegex }];
     }
 
     const users = await User.find(query).select("-password").sort({ createdAt: -1 });
-    res.json({ success: true, users });
+    const adminQuery = requestedRole && requestedRole !== "all" && requestedRole !== "admin"
+      ? null
+      : searchRegex
+        ? { $or: [{ first_name: searchRegex }, { last_name: searchRegex }, { email: searchRegex }, { username: searchRegex }] }
+        : {};
+    const adminAccounts = adminQuery
+      ? await Admin.find(adminQuery).select("-password -password_reset_code -password_reset_expires").lean()
+      : [];
+    const userIds = new Set(users.map((account) => String(account._id)));
+    const allAccounts = [
+      ...users,
+      ...adminAccounts
+        .filter((account) => !userIds.has(String(account._id)))
+        .map((account) => ({ ...account, role: "admin", is_admin_account: true })),
+    ].sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0));
+
+    if (req.user.role === "admin") {
+      await Promise.all(allAccounts
+        .filter((account) => account.role === "skilled_worker" && Number(account.staff_access?.profile_version || 0) < 2)
+        .map(async (account) => {
+          account.staff_access = migrateStaffAccess(account.staff_access);
+          account.markModified("staff_access");
+          await account.save();
+        }));
+    }
+    res.json({ success: true, users: allAccounts });
   } catch (error) {
     console.error("Get users error:", error);
     res.status(500).json({ success: false, message: "Unable to load users." });
   }
 });
 
-router.patch("/users/:id", authMiddleware, roleMiddleware("admin"), async (req, res) => {
+router.patch("/users/:id", authMiddleware, staffModulePermission("settings", "manage_access"), async (req, res) => {
   try {
+    const staffPromotingCustomer = req.user.role === "skilled_worker" && req.body?.role === "skilled_worker";
+    const staffConvertingToCustomer = req.user.role === "skilled_worker" && req.body?.role === "customer";
+    if (req.user.role === "skilled_worker" && ((req.body?.role !== undefined && !staffPromotingCustomer && !staffConvertingToCustomer) || req.body?.staff_access !== undefined)) {
+      return res.status(403).json({ success: false, message: "Staff can only promote customers or convert staff accounts to customers." });
+    }
+    if ((staffPromotingCustomer || staffConvertingToCustomer) && String(req.user.id) === String(req.params.id)) {
+      return res.status(403).json({ success: false, message: "You cannot change your own account role." });
+    }
+    if (req.body?.role !== undefined && !["customer", "skilled_worker"].includes(req.body.role)) {
+      return res.status(400).json({ success: false, message: "Only customer and staff role changes are allowed here." });
+    }
+
     const allowedFields = [
       "can_request_orders",
       "can_estimate_pricing",
@@ -522,9 +627,30 @@ router.patch("/users/:id", authMiddleware, roleMiddleware("admin"), async (req, 
     }
     const update = {};
     if (Object.keys(permissions).length > 0) Object.assign(update, permissions);
-    if (typeof req.body?.is_active === "boolean") update.is_active = req.body.is_active;
+    if (req.body?.role === "skilled_worker") {
+      update.role = "skilled_worker";
+      update.staff_access = migrateStaffAccess(
+        staffPromotingCustomer
+          ? { ...req.staffAccess, subrole: "Helper" }
+          : req.body.staff_access || createDefaultStaffAccess()
+      );
+    }
+    if (req.body?.role === "customer") update.role = "customer";
+    if (update.role) update.$inc = { session_version: 1 };
+    if (req.body?.staff_access && typeof req.body.staff_access === "object") {
+      update.staff_access = sanitizeStaffAccess({ ...req.body.staff_access, profile_version: 2 });
+    }
 
-    const user = await User.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true }).select("-password");
+    const userFilter = req.user.role === "skilled_worker"
+      ? { _id: req.params.id, role: staffConvertingToCustomer ? "skilled_worker" : "customer" }
+      : update.role === "skilled_worker"
+      ? { _id: req.params.id, role: "customer" }
+      : update.role === "customer"
+        ? { _id: req.params.id, role: "skilled_worker" }
+        : update.staff_access
+          ? { _id: req.params.id, role: "skilled_worker" }
+          : { _id: req.params.id };
+    const user = await User.findOneAndUpdate(userFilter, update, { new: true, runValidators: true }).select("-password");
     if (!user) return res.status(404).json({ success: false, message: "User not found." });
     res.json({ success: true, user });
   } catch (error) {
@@ -663,8 +789,13 @@ router.post("/login", async (req, res) => {
       ? { email: identifier.toLowerCase().trim() }
       : { username: identifier.toLowerCase().trim() };
 
-    let user = await Admin.findOne(query);
-    let source = "admin";
+    let user = await User.findOne({ ...query, role: "skilled_worker" });
+    let source = "user";
+
+    if (!user) {
+      user = await Admin.findOne(query);
+      source = "admin";
+    }
 
     if (!user) {
       user = await User.findOne(query);
@@ -692,11 +823,10 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    if (!user.is_active) {
-      return res.status(403).json({
-        success: false,
-        message: "Your account has been deactivated",
-      });
+    if (source === "user" && user.role === "skilled_worker" && Number(user.staff_access?.profile_version || 0) < 2) {
+      user.staff_access = migrateStaffAccess(user.staff_access);
+      user.markModified("staff_access");
+      await user.save();
     }
 
     if (source === "user" && user.email_verification_token && user.email_verified !== true) {
@@ -708,7 +838,7 @@ router.post("/login", async (req, res) => {
 
     const role = source === "admin" ? "admin" : user.role;
     const token = jwt.sign(
-      { id: user._id, email: user.email, role },
+      { id: user._id, email: user.email, role, ...(source === "user" ? { session_version: user.session_version || 0 } : {}) },
       process.env.JWT_SECRET || "your-secret-key",
       { expiresIn: "7d" }
     );
@@ -730,6 +860,7 @@ router.post("/login", async (req, res) => {
         province: user.province,
         zip_code: user.zip_code,
         access_permissions: user.access_permissions,
+        staff_access: user.staff_access,
         created_at: user.createdAt,
         updated_at: user.updatedAt,
       },
@@ -788,6 +919,7 @@ router.get("/me", authMiddleware, async (req, res) => {
         province: user.province,
         zip_code: user.zip_code,
         access_permissions: user.access_permissions,
+        staff_access: user.staff_access,
         created_at: user.createdAt,
         updated_at: user.updatedAt,
       },

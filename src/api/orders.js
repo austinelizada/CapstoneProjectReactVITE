@@ -7,7 +7,10 @@ export const getAdminOrders = (params = {}) => {
   return apiFetch(`/orders/admin/list${query ? `?${query}` : ""}`);
 };
 
-export const getAdminOrder = (orderId) => apiFetch(`/orders/admin/${orderId}`);
+export const getAdminOrder = (orderId, module) => {
+  const query = module ? `?module=${encodeURIComponent(module)}` : "";
+  return apiFetch(`/orders/admin/${orderId}${query}`);
+};
 
 export const getProductReviews = (productId) => apiFetch(`/orders/reviews/product/${encodeURIComponent(productId)}`);
 

@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   login as loginApi,
   register as registerApi,
@@ -54,6 +54,12 @@ export function AuthProvider({ children }) {
     setAuthError("");
   };
 
+  useEffect(() => {
+    const handleSessionRevoked = () => clearAuth();
+    window.addEventListener("auth:session-revoked", handleSessionRevoked);
+    return () => window.removeEventListener("auth:session-revoked", handleSessionRevoked);
+  }, []);
+
   const normalizeAndPersistUser = (userData) => {
     const normalized = normalizeUserProfile(userData);
     setUserAndPersist(normalized);
@@ -89,10 +95,13 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     try {
       const response = await getMe();
-      return normalizeAndPersistUser(response.user);
+      const normalized = normalizeUserProfile(response.user);
+      localStorage.setItem("user", JSON.stringify(normalized));
+      setUser(normalized);
+      return normalized;
     } catch (error) {
       const status = error.response?.status;
       const message = error.data?.message || error.message || "";
@@ -103,7 +112,7 @@ export function AuthProvider({ children }) {
 
       throw error;
     }
-  };
+  }, []);
 
   const loadAdminStatus = async () => {
     if (adminStatusFetching.current) {

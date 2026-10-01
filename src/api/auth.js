@@ -38,7 +38,7 @@ export const createAdmin = (payload) => apiFetch("/auth/create-admin", {
   body: JSON.stringify(payload),
 });
 
-export const getMe = () => apiFetch("/auth/me");
+export const getMe = () => apiFetch("/auth/me", { cache: "no-store" });
 
 export const updateProfile = (payload) => apiFetch("/auth/profile", {
   method: "PUT",

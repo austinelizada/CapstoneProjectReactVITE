@@ -4,11 +4,13 @@ import { Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, C
 import { getAdminOrders } from "@/api/orders";
 import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 const ADMIN_READ_NOTIFICATIONS_KEY = "acgc-admin-read-notifications";
 
 function Navbar() {
   const { darkMode, toggleDarkMode } = useAdminTheme();
+  const { user } = useAuth();
 
   return (
     <header className={`admin-navbar px-6 py-4 flex items-center justify-between shadow ${darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}>
@@ -16,7 +18,7 @@ function Navbar() {
       <div className="flex items-center gap-4">
         <div>
           <h1 className="text-xl font-bold">
-            Welcome Administrator
+            {user?.role === "skilled_worker" ? "Welcome Staff" : "Welcome Administrator"}
           </h1>
         </div>
 
@@ -60,6 +62,7 @@ function NotificationMenu() {
   const [loading, setLoading] = useState(true);
   const [notificationFilter, setNotificationFilter] = useState("all");
   const { darkMode } = useAdminTheme();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   const getReadNotificationIds = () => {
@@ -73,17 +76,24 @@ function NotificationMenu() {
   useEffect(() => {
     let active = true;
     let hasFetched = false;
+    const staffModules = user?.staff_access?.modules || {};
+    const canReadModule = (moduleKey) => user?.role !== "skilled_worker" || (
+      staffModules[moduleKey]?.enabled === true && staffModules[moduleKey]?.actions?.view === true
+    );
+    const fetchModuleOrders = (params, moduleKey) => canReadModule(moduleKey)
+      ? getAdminOrders({ ...params, module: moduleKey })
+      : Promise.resolve({ orders: [] });
 
     const fetchNotifications = async () => {
       if (!hasFetched) setLoading(true);
       try {
         const [newOrders, inspections, accepted, declined, sentContracts, paymentSubmissions] = await Promise.all([
-          getAdminOrders({ status: "order_submitted" }),
-          getAdminOrders({ status: "site_inspection" }),
-          getAdminOrders({ contract_status: "accepted" }),
-          getAdminOrders({ contract_status: "declined" }),
-          getAdminOrders({ contract_status: "sent" }),
-          getAdminOrders({ payment_proof_submitted: "true" }),
+          fetchModuleOrders({ status: "order_submitted" }, "dashboard"),
+          fetchModuleOrders({ status: "site_inspection" }, "site_inspection"),
+          fetchModuleOrders({ contract_status: "accepted" }, "site_inspection"),
+          fetchModuleOrders({ contract_status: "declined" }, "site_inspection"),
+          fetchModuleOrders({ contract_status: "sent" }, "site_inspection"),
+          fetchModuleOrders({ payment_proof_submitted: "true" }, "transactions"),
         ]);
 
         const readNotificationIds = getReadNotificationIds();
@@ -180,7 +190,7 @@ function NotificationMenu() {
       active = false;
       window.clearInterval(refreshInterval);
     };
-  }, []);
+  }, [user]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
   const filteredNotifications = notifications.filter((notification) => (

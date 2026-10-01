@@ -407,8 +407,8 @@ function SiteInspection() {
     setInspectionsLoading(true);
     try {
       const [siteResp, cancelledResp] = await Promise.all([
-        getAdminOrders({ status: "site_inspection" }),
-        getAdminOrders({ status: "cancelled" }),
+        getAdminOrders({ status: "site_inspection", module: "site_inspection" }),
+        getAdminOrders({ status: "cancelled", module: "site_inspection" }),
       ]);
       setInspections((siteResp.orders || []).filter(isSiteInspectionVisible));
       setCancelledInspections(cancelledResp.orders || []);
@@ -1037,7 +1037,7 @@ function SiteInspection() {
     if (viewId) {
       (async () => {
         try {
-          const res = await getAdminOrder(viewId);
+          const res = await getAdminOrder(viewId, "site_inspection");
           if (res && res.order) setViewInspection(res.order);
         } catch (err) {
           console.error("Failed to load order for view param", err);
@@ -1257,7 +1257,7 @@ function SiteInspection() {
     try {
       setGeneratingId(orderId);
 
-      const { order } = await getAdminOrder(orderId);
+      const { order } = await getAdminOrder(orderId, "site_inspection");
       if (!order) {
         toast.error("Order not found");
         return;
@@ -1359,7 +1359,7 @@ function SiteInspection() {
 
     try {
       setGeneratingId(orderId);
-      const { order } = await getAdminOrder(orderId);
+      const { order } = await getAdminOrder(orderId, "site_inspection");
       if (!order) {
         toast.error("Order not found");
         return;
@@ -1701,7 +1701,7 @@ function SiteInspection() {
     if (!orderId) return;
 
     try {
-      const { order } = await getAdminOrder(orderId);
+      const { order } = await getAdminOrder(orderId, "site_inspection");
       if (!order) {
         toast.error("Order not found");
         return;

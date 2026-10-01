@@ -59,13 +59,14 @@ function LogoutLoadingScreen() {
 function AppRoutes() {
   const { logoutLoading, user } = useAuth();
   const { darkMode } = useAdminTheme();
+  const usesAdminTheme = user?.role === "admin" || user?.role === "skilled_worker";
 
   if (logoutLoading) {
     return <LogoutLoadingScreen />;
   }
 
   return (
-    <div className={`admin-theme-shell relative ${user?.role === "admin" ? (darkMode ? "admin-theme-dark" : "admin-theme-light") : ""}`}>
+    <div className={`admin-theme-shell relative ${usesAdminTheme ? (darkMode ? "admin-theme-dark" : "admin-theme-light") : ""}`}>
       {user?.role === "admin" && (
         <div className="admin-shell-drawing" aria-hidden="true">
           <div className="admin-shell-circle admin-shell-circle-top" />
@@ -86,7 +87,7 @@ function AppRoutes() {
           <Route
             path="/dashboard"
             element={
-              <ProtectedRoute roles={["admin"]}>
+              <ProtectedRoute roles={["admin", "skilled_worker"]} requiredModule="dashboard">
                 <Dashboard />
               </ProtectedRoute>
             }
@@ -98,7 +99,7 @@ function AppRoutes() {
           <Route
             path="/site-inspection"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredModule="site_inspection">
                 <SiteInspection />
               </ProtectedRoute>
             }
@@ -106,7 +107,7 @@ function AppRoutes() {
           <Route
             path="/notifications"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredModule="transactions">
                 <Notifications />
               </ProtectedRoute>
             }
@@ -114,7 +115,7 @@ function AppRoutes() {
           <Route
             path="/transactions"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredModule="transactions">
                 <Transactions />
               </ProtectedRoute>
             }
@@ -122,7 +123,7 @@ function AppRoutes() {
           <Route
             path="/progress-monitor"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredModule="progress_monitoring">
                 <ProgressMonitor />
               </ProtectedRoute>
             }
@@ -130,7 +131,7 @@ function AppRoutes() {
           <Route
             path="/product"
             element={
-              <ProtectedRoute roles={["admin"]}>
+              <ProtectedRoute roles={["admin", "skilled_worker"]} requiredModule="product_management">
                 <Product />
               </ProtectedRoute>
             }
@@ -138,7 +139,7 @@ function AppRoutes() {
           <Route
             path="/profile"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredModule="profile">
                 <AdminProfile />
               </ProtectedRoute>
             }
@@ -146,7 +147,7 @@ function AppRoutes() {
           <Route
             path="/settings"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredModule="settings">
                 <Settings />
               </ProtectedRoute>
             }
