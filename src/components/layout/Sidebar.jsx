@@ -63,7 +63,7 @@ function Sidebar({ isOpen, onToggle }) {
             <img
               src={logo}
               alt="ACGC Aluminum Services"
-              className="h-8 w-9 shrink-0 justify-self-center object-contain"
+              className={`h-8 w-9 shrink-0 justify-self-center object-contain ${darkMode ? "drop-shadow-[0_0_4px_rgba(255,255,255,0.7)]" : ""}`}
             />
 
             <div className={`min-w-0 overflow-hidden transition-[max-width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
@@ -223,14 +223,13 @@ function MenuItem({
       className={`group relative grid min-h-10 w-full items-center rounded-lg px-3 py-2 text-sm transition-[grid-template-columns,gap,background-color,color,transform] duration-200 ease-out hover:translate-x-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 motion-reduce:transition-none motion-reduce:hover:translate-x-0 ${
         active
           ? darkMode
-            ? "bg-amber-500/15 text-amber-200 shadow-sm shadow-amber-950/30 ring-1 ring-inset ring-amber-400/40"
-            : "bg-white text-amber-800 shadow-[0_2px_10px_rgba(245,158,11,0.12)] ring-1 ring-inset ring-amber-500/40"
+            ? "border border-red-800/70 bg-red-950/40 text-red-200 shadow-[inset_3px_0_0_#f87171]"
+            : "border border-red-200 bg-red-50/80 text-red-950 shadow-[inset_3px_0_0_#b91c1c]"
           : darkMode
             ? "text-slate-300 hover:bg-red-950/70 hover:text-red-200"
             : "text-gray-700 hover:bg-red-50 hover:text-red-700"
       } ${isOpen ? "grid-cols-[20px_minmax(0,1fr)] gap-2.5" : "grid-cols-[1fr_0fr] gap-0"} ${nested ? "rounded-l-none rounded-r-xl" : ""}`}
     >
-      {active && <span aria-hidden="true" className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.75)]" />}
       <span className={`relative shrink-0 justify-self-center transition-transform duration-200 ease-out motion-reduce:transition-none ${
         isOpen ? "" : "group-hover:-translate-y-0.5 group-hover:scale-110 motion-reduce:group-hover:translate-y-0 motion-reduce:group-hover:scale-100"
       }`}>{icon}</span>

@@ -134,6 +134,21 @@ function Transactions() {
   };
 
   const transactionOrders = orders.filter(hasAcceptedContract);
+  const financialOrders = transactionOrders.filter((order) => {
+    const status = String(order.status || "").toLowerCase();
+    const contractStatus = String(order.contract_status || "").toLowerCase();
+    const excludedStatuses = ["declined", "rejected", "cancelled", "contract_declined"];
+    return !excludedStatuses.includes(status) && !excludedStatuses.includes(contractStatus);
+  });
+  const toNonNegativeAmount = (value) => {
+    const amount = Number(value);
+    return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+  };
+  const getTransactionTotal = (order) => toNonNegativeAmount(order.contract_amount ?? order.total_amount);
+  const getConfirmedPayment = (order) => toNonNegativeAmount(
+    order.payment_amount || order.downpayment_amount ||
+    (order.downpayment_received ? getTransactionTotal(order) * 0.5 : 0)
+  );
 
   const hasVerifiedContractAcceptance = (order) => {
     if (String(order.contract_status || "").toLowerCase() !== "accepted") return false;
@@ -696,6 +711,28 @@ function Transactions() {
   // Completed projects: orders that are completed by status or progress
   const completedProjects = transactionOrders.filter((o) => isCompletedProject(o));
   const feedbackOrders = transactionOrders.filter((o) => o.review?.submittedAt || o.review?.rating);
+  const financialTotals = financialOrders.reduce((totals, order) => {
+    const total = getTransactionTotal(order);
+    const collected = getConfirmedPayment(order);
+    totals.revenue += total;
+    totals.collected += collected;
+    totals.pending += Math.max(total - collected, 0);
+    return totals;
+  }, { revenue: 0, collected: 0, pending: 0 });
+  const validRatings = feedbackOrders
+    .map((order) => Number(order.review?.rating))
+    .filter((rating) => Number.isFinite(rating) && rating >= 1 && rating <= 5);
+  const averageRating = validRatings.length
+    ? validRatings.reduce((total, rating) => total + rating, 0) / validRatings.length
+    : 0;
+  const formatCurrency = (amount) => `₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const summaryMetrics = [
+    { label: "Total Revenue", value: formatCurrency(financialTotals.revenue), color: "text-rose-300" },
+    { label: "Total Collected", value: formatCurrency(financialTotals.collected), color: "text-emerald-300" },
+    { label: "Pending Balance", value: formatCurrency(financialTotals.pending), color: "text-amber-200" },
+    { label: "Completed Projects", value: completedProjects.length.toLocaleString(), color: "text-indigo-300" },
+    { label: "Average Customer Rating", value: `${averageRating.toFixed(1)} / 5 (${validRatings.length})`, color: "text-orange-300" },
+  ];
   const filteredFeedbackOrders = feedbackOrders.filter((order) => {
     if (!tableSearch) return true;
     const query = tableSearch.toLowerCase();
@@ -1143,10 +1180,10 @@ function Transactions() {
           <AdminPageHeader
             title="Transactions"
             description="Manage receipts, contracts and completed projects."
+            compactStats
+            statsClassName="grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-5"
             stats={[
-              { label: "Receipts", value: receipts.length, color: "text-blue-200" },
-              { label: "Completed", value: completedProjects.length, color: "text-emerald-300" },
-              { label: "In Warranty", value: activeWarrantyCount, color: "text-amber-200" },
+              ...summaryMetrics,
             ]}
           />
 

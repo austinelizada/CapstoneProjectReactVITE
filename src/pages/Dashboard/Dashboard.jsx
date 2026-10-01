@@ -531,7 +531,7 @@ function Dashboard() {
               title="Dashboard"
               description="Manage inspections, projects, warranties and products from one administrative workspace."
               className="h-full min-h-[250px]"
-              statsClassName="grid-cols-2 [&>*:last-child]:col-span-2"
+              statsClassName="grid-cols-2 gap-3 [&>*:last-child]:col-span-2"
               stats={[
                 { label: "Date", value: dashboardDate, color: "text-blue-100" },
                 { label: "Time", value: dashboardTime, color: "text-emerald-300" },

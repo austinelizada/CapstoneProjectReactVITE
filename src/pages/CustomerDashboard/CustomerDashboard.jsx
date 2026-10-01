@@ -211,8 +211,13 @@ function CustomerDashboard() {
   const canTrackProducts = !maintenanceMode && accountPermissions.can_track_products && !accountPermissions.view_only_access;
   const canUploadFeedback = !maintenanceMode && accountPermissions.can_upload_feedback && !accountPermissions.view_only_access;
   const canShowRatings = accountPermissions.show_ratings_homepage && !accountPermissions.view_only_access;
+  const isProductModalReadOnly = !canRequestOrders && !canEstimatePricing;
 
   const [activeTab, setActiveTab] = useState("home");
+  useEffect(() => {
+    if (!canRequestOrders && activeTab === "cart") setActiveTab("home");
+  }, [activeTab, canRequestOrders]);
+
   const [darkMode, setDarkMode] = useState(() => {
     try {
       return localStorage.getItem(CUSTOMER_DARK_MODE_KEY) === "true";
@@ -2850,6 +2855,13 @@ function CustomerDashboard() {
   const panelClass = darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200";
   const selectedProductImages = getProductImages(selectedProduct);
   const activeProductImage = selectedProductImages[Math.min(selectedProductImageIndex, selectedProductImages.length - 1)];
+  const selectedProductDimensions = selectedProduct
+    ? selectedProduct.dimensions || selectedProduct.standard_size || (
+      selectedProduct.width > 0 || selectedProduct.height > 0
+        ? `${selectedProduct.width || 0}" x ${selectedProduct.height || 0}"`
+        : "N/A"
+    )
+    : "N/A";
 
   if (loading) {
     return (
@@ -2916,27 +2928,29 @@ function CustomerDashboard() {
           </button>
 
           <div className="flex flex-wrap items-center gap-1.5 md:gap-2">
-            <button
-              onClick={() => setActiveTab("cart")}
-              className={`order-1 relative p-2.5 text-sm font-semibold transition ${
-                activeTab === "cart" || cartQuantity > 0
-                  ? darkMode
-                    ? "text-white"
-                    : "text-slate-700"
-                  : darkMode
-                    ? "text-slate-200 hover:text-white"
-                    : "text-slate-700 hover:text-slate-900"
-              }`}
-              aria-label="Cart"
-              title="Cart"
-            >
-              <ShoppingCart size={42} strokeWidth={2.2} />
-              {cartQuantity > 0 && (
-                <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 animate-pulse items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white shadow-md shadow-red-500/40">
-                  {cartQuantity}
-                </span>
-              )}
-            </button>
+            {canRequestOrders && (
+              <button
+                onClick={() => setActiveTab("cart")}
+                className={`order-1 relative p-2.5 text-sm font-semibold transition ${
+                  activeTab === "cart" || cartQuantity > 0
+                    ? darkMode
+                      ? "text-white"
+                      : "text-slate-700"
+                    : darkMode
+                      ? "text-slate-200 hover:text-white"
+                      : "text-slate-700 hover:text-slate-900"
+                }`}
+                aria-label="Cart"
+                title="Cart"
+              >
+                <ShoppingCart size={42} strokeWidth={2.2} />
+                {cartQuantity > 0 && (
+                  <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 animate-pulse items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white shadow-md shadow-red-500/40">
+                    {cartQuantity}
+                  </span>
+                )}
+              </button>
+            )}
             <button
               onClick={() => setActiveTab("products")}
               className={`order-3 rounded-full px-4 py-2 text-base font-semibold transition ${
@@ -3399,7 +3413,7 @@ function CustomerDashboard() {
                           </p>
                         </div>
 
-                        <div className="flex items-center justify-between gap-3 pt-1">
+                        {canUploadFeedback && canShowRatings && <div className="flex items-center justify-between gap-3 pt-1">
                           <div className="flex min-w-0 flex-col">
                             <div className="flex items-center gap-1 text-amber-500">
                               {renderRatingStars(averageRating, 14)}
@@ -3408,7 +3422,7 @@ function CustomerDashboard() {
                               {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount} review${reviewsCount === 1 ? "" : "s"})` : "No reviews yet"}
                             </span>
                           </div>
-                        </div>
+                        </div>}
                       </div>
                     </div>
                   );
@@ -3417,7 +3431,7 @@ function CustomerDashboard() {
             )}
           </div>
 
-          {canShowRatings && <section className={`mt-8 rounded-3xl px-6 py-8 shadow-sm sm:px-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+          {canShowRatings && canUploadFeedback && <section className={`mt-8 rounded-3xl px-6 py-8 shadow-sm sm:px-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
             <h2 className={`text-center text-3xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Customer Ratings</h2>
             <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
               <div className="text-center">
@@ -3532,14 +3546,14 @@ function CustomerDashboard() {
                             <h3 className={`text-xl font-black leading-tight ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name}</h3>
                             <p className={`mt-1.5 text-xs font-medium uppercase tracking-[0.12em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{product.product_type || product.category || "General"}</p>
                           </div>
-                          <div className={`flex items-center gap-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                          {canUploadFeedback && <div className={`flex items-center gap-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                             {renderRatingStars(productReviewStats[product._id || product.id]?.averageRating || 0, 16)}
                             <span className={darkMode ? "font-medium text-slate-200" : "font-medium text-slate-700"}>
                               {productReviewStats[product._id || product.id]?.averageRating > 0
                                 ? `${productReviewStats[product._id || product.id].averageRating.toFixed(1)} (${productReviewStats[product._id || product.id].ratingsCount} rating${productReviewStats[product._id || product.id].ratingsCount === 1 ? "" : "s"})`
                                 : "No ratings yet"}
                             </span>
-                          </div>
+                          </div>}
                           <div className={`space-y-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                             {product.dimensions ? (
                               <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Dimensions:</span> {product.dimensions}</p>
@@ -3555,7 +3569,7 @@ function CustomerDashboard() {
                           <div className={`border-t pt-4 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
                             <p className="text-2xl font-black text-red-500">{getProductPrice(product)}</p>
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
+                          {canRequestOrders && <div className="grid grid-cols-2 gap-2">
                             <button
                               type="button"
                               onClick={(event) => {
@@ -3580,7 +3594,7 @@ function CustomerDashboard() {
                             >
                               <ShoppingCart size={28} />
                             </button>
-                          </div>
+                          </div>}
                         </div>
                       </div>
                     </div>
@@ -3670,9 +3684,9 @@ function CustomerDashboard() {
 
             {selectedProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4">
-                <div className={`order-flow-modal flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
+                <div className={`order-flow-modal relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Header with shared brand gradient */}
-                  <div className="flex-shrink-0 bg-red-600 px-5 py-3.5 sm:px-6">
+                  {!isProductModalReadOnly && <div className="flex-shrink-0 bg-red-600 px-5 py-3.5 sm:px-6">
                     <div className="flex min-w-0 items-center justify-between gap-4">
                       <div className="text-white">
                         <h3 className="truncate text-xl font-bold sm:text-2xl">{selectedProduct.name}</h3>
@@ -3682,13 +3696,23 @@ function CustomerDashboard() {
                         <span className="text-3xl">×</span>
                       </button>
                     </div>
-                  </div>
+                  </div>}
+                  {isProductModalReadOnly && (
+                    <button
+                      type="button"
+                      onClick={closeProductModal}
+                      aria-label="Close product details"
+                      className={`absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full shadow-md transition ${darkMode ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-slate-700 hover:bg-slate-100"}`}
+                    >
+                      <X size={18} aria-hidden="true" />
+                    </button>
+                  )}
 
                   {/* Scrollable Content */}
                   <div className="flex-1 overflow-y-auto">
-                    <div className="grid items-start gap-5 p-4 sm:p-5 md:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.9fr)] lg:gap-7 lg:p-6">
+                    <div className={`grid items-start gap-5 p-4 sm:p-5 ${isProductModalReadOnly ? "md:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)] lg:gap-8 lg:p-7" : "md:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.9fr)] lg:gap-7 lg:p-6"}`}>
                       {/* Left: Product Image & Description */}
-                      <div className="min-w-0 space-y-4">
+                      <div className={`min-w-0 space-y-4 ${isProductModalReadOnly ? darkMode ? "rounded-xl bg-slate-800 p-2" : "rounded-xl bg-slate-50 p-2" : ""}`}>
                         <div className="space-y-2">
                           <div className="overflow-hidden rounded-2xl bg-slate-100 shadow-sm">
                             <img
@@ -3718,6 +3742,7 @@ function CustomerDashboard() {
                             </div>
                           )}
                         </div>
+                        {!isProductModalReadOnly && <>
                         <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
                             <h4 className={`text-base font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Product Details</h4>
                             <p className={`mt-1.5 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
@@ -3746,18 +3771,51 @@ function CustomerDashboard() {
                             <p className={`mt-1 truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{getProductUnitRate(selectedProduct)}</p>
                           </div>
                         </div>
+                        </>}
                       </div>
 
                       {/* Right: Action Buttons & Info */}
-                      <div className="min-w-0 space-y-3">
+                      <div className={`min-w-0 space-y-3 ${isProductModalReadOnly ? darkMode ? "rounded-xl bg-slate-900 p-4 sm:p-5" : "rounded-xl bg-white p-4 sm:p-5" : ""}`}>
+                        {isProductModalReadOnly && (
+                          <>
+                            <div className="flex flex-wrap items-center gap-2 pr-10">
+                              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${darkMode ? "bg-red-950/60 text-red-300" : "bg-red-50 text-red-800"}`}>
+                                {selectedProduct.product_type || selectedProduct.type || "Glass & Aluminum"}
+                              </span>
+                              <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-600"}`}>
+                                {selectedProduct.category || "General"}
+                              </span>
+                            </div>
+                            <h3 className={`text-2xl font-black leading-tight ${darkMode ? "text-white" : "text-slate-900"}`}>
+                              {selectedProduct.name}
+                            </h3>
+                            <p className={`text-xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>
+                              {getProductUnitRate(selectedProduct)}
+                            </p>
+                            <div className={`border-t pt-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                              <p className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                                {selectedProductDimensions}
+                              </p>
+                              <p className={`mt-4 whitespace-pre-line text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                                {selectedProduct.description || "No description available."}
+                              </p>
+                            </div>
+                            {!canRequestOrders && (
+                              <div className={`flex items-center justify-center gap-2 border-y py-4 text-xs ${darkMode ? "border-slate-700 text-slate-400" : "border-slate-100 text-slate-400"}`}>
+                                <Phone size={14} aria-hidden="true" />
+                                <span>Call for inquiries: <strong className={darkMode ? "text-slate-300" : "text-slate-600"}>09123456789</strong></span>
+                              </div>
+                            )}
+                          </>
+                        )}
                         {/* Price Card */}
-                        <div className={`rounded-2xl border p-4 ${darkMode ? "border-red-900 bg-red-950/40" : "border-red-200 bg-red-50"}`}>
+                        {!isProductModalReadOnly && <div className={`rounded-2xl border p-4 ${darkMode ? "border-red-900 bg-red-950/40" : "border-red-200 bg-red-50"}`}>
                           <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${darkMode ? "text-red-200" : "text-slate-500"}`}>Starting from</p>
                           <p className={`mt-1 text-3xl font-black ${darkMode ? "text-white" : "text-red-700"}`}>{getProductPrice(selectedProduct)}</p>
                           <p className={`mt-1 text-[11px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Price may vary based on specifications</p>
-                        </div>
+                        </div>}
 
-                        <section className={`overflow-hidden rounded-xl border border-t-2 p-3.5 ${darkMode ? "border-slate-700 border-t-red-500 bg-slate-900" : "border-slate-200 border-t-red-600 bg-white"}`} aria-labelledby="product-estimator-title">
+                        {canEstimatePricing && <section className={`overflow-hidden rounded-xl border border-t-2 p-3.5 ${darkMode ? "border-slate-700 border-t-red-500 bg-slate-900" : "border-slate-200 border-t-red-600 bg-white"}`} aria-labelledby="product-estimator-title">
                           <div className="flex items-center gap-2">
                             <Ruler size={16} className="text-red-600" aria-hidden="true" />
                             <h4 id="product-estimator-title" className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Price Estimator</h4>
@@ -3842,9 +3900,10 @@ function CustomerDashboard() {
                           <p className={`mt-2 text-[11px] font-bold leading-4 ${darkMode ? "text-slate-500" : "text-slate-700"}`}>
                             Final pricing is subject to negotiation during shop discussion or on-site inspection.
                           </p>
-                        </section>
+                        </section>}
 
                         {/* Action Buttons */}
+                        {canRequestOrders && <>
                         <button
                           type="button"
                           onClick={() => {
@@ -3900,8 +3959,9 @@ function CustomerDashboard() {
                           <ShoppingCart size={20} />
                           Add to Cart
                         </button>
+                        </>}
 
-                        <button
+                        {canUploadFeedback && <button
                           type="button"
                           onClick={openProductReviewModal}
                           aria-label={`View customer reviews for ${selectedProduct?.name || "this product"}`}
@@ -3935,7 +3995,13 @@ function CustomerDashboard() {
                               View reviews
                             </span>
                           </div>
-                        </button>
+                        </button>}
+                        {!canUploadFeedback && (
+                          <div className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-xs ${darkMode ? "border-slate-700 bg-slate-800 text-slate-400" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
+                            <Info size={14} aria-hidden="true" />
+                            <span>Customer feedback and reviews will be available soon.</span>
+                          </div>
+                        )}
 
                       </div>
                     </div>
@@ -3944,7 +4010,7 @@ function CustomerDashboard() {
               </div>
             )}
 
-            {showCartDecisionModal && cartDecisionProduct && (
+            {showCartDecisionModal && canRequestOrders && cartDecisionProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
                 <div className={`order-flow-modal w-full max-h-[95vh] max-w-4xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Sticky Header with Gradient */}
@@ -3981,9 +4047,9 @@ function CustomerDashboard() {
                         </div>
 
                         {/* Option Cards */}
-                        <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
+                        <div className={`grid gap-4 ${canEstimatePricing ? "sm:grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}>
                           {/* Estimate Option */}
-                          <button
+                          {canEstimatePricing && <button
                             onClick={handleCartDecisionEstimate}
                             className="group relative rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-xl"
                           >
@@ -3996,7 +4062,7 @@ function CustomerDashboard() {
                               <p className="text-xl font-bold mb-2">Estimate First</p>
                               <p className="text-sm text-red-50 leading-relaxed">Enter your measurements to get an accurate price before adding to cart</p>
                             </div>
-                          </button>
+                          </button>}
 
                           {/* Add to Cart Option */}
                           <button
@@ -4260,7 +4326,7 @@ function CustomerDashboard() {
               </div>
             )}
 
-            {showDeliveryConfirmModal && (
+            {showDeliveryConfirmModal && canRequestOrders && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
                 <div className={`order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
                   <div className={`flex-shrink-0 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
@@ -4438,7 +4504,7 @@ function CustomerDashboard() {
               </div>
             )}
 
-            {showOrderNowModal && orderNowProduct && (
+            {showOrderNowModal && canRequestOrders && orderNowProduct && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
                 <div className={`order-flow-modal w-full max-w-3xl rounded-3xl bg-white shadow-2xl overflow-hidden ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   <div className="border-b px-6 py-5 bg-red-600 text-white">
@@ -4567,7 +4633,7 @@ function CustomerDashboard() {
               </div>
             )}
 
-            {showBatchOrderModal && (
+            {showBatchOrderModal && canRequestOrders && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
                 <div className={`order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
                   <div className={`flex-shrink-0 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
@@ -4740,7 +4806,7 @@ function CustomerDashboard() {
               </div>
             )}
 
-            {showBatchOrderConfirmModal && (
+            {showBatchOrderConfirmModal && canRequestOrders && (
               <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
                 <div className={`w-full max-w-xl overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
                   <div className={`flex items-center gap-3 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
@@ -4889,7 +4955,7 @@ function CustomerDashboard() {
               </div>
             )}
 
-            {showOrderReviewModal && (cartDecisionProduct || orderNowProduct) && (
+            {showOrderReviewModal && canRequestOrders && (cartDecisionProduct || orderNowProduct) && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
                 <div className={`w-full max-w-xl overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
                   <div className={`flex items-center gap-3 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
@@ -5260,7 +5326,7 @@ function CustomerDashboard() {
                           </div>
                           <div className="col-span-2 flex justify-end sm:col-span-1">
                             <div className="flex items-center gap-2">
-                              {orderFilter === "review" && isProjectFinished && isOrderCompletedAndReviewable(order) && !hasOrderReview(order) && (
+                              {canUploadFeedback && orderFilter === "review" && isProjectFinished && isOrderCompletedAndReviewable(order) && !hasOrderReview(order) && (
                                 <button
                                   type="button"
                                   onClick={() => openCustomerReviewModal(order)}
@@ -5614,7 +5680,7 @@ function CustomerDashboard() {
           />
         )}
 
-        {showCustomerReviewModal && selectedReviewOrder && (
+        {showCustomerReviewModal && canUploadFeedback && selectedReviewOrder && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
             <div
               role="dialog"
@@ -5776,7 +5842,7 @@ function CustomerDashboard() {
           </div>
         )}
 
-        {showProductReviewModal && (
+        {showProductReviewModal && canUploadFeedback && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
             <div
               role="dialog"
@@ -5938,7 +6004,7 @@ function CustomerDashboard() {
           </div>
         )}
 
-        {activeTab === "cart" && (
+        {activeTab === "cart" && canRequestOrders && (
           <div className={`flex min-h-0 flex-1 flex-col rounded-2xl border p-4 shadow-sm sm:p-6 ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}>
             <div className="flex flex-col gap-3 border-b pb-5 sm:flex-row sm:items-center sm:justify-between">
               <div>

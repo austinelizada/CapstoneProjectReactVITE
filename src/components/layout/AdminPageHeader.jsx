@@ -1,6 +1,6 @@
 import { useAdminTheme } from "../../contexts/AdminThemeContext";
 
-function AdminPageHeader({ title, description, stats = [], className = "", statsClassName = "" }) {
+function AdminPageHeader({ title, description, stats = [], className = "", statsClassName = "", compactStats = false }) {
   const { darkMode } = useAdminTheme();
 
   return (
@@ -15,10 +15,10 @@ function AdminPageHeader({ title, description, stats = [], className = "", stats
         </div>
 
         {stats.length > 0 && (
-          <div className={`grid grid-cols-3 gap-3 2xl:shrink-0 ${statsClassName}`}>
+          <div className={`grid min-w-0 ${statsClassName || "grid-cols-3 gap-3"}`}>
             {stats.map((stat) => (
-              <div key={stat.label} className={`min-w-0 rounded-2xl border px-3 py-4 text-center shadow-lg backdrop-blur-sm sm:px-5 ${darkMode ? "border-slate-600/80 bg-slate-950/70" : "border-slate-300/80 bg-white/75"}`}>
-                <p className={`truncate text-base font-black tabular-nums sm:text-xl ${darkMode ? (stat.color || "text-white") : "text-slate-900"}`}>{stat.value}</p>
+              <div key={stat.label} className={`min-w-0 rounded-2xl border text-center shadow-lg backdrop-blur-sm ${compactStats ? "px-2.5 py-3 sm:px-3" : "px-3 py-4 sm:px-5"} ${darkMode ? "border-slate-600/80 bg-slate-950/70" : "border-slate-300/80 bg-white/75"}`}>
+                <p className={`truncate text-base font-black tabular-nums ${compactStats ? "sm:text-lg" : "sm:text-xl"} ${darkMode ? (stat.color || "text-white") : "text-slate-900"}`}>{stat.value}</p>
                 <p className={`mt-1 text-[10px] font-bold uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{stat.label}</p>
               </div>
             ))}

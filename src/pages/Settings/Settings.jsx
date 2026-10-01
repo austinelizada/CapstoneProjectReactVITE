@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, ChevronDown, Check, Loader2, Search, Settings2, ShieldCheck, Users } from "lucide-react";
+import { ChevronDown, Loader2, Search, Settings2, ShieldCheck } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 
 import Sidebar from "../../components/layout/Sidebar";
@@ -196,22 +196,6 @@ function Settings() {
               { label: "Staff", value: counts.skilled_worker, color: "text-red-300" },
             ]}
           />
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            {[
-              { label: "Platform status", value: maintenanceMode ? "Maintenance mode" : "Operating normally", icon: Activity, tone: maintenanceMode ? "amber" : "emerald" },
-              { label: "Managed accounts", value: `${counts.all} accounts in view`, icon: Users, tone: "red" },
-              { label: "Access template", value: `${Object.values(globalPermissions).filter(Boolean).length} of ${PERMISSIONS.length} enabled`, icon: Check, tone: "slate" },
-            ].map(({ label, value, icon: Icon, tone }) => {
-              const tones = {
-                amber: darkMode ? "border-amber-800/70 bg-amber-950/30 text-amber-300" : "border-amber-200 bg-amber-50 text-amber-700",
-                emerald: darkMode ? "border-emerald-800/70 bg-emerald-950/30 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700",
-                red: darkMode ? "border-red-900/70 bg-red-950/30 text-red-300" : "border-red-200 bg-red-50 text-red-700",
-                slate: darkMode ? "border-slate-700 bg-slate-900 text-slate-300" : "border-slate-200 bg-white text-slate-700",
-              };
-              return <div key={label} className={`flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-sm ${tones[tone]}`}><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/70"><Icon size={16} /></span><div className="min-w-0"><p className={`text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{label}</p><p className="mt-0.5 truncate text-sm font-bold">{value}</p></div></div>;
-            })}
-          </div>
 
           <section className={`mt-7 overflow-hidden rounded-[22px] border shadow-[0_18px_45px_-28px_rgba(15,23,42,0.65)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-red-100 bg-white"}`}>
             <div className={`relative flex flex-col gap-4 border-b px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6 ${darkMode ? "border-slate-700 bg-gradient-to-r from-slate-900 via-slate-900 to-red-950/40" : "border-red-100 bg-gradient-to-r from-red-50 via-white to-orange-50"}`}>
