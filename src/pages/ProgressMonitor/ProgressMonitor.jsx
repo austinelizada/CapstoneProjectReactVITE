@@ -386,6 +386,7 @@ function ProgressMonitor() {
             payment_status: savedOrder.payment_status,
             inspection_status: savedOrder.inspection_status,
             inspection_date: savedOrder.inspection_date,
+            installation: formatDateToMMMDDYYYY(savedOrder.estimated_installation_date) || "TBD",
             estimated_installation_date: savedOrder.estimated_installation_date,
             createdAt: savedOrder.createdAt,
             updatedAt: savedOrder.updatedAt,

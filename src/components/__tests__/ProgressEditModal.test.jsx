@@ -75,6 +75,23 @@ describe("ProgressEditModal", () => {
     });
   });
 
+  it("accepts a one-character delay reason", () => {
+    render(
+      <ProgressEditModal
+        project={{ id: "order-123", client: "Acme Corp", stages: [] }}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getAllByLabelText("Stage State")[0], { target: { value: "delayed" } });
+    fireEvent.change(screen.getByLabelText("Delay Reason *"), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Delay Reason" }));
+
+    expect(screen.queryByRole("dialog", { name: "Project Delay Reason" })).toBeNull();
+    expect(screen.getAllByLabelText("Stage State")[0].value).toBe("delayed");
+  });
+
   it("saves Assembly after Cutting and before Fabrication", async () => {
     const onSave = vi.fn().mockResolvedValue();
 

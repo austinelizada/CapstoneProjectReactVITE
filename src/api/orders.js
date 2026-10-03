@@ -72,8 +72,8 @@ export const submitOrderReview = (orderId, payload = {}) =>
     body: JSON.stringify(payload),
   });
 
-export const deleteOrderReview = (orderId) =>
-  apiFetch(`/orders/admin/${orderId}/review`, {
+export const deleteOrderReview = (orderId, itemIndex) =>
+  apiFetch(`/orders/admin/${orderId}/review${Number.isInteger(itemIndex) ? `?itemIndex=${itemIndex}` : ""}`, {
     method: "DELETE",
   });
 

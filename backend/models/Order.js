@@ -143,6 +143,14 @@ const OrderItemSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    review: {
+      rating: { type: Number, min: 1, max: 5, default: null },
+      title: { type: String, trim: true, default: "" },
+      comment: { type: String, trim: true, default: "" },
+      photos: { type: [String], default: [] },
+      submittedAt: { type: Date, default: null },
+      updatedAt: { type: Date, default: null },
+    },
     progress: {
       type: Number,
       min: 0,

@@ -780,22 +780,56 @@ function CustomerDashboard() {
     );
   };
 
-  const isOrderReviewEditable = (order) => {
-    if (!order?.review?.submittedAt) return false;
-    const submittedAt = new Date(order.review.submittedAt);
+  const getOrderItemReview = (order, itemIndex) => {
+    if (!order || !Array.isArray(order.items)) return null;
+    if (order.items.length > 1) return order.items[itemIndex]?.review || null;
+    return order.review || order.items[itemIndex]?.review || null;
+  };
+
+  const getReviewForOrderContext = (order) => (
+    Number.isInteger(order?.reviewItemIndex)
+      ? getOrderItemReview(order, order.reviewItemIndex)
+      : order?.review
+  );
+
+  const isOrderReviewEditable = (order, itemIndex = null) => {
+    const review = Number.isInteger(itemIndex)
+      ? getOrderItemReview(order, itemIndex)
+      : getReviewForOrderContext(order);
+    if (!review?.submittedAt) return false;
+    const submittedAt = new Date(review.submittedAt);
     const editDeadline = new Date(submittedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
     return new Date() <= editDeadline;
   };
 
-  const hasOrderReview = (order) => Boolean(order?.review?.submittedAt);
+  const hasOrderReview = (order) => {
+    if (Number.isInteger(order?.reviewItemIndex)) {
+      return Boolean(getOrderItemReview(order, order.reviewItemIndex)?.submittedAt);
+    }
+    if (Array.isArray(order?.items) && order.items.length > 1) {
+      return order.items.every((_, index) => Boolean(getOrderItemReview(order, index)?.submittedAt));
+    }
+    return Boolean(order?.review?.submittedAt);
+  };
 
-  const openCustomerReviewModal = (order) => {
+  const openCustomerReviewModal = (order, itemIndex = null) => {
     if (!canUploadFeedback) {
       showPermissionNotice("Feedback access is disabled for your account.");
       return;
     }
-    const existingReview = order?.review || {};
-    setSelectedReviewOrder(order);
+    const reviewItemIndex = Array.isArray(order?.items) && order.items.length > 1
+      ? itemIndex
+      : null;
+    const existingReview = Number.isInteger(reviewItemIndex)
+      ? getOrderItemReview(order, reviewItemIndex) || {}
+      : order?.review || {};
+    setSelectedReviewOrder({
+      ...order,
+      reviewItemIndex,
+      reviewProductName: Number.isInteger(reviewItemIndex)
+        ? order.items[reviewItemIndex]?.name || order.items[reviewItemIndex]?.product_name || "Product"
+        : order.items?.[0]?.name || order.items?.[0]?.product_name || "Project",
+    });
     setOrderReviewForm({
       rating: existingReview.rating || 0,
       title: existingReview.title || "",
@@ -884,6 +918,9 @@ function CustomerDashboard() {
         title: orderReviewForm.title.trim(),
         comment: orderReviewForm.comment.trim(),
         photos: orderReviewForm.photos.slice(0, 5),
+        ...(Number.isInteger(selectedReviewOrder.reviewItemIndex)
+          ? { itemIndex: selectedReviewOrder.reviewItemIndex }
+          : {}),
       };
       const response = await submitOrderReview(selectedReviewOrder._id || selectedReviewOrder.id, payload);
       if (response.order) {
@@ -5491,7 +5528,7 @@ function CustomerDashboard() {
                           </div>
                           <div className="col-span-2 flex justify-end sm:col-span-1">
                             <div className="flex items-center gap-2">
-                              {canUploadFeedback && orderFilter === "review" && isProjectFinished && isOrderCompletedAndReviewable(order) && !hasOrderReview(order) && (
+                              {canUploadFeedback && orderFilter === "review" && isProjectFinished && isOrderCompletedAndReviewable(order) && !isBatchOrder && !hasOrderReview(order) && (
                                 <button
                                   type="button"
                                   onClick={() => openCustomerReviewModal(order)}
@@ -5499,6 +5536,16 @@ function CustomerDashboard() {
                                 >
                                   <Star size={12} fill="currentColor" className="drop-shadow-[0_0_2px_rgba(0,0,0,0.12)]" aria-hidden="true" />
                                   <span className="whitespace-nowrap">Leave Feedback</span>
+                                </button>
+                              )}
+                              {canUploadFeedback && orderFilter === "review" && isProjectFinished && isOrderCompletedAndReviewable(order) && isBatchOrder && !hasOrderReview(order) && (
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedOrderId(orderId)}
+                                  className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-[10px] font-black leading-none shadow-sm ${darkMode ? "border-amber-500/70 bg-amber-500/15 text-amber-200" : "border-amber-500 bg-amber-400 text-slate-950"}`}
+                                >
+                                  <Star size={12} fill="currentColor" aria-hidden="true" />
+                                  <span>Review products</span>
                                 </button>
                               )}
                               <button
@@ -5597,6 +5644,29 @@ function CustomerDashboard() {
                                     <p className="text-sm font-bold text-red-600">
                                       {formatCurrency(getItemPriceValue(item))}
                                     </p>
+                                    {isBatchOrder && canUploadFeedback && isProjectFinished && isOrderCompletedAndReviewable(order) && (
+                                      getOrderItemReview(order, itemIndex)?.submittedAt
+                                        ? isOrderReviewEditable(order, itemIndex)
+                                          ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => openCustomerReviewModal(order, itemIndex)}
+                                              className={`mt-1 text-xs font-semibold underline underline-offset-2 ${darkMode ? "text-amber-300" : "text-amber-700"}`}
+                                            >
+                                              Edit review
+                                            </button>
+                                          )
+                                          : <span className={`mt-1 block text-xs font-semibold ${darkMode ? "text-emerald-300" : "text-emerald-700"}`}>Reviewed</span>
+                                        : (
+                                          <button
+                                            type="button"
+                                            onClick={() => openCustomerReviewModal(order, itemIndex)}
+                                            className={`mt-1 text-xs font-semibold underline underline-offset-2 ${darkMode ? "text-amber-300" : "text-amber-700"}`}
+                                          >
+                                            Review product
+                                          </button>
+                                        )
+                                    )}
                                   </div>
                                 </div>
                               ))}
@@ -5864,6 +5934,11 @@ function CustomerDashboard() {
                     {hasOrderReview(selectedReviewOrder) ? "Edit Review" : "Write a Review"}
                   </h2>
                   <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Share your experience after your completed order.</p>
+                  {selectedReviewOrder.reviewProductName && Array.isArray(selectedReviewOrder.items) && selectedReviewOrder.items.length > 1 && (
+                    <p className={`mt-1 text-xs font-semibold ${darkMode ? "text-amber-300" : "text-amber-700"}`}>
+                      Product: {selectedReviewOrder.reviewProductName}
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"

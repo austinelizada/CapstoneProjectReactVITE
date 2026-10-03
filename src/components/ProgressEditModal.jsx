@@ -277,7 +277,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   };
 
   const handleDelayReasonSave = () => {
-    if (!delayReason.trim() || delayReason.trim().length < 10) {
+    if (!delayReason.trim()) {
       setDelayModalError("Please provide a reason for the delay before saving.");
       return;
     }

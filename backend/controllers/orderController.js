@@ -14,9 +14,8 @@ const isWithinReviewEditWindow = (submittedAt) => {
   return new Date() <= editDeadline;
 };
 
-const buildReviewNotificationMessage = (order, review) => {
-  const productName = order.items?.[0]?.name || "project";
-  return `New customer review received for ${productName} (${order.tracking}).\nRating: ${"⭐".repeat(review.rating || 0)}\nTitle: ${review.title || "-"}\nComment: ${review.comment || "-"}`;
+const buildReviewNotificationMessage = (order, review, productName = order.items?.[0]?.name || "project") => {
+  return `New customer review received for ${productName} (${order.tracking}).\nOrder ID: ${order.tracking || order._id}\nRating: ${"⭐".repeat(review.rating || 0)}\nTitle: ${review.title || "-"}\nComment: ${review.comment || "-"}`;
 };
 
 const getDelayEventKey = (stage, entry, index) => [
@@ -497,6 +496,21 @@ export const trackOrder = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
+    if (req.query.itemIndex !== undefined) {
+      const itemIndex = Number(req.query.itemIndex);
+      if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= order.items.length) {
+        return res.status(400).json({ success: false, message: "A valid product index is required." });
+      }
+      if (!order.items[itemIndex]?.review?.submittedAt) {
+        return res.status(404).json({ success: false, message: "Product feedback not found." });
+      }
+
+      order.items[itemIndex].review = null;
+      order.markModified(`items.${itemIndex}.review`);
+      await order.save();
+      return res.json({ success: true, order });
+    }
+
 
     if (req.user && req.user.role !== "admin" && order.customer._id.toString() !== req.user.id) {
       return res.status(403).json({ success: false, message: "Not authorized to view this order" });
@@ -726,6 +740,22 @@ export const deleteOrderReview = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found." });
     }
+
+    if (req.query.itemIndex !== undefined) {
+      const itemIndex = Number(req.query.itemIndex);
+      if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= order.items.length) {
+        return res.status(400).json({ success: false, message: "A valid product index is required." });
+      }
+      if (!order.items[itemIndex]?.review?.submittedAt) {
+        return res.status(404).json({ success: false, message: "Product feedback not found." });
+      }
+
+      order.items[itemIndex].review = null;
+      order.markModified(`items.${itemIndex}.review`);
+      await order.save();
+      return res.json({ success: true, order });
+    }
+
     if (!order.review || (!order.review.submittedAt && !order.review.rating)) {
       return res.status(404).json({ success: false, message: "Customer feedback not found." });
     }
@@ -744,7 +774,7 @@ export const deleteOrderReview = async (req, res) => {
 export const submitOrderReview = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { rating, title, comment, photos = [] } = req.body;
+    const { rating, title, comment, photos = [], itemIndex: rawItemIndex } = req.body;
 
     if (!rating || typeof rating !== "number" || rating < 1 || rating > 5) {
       return res.status(400).json({ success: false, message: "Rating must be a number between 1 and 5." });
@@ -772,31 +802,44 @@ export const submitOrderReview = async (req, res) => {
       return res.status(400).json({ success: false, message: "Only completed orders may be reviewed." });
     }
 
-    const existingReview = order.review && order.review.submittedAt;
-    if (existingReview && !isWithinReviewEditWindow(order.review.submittedAt)) {
+    const isBatchOrder = Array.isArray(order.items) && order.items.length > 1;
+    const itemIndex = rawItemIndex === undefined || rawItemIndex === null ? null : Number(rawItemIndex);
+    if (isBatchOrder && itemIndex === null) {
+      return res.status(400).json({ success: false, message: "Select the product you want to review." });
+    }
+    if (itemIndex !== null && (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= order.items.length)) {
+      return res.status(400).json({ success: false, message: "A valid product index is required." });
+    }
+
+    const reviewTarget = itemIndex === null ? order : order.items[itemIndex];
+    const existingReview = reviewTarget.review?.submittedAt;
+    if (existingReview && !isWithinReviewEditWindow(existingReview)) {
       return res.status(400).json({ success: false, message: "This review is locked and can no longer be edited." });
     }
 
     const now = new Date();
-    order.review = {
+    const savedReview = {
       rating,
       title: title?.trim() || "",
       comment: comment.trim(),
       photos: photos.slice(0, 5).map((photo) => (typeof photo === "string" ? photo : "")).filter(Boolean),
-      submittedAt: existingReview ? order.review.submittedAt : now,
+      submittedAt: existingReview || now,
       updatedAt: now,
     };
+    reviewTarget.review = savedReview;
+    if (itemIndex !== null) order.markModified(`items.${itemIndex}.review`);
 
     await order.save();
 
-    const reviewMessage = buildReviewNotificationMessage(order, order.review);
+    const productName = itemIndex === null ? order.items?.[0]?.name : order.items[itemIndex]?.name;
+    const reviewMessage = buildReviewNotificationMessage(order, savedReview, productName);
     const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
     const customerEmail = req.user.email || order.customer_email || "";
 
     try {
       await sendMail({
         to: adminEmail,
-        subject: `New customer review received for ${order.tracking}`,
+        subject: `New customer review received for ${productName || order.tracking}`,
         text: reviewMessage,
       });
     } catch (mailError) {
@@ -831,7 +874,10 @@ export const getProductReviews = async (req, res) => {
 
     const reviews = await Order.find({
       "items.product_id": productId,
-      "review.submittedAt": { $ne: null },
+      $or: [
+        { "review.submittedAt": { $ne: null } },
+        { items: { $elemMatch: { product_id: productId, "review.submittedAt": { $ne: null } } } },
+      ],
     })
       .populate("customer", "first_name last_name")
       .populate("items.product_id", "name")
@@ -842,17 +888,23 @@ export const getProductReviews = async (req, res) => {
       .flatMap((order) =>
         (order.items || [])
           .filter((item) => item.product_id && String(item.product_id._id || item.product_id) === String(productId))
-          .map((item) => ({
-            orderId: order._id,
-            tracking: order.tracking,
-            productName: item.name,
-            customerName: order.customer ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() : order.customer_name || "Customer",
-            rating: order.review?.rating || 0,
-            title: order.review?.title || "",
-            comment: order.review?.comment || "",
-            photos: order.review?.photos || [],
-            submittedAt: order.review?.submittedAt || null,
-          }))
+          .flatMap((item, itemIndex) => {
+            if (!item.product_id || String(item.product_id._id || item.product_id) !== String(productId)) return [];
+            const review = item.review?.submittedAt ? item.review : order.review;
+            if (!review?.submittedAt) return [];
+            return [{
+              orderId: order._id,
+              tracking: order.tracking,
+              productName: item.name,
+              customerName: order.customer ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() : order.customer_name || "Customer",
+              rating: review.rating || 0,
+              title: review.title || "",
+              comment: review.comment || "",
+              photos: review.photos || [],
+              submittedAt: review.submittedAt || null,
+              itemIndex,
+            }];
+          })
       )
       .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 
