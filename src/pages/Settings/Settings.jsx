@@ -10,7 +10,6 @@ import {
   Download,
   History,
   Loader2,
-  Play,
   RotateCcw,
   Search,
   Settings2,
@@ -132,6 +131,7 @@ function Settings() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [savingMaintenance, setSavingMaintenance] = useState(false);
   const [loadingBackupSettings, setLoadingBackupSettings] = useState(true);
+  const [creatingBackup, setCreatingBackup] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState("user-management");
   const backupOptions = [
     { id: "weekly", label: "Weekly", description: "Every Sunday at midnight" },
@@ -314,59 +314,67 @@ function Settings() {
               <section className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h3 id="backup-schedule-heading" className="text-[17px] font-medium text-foreground">Backup Schedule</h3>
+                </div>
+
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3">
+                  <RadioGroup.Root
+                    value={backupState.selectedSchedule}
+                    onValueChange={handleScheduleChange}
+                    disabled={loadingBackupSettings}
+                    aria-labelledby="backup-schedule-heading"
+                    className="contents"
+                  >
+                    {backupOptions.map((option) => {
+                      const isSelected = backupState.selectedSchedule === option.id;
+                      const ScheduleIcon = {
+                        weekly: CalendarDays,
+                        monthly: CalendarRange,
+                        yearly: CalendarClock,
+                      }[option.id];
+
+                      return (
+                        <label
+                          key={option.id}
+                          htmlFor={`backup-schedule-${option.id}`}
+                          className="has-[[data-state=checked]]:border-[1.5px] has-[[data-state=checked]]:border-brand has-[[data-state=checked]]:bg-brand/[0.08] flex min-h-[84px] cursor-pointer items-center gap-3 rounded-2xl border border-border bg-background p-4 transition-colors motion-reduce:transition-none dark:has-[[data-state=checked]]:border-brand-dark-text dark:has-[[data-state=checked]]:bg-brand-dark-fill/15"
+                        >
+                          <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${isSelected ? "bg-brand text-white dark:bg-brand-dark-fill" : "bg-muted text-muted-foreground"}`}>
+                            <ScheduleIcon aria-hidden="true" className="size-5" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-base font-medium text-foreground">{option.label}</span>
+                            <span className="mt-1 block text-[13px] text-muted-foreground">{option.description}</span>
+                          </span>
+                          <RadioGroup.Item
+                            id={`backup-schedule-${option.id}`}
+                            value={option.id}
+                            aria-label={option.label}
+                            className="flex size-5 shrink-0 items-center justify-center rounded-full border border-muted-foreground/50 text-brand outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=checked]:border-brand motion-reduce:transition-none dark:text-brand-dark-text dark:data-[state=checked]:border-brand-dark-text"
+                          >
+                            <RadioGroup.Indicator className="flex items-center justify-center">
+                              <span className="size-2.5 rounded-full bg-current" />
+                            </RadioGroup.Indicator>
+                          </RadioGroup.Item>
+                        </label>
+                      );
+                    })}
+                  </RadioGroup.Root>
                   <button
                     type="button"
                     onClick={handleCreateBackup}
-                    disabled={loadingBackupSettings}
-                    className="inline-flex h-9.5 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 motion-reduce:transition-none dark:bg-brand-dark-fill"
+                    disabled={loadingBackupSettings || creatingBackup}
+                    className="flex min-h-[84px] items-center gap-3 rounded-2xl border border-brand/50 bg-brand/[0.08] p-4 text-left transition-colors hover:border-brand hover:bg-brand/15 disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none dark:border-brand-dark-text/50 dark:bg-brand-dark-fill/15 dark:hover:bg-brand-dark-fill/25"
                   >
-                    <Play aria-hidden="true" className="size-4 fill-current" />
-                    Backup Now
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white dark:bg-brand-dark-fill">
+                      {creatingBackup ? <Loader2 aria-hidden="true" className="size-5 animate-spin" /> : <Database aria-hidden="true" className="size-5" />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-base font-medium text-foreground">Full System</span>
+                      <span className="mt-1 block text-[13px] text-muted-foreground">Complete system snapshot</span>
+                    </span>
+                    <span className="text-xs font-semibold text-brand dark:text-brand-dark-text">{creatingBackup ? "Creating..." : "Create"}</span>
                   </button>
                 </div>
-
-                <RadioGroup.Root
-                  value={backupState.selectedSchedule}
-                  onValueChange={handleScheduleChange}
-                  disabled={loadingBackupSettings}
-                  aria-labelledby="backup-schedule-heading"
-                  className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3"
-                >
-                  {backupOptions.map((option) => {
-                    const isSelected = backupState.selectedSchedule === option.id;
-                    const ScheduleIcon = {
-                      weekly: CalendarDays,
-                      monthly: CalendarRange,
-                      yearly: CalendarClock,
-                    }[option.id];
-
-                    return (
-                      <label
-                        key={option.id}
-                        htmlFor={`backup-schedule-${option.id}`}
-                        className="has-[[data-state=checked]]:border-[1.5px] has-[[data-state=checked]]:border-brand has-[[data-state=checked]]:bg-brand/[0.08] flex min-h-[84px] cursor-pointer items-center gap-3 rounded-2xl border border-border bg-background p-4 transition-colors motion-reduce:transition-none dark:has-[[data-state=checked]]:border-brand-dark-text dark:has-[[data-state=checked]]:bg-brand-dark-fill/15"
-                      >
-                        <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${isSelected ? "bg-brand text-white dark:bg-brand-dark-fill" : "bg-muted text-muted-foreground"}`}>
-                          <ScheduleIcon aria-hidden="true" className="size-5" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-base font-medium text-foreground">{option.label}</span>
-                          <span className="mt-1 block text-[13px] text-muted-foreground">{option.description}</span>
-                        </span>
-                        <RadioGroup.Item
-                          id={`backup-schedule-${option.id}`}
-                          value={option.id}
-                          aria-label={option.label}
-                          className="flex size-5 shrink-0 items-center justify-center rounded-full border border-muted-foreground/50 text-brand outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=checked]:border-brand motion-reduce:transition-none dark:text-brand-dark-text dark:data-[state=checked]:border-brand-dark-text"
-                        >
-                          <RadioGroup.Indicator className="flex items-center justify-center">
-                            <span className="size-2.5 rounded-full bg-current" />
-                          </RadioGroup.Indicator>
-                        </RadioGroup.Item>
-                      </label>
-                    );
-                  })}
-                </RadioGroup.Root>
               </section>
 
               <section className="space-y-3">
@@ -674,6 +682,7 @@ function Settings() {
 
   const handleCreateBackup = async () => {
     const backupType = "Full System";
+    setCreatingBackup(true);
     try {
       const response = await createSystemBackup(backupType);
       setBackupState({
@@ -686,6 +695,8 @@ function Settings() {
       toast.success("Backup created successfully.");
     } catch (error) {
       toast.error(error?.data?.message || error?.message || "Unable to create backup.");
+    } finally {
+      setCreatingBackup(false);
     }
   };
 
