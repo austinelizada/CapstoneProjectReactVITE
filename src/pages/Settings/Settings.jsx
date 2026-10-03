@@ -1,5 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Loader2, Search, Settings2, ShieldCheck, X } from "lucide-react";
+import {
+  Calendar,
+  CalendarClock,
+  CalendarDays,
+  CalendarRange,
+  ChevronDown,
+  CircleCheck,
+  Database,
+  Download,
+  History,
+  Loader2,
+  Play,
+  RotateCcw,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+  X,
+} from "lucide-react";
+import { RadioGroup } from "radix-ui";
 import toast, { Toaster } from "react-hot-toast";
 
 import Sidebar from "../../components/layout/Sidebar";
@@ -7,9 +26,17 @@ import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useAuth } from "../../contexts/AuthContext";
 import { useAdminTheme } from "../../contexts/AdminThemeContext";
-import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { recordActivity } from "@/lib/activityLog";
-import { getAdminUsers, getSystemSettings, updateAdminUserAccess, updateSystemSettings } from "@/api/users";
+import {
+  createSystemBackup,
+  deleteSystemBackup,
+  downloadSystemBackup,
+  getAdminUsers,
+  getSystemSettings,
+  restoreSystemBackup,
+  updateAdminUserAccess,
+  updateSystemSettings,
+} from "@/api/users";
 
 const PERMISSIONS = [
   { key: "can_request_orders", label: "Can Request Orders", description: "Submit new glass/aluminum orders" },
@@ -104,6 +131,28 @@ function Settings() {
   const [savingGlobal, setSavingGlobal] = useState(false);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [savingMaintenance, setSavingMaintenance] = useState(false);
+  const [loadingBackupSettings, setLoadingBackupSettings] = useState(true);
+  const [activeSettingsTab, setActiveSettingsTab] = useState("user-management");
+  const backupOptions = [
+    { id: "weekly", label: "Weekly", description: "Every Sunday at midnight" },
+    { id: "monthly", label: "Monthly", description: "1st of every month" },
+    { id: "yearly", label: "Yearly", description: "December 31st at midnight" },
+  ];
+
+  const getDefaultBackupState = () => {
+    return {
+      selectedSchedule: "weekly",
+      lastBackupAt: null,
+      status: null,
+      backups: [],
+    };
+  };
+
+  const [backupState, setBackupState] = useState(getDefaultBackupState);
+  const settingsTabs = [
+    { key: "user-management", label: "User Management" },
+    { key: "backup-recovery", label: "Backup & Recovery" },
+  ];
   const isOwnStaffAccount = Boolean(
     staffAccount &&
     String(staffAccount._id || staffAccount.id || "") === String(user?._id || user?.id || "")
@@ -120,8 +169,15 @@ function Settings() {
         if (response.global_permissions) {
           setGlobalPermissions(normalizePermissions(response.global_permissions));
         }
+        setBackupState({
+          selectedSchedule: ["weekly", "monthly", "yearly"].includes(response.backup_schedule) ? response.backup_schedule : "weekly",
+          status: response.backup_status || null,
+          lastBackupAt: response.last_backup_at || null,
+          backups: Array.isArray(response.backup_history) ? response.backup_history : [],
+        });
       })
-      .catch((error) => toast.error(error?.data?.message || error?.message || "Unable to load system maintenance mode."));
+      .catch((error) => toast.error(error?.data?.message || error?.message || "Unable to load system settings."))
+      .finally(() => setLoadingBackupSettings(false));
   }, []);
 
   const loadUsers = async () => {
@@ -165,15 +221,12 @@ function Settings() {
           access_permissions: normalizePermissions(user.access_permissions || defaultPermissions()),
         }
       : null;
-
     if (!authAdmin) return users;
-
     const seenIds = new Set([authAdmin._id, authAdmin.id].filter(Boolean));
     const realUsers = users.filter((account) => {
       const accountId = account._id || account.id;
       return accountId && !seenIds.has(accountId);
     });
-
     return [authAdmin, ...realUsers];
   }, [users, user]);
 
@@ -193,11 +246,10 @@ function Settings() {
     const previous = account;
     const nextPermissions = normalizePermissions({ ...getPermissions(account), ...patch });
     const next = { ...account, access_permissions: nextPermissions };
-    const normalizedPatch = nextPermissions;
     setUsers((current) => current.map((item) => (item._id || item.id) === accountId ? next : item));
     setSavingId(accountId);
     try {
-      const response = await updateAdminUserAccess(accountId, normalizedPatch);
+      const response = await updateAdminUserAccess(accountId, nextPermissions);
       setUsers((current) => current.map((item) => (item._id || item.id) === accountId ? response.user : item));
       recordActivity(user, `Updated access permissions for ${account.first_name} ${account.last_name}.`, "Settings");
       return true;
@@ -209,6 +261,176 @@ function Settings() {
       setSavingId(null);
     }
   };
+
+  const renderBackupRecovery = (metrics) => (
+    <>
+          {activeSettingsTab === "backup-recovery" && (
+            <div className="mt-7 min-w-0 space-y-6">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
+                <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-background p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand/[0.08] text-brand dark:bg-brand-dark-fill/20 dark:text-brand-dark-text">
+                    <Calendar aria-hidden="true" className="size-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Last backup</div>
+                    <div className="mt-1 text-base font-medium text-foreground">{metrics.lastBackupAt ? formatBackupDateShort(metrics.lastBackupAt) : "No backup"}</div>
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-background p-4">
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${metrics.status === "Success" ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-muted text-muted-foreground"}`}>
+                    <History aria-hidden="true" className="size-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Backup status</div>
+                    <div className={`mt-1 inline-flex items-center gap-2 text-base font-medium ${metrics.status === "Success" ? "text-green-700 dark:text-green-400" : "text-muted-foreground"}`}>
+                      <span className={`size-2 rounded-full ${metrics.status === "Success" ? "bg-green-600" : "bg-muted-foreground"}`} />
+                      {metrics.status}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-background p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-700 dark:text-blue-400">
+                    <Database aria-hidden="true" className="size-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Backup snapshots</div>
+                    <div className="mt-1 text-base font-medium text-foreground">{metrics.totalBackups} backups</div>
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-background p-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-500/10 text-green-700 dark:text-green-400">
+                    <CircleCheck aria-hidden="true" className="size-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Success rate</div>
+                    <div className="mt-1 text-base font-medium text-foreground">{metrics.successRate}%</div>
+                  </div>
+                </div>
+              </div>
+
+              <section className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 id="backup-schedule-heading" className="text-[17px] font-medium text-foreground">Backup Schedule</h3>
+                  <button
+                    type="button"
+                    onClick={handleCreateBackup}
+                    disabled={loadingBackupSettings}
+                    className="inline-flex h-9.5 items-center gap-2 rounded-lg bg-brand px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 motion-reduce:transition-none dark:bg-brand-dark-fill"
+                  >
+                    <Play aria-hidden="true" className="size-4 fill-current" />
+                    Backup Now
+                  </button>
+                </div>
+
+                <RadioGroup.Root
+                  value={backupState.selectedSchedule}
+                  onValueChange={handleScheduleChange}
+                  disabled={loadingBackupSettings}
+                  aria-labelledby="backup-schedule-heading"
+                  className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3"
+                >
+                  {backupOptions.map((option) => {
+                    const isSelected = backupState.selectedSchedule === option.id;
+                    const ScheduleIcon = {
+                      weekly: CalendarDays,
+                      monthly: CalendarRange,
+                      yearly: CalendarClock,
+                    }[option.id];
+
+                    return (
+                      <label
+                        key={option.id}
+                        htmlFor={`backup-schedule-${option.id}`}
+                        className="has-[[data-state=checked]]:border-[1.5px] has-[[data-state=checked]]:border-brand has-[[data-state=checked]]:bg-brand/[0.08] flex min-h-[84px] cursor-pointer items-center gap-3 rounded-2xl border border-border bg-background p-4 transition-colors motion-reduce:transition-none dark:has-[[data-state=checked]]:border-brand-dark-text dark:has-[[data-state=checked]]:bg-brand-dark-fill/15"
+                      >
+                        <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${isSelected ? "bg-brand text-white dark:bg-brand-dark-fill" : "bg-muted text-muted-foreground"}`}>
+                          <ScheduleIcon aria-hidden="true" className="size-5" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-base font-medium text-foreground">{option.label}</span>
+                          <span className="mt-1 block text-[13px] text-muted-foreground">{option.description}</span>
+                        </span>
+                        <RadioGroup.Item
+                          id={`backup-schedule-${option.id}`}
+                          value={option.id}
+                          aria-label={option.label}
+                          className="flex size-5 shrink-0 items-center justify-center rounded-full border border-muted-foreground/50 text-brand outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=checked]:border-brand motion-reduce:transition-none dark:text-brand-dark-text dark:data-[state=checked]:border-brand-dark-text"
+                        >
+                          <RadioGroup.Indicator className="flex items-center justify-center">
+                            <span className="size-2.5 rounded-full bg-current" />
+                          </RadioGroup.Indicator>
+                        </RadioGroup.Item>
+                      </label>
+                    );
+                  })}
+                </RadioGroup.Root>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="text-[17px] font-medium text-foreground">Backup History</h3>
+                <div className="overflow-hidden rounded-2xl border border-border bg-background">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-[680px] w-full border-collapse text-left">
+                      <thead className="bg-muted/50">
+                        <tr className="border-b border-border">
+                          <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Backup Name</th>
+                          <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Date</th>
+                          <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Type</th>
+                          <th className="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Size</th>
+                          <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Status</th>
+                          <th className="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(backupState.backups || []).map((backup) => (
+                          <tr key={backup.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50 motion-reduce:transition-none">
+                            <td className="px-4 py-3 font-mono text-[13px] text-foreground">{backup.name}</td>
+                            <td className="px-4 py-3 text-sm text-muted-foreground">{formatBackupDateShort(backup.date)}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${backup.type === "Full System" ? "border-brand/50 bg-brand/[0.08] text-brand dark:border-brand-dark-text/50 dark:bg-brand-dark-fill/15 dark:text-brand-dark-text" : "border-border bg-muted text-muted-foreground"}`}>{backup.type}</span>
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm tabular-nums text-foreground">{formatBackupSize(backup.size)}</td>
+                            <td className="px-4 py-3">
+                              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-700 dark:text-green-400">
+                                <span className="size-1.5 rounded-full bg-green-500" />
+                                {backup.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex justify-end gap-2">
+                                <button type="button" onClick={() => handleDownloadBackup(backup)} className="inline-flex size-9 items-center justify-center rounded-[10px] bg-blue-500/10 text-blue-700 transition-colors hover:bg-blue-600 hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none dark:text-blue-400 dark:hover:text-white" aria-label="Download backup">
+                                  <Download aria-hidden="true" className="size-5" />
+                                </button>
+                                <button type="button" onClick={() => handleRestoreBackup(backup.id)} className="inline-flex size-9 items-center justify-center rounded-[10px] bg-brand/[0.08] text-brand transition-colors hover:bg-brand hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none dark:bg-brand-dark-fill/15 dark:text-brand-dark-text dark:hover:bg-brand-dark-fill dark:hover:text-white" aria-label="Restore backup">
+                                  <RotateCcw aria-hidden="true" className="size-5" />
+                                </button>
+                                <button type="button" onClick={() => handleDeleteBackup(backup.id)} className="inline-flex size-9 items-center justify-center rounded-[10px] bg-red-500/10 text-red-700 transition-colors hover:bg-red-600 hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none dark:text-red-400 dark:hover:text-white" aria-label="Delete backup">
+                                  <Trash2 aria-hidden="true" className="size-5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+
+                        {(backupState.backups || []).length === 0 && (
+                          <tr>
+                            <td colSpan="6" className="px-4 py-6 text-center text-sm text-muted-foreground">
+                              {loadingBackupSettings ? "Loading backup history..." : "No backup snapshots yet. Create your first backup to get started."}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+    </>
+  );
 
   const togglePermissionDraft = (key, checked) => {
     setPermissionDraft((current) => {
@@ -399,6 +621,128 @@ function Settings() {
     }
   };
 
+  const formatBackupDateShort = (value) => new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  const formatBackupSize = (sizeInMB) => `${Number(sizeInMB || 0).toFixed(1)} MB`;
+
+  const backupMetrics = useMemo(() => {
+    const backups = backupState.backups || [];
+    const successfulBackups = backups.filter((backup) => backup.status?.toLowerCase() === "success").length;
+    return {
+      status: loadingBackupSettings ? "Loading..." : backups.length ? backupState.status || "Success" : "No backups yet",
+      lastBackupAt: backupState.lastBackupAt || backups[0]?.date,
+      totalBackups: backups.length,
+      successRate: backups.length ? Math.round((successfulBackups / backups.length) * 100) : 0,
+    };
+  }, [backupState, loadingBackupSettings]);
+
+  const persistBackupState = async (nextState) => {
+    const payload = {
+      backup_schedule: nextState.selectedSchedule || "weekly",
+      backup_status: nextState.status || "Success",
+      last_backup_at: nextState.lastBackupAt || null,
+      backup_history: Array.isArray(nextState.backups) ? nextState.backups : [],
+    };
+
+    const response = await updateSystemSettings(payload);
+    if (response?.backup_history) {
+      setBackupState({
+        selectedSchedule: response.backup_schedule || nextState.selectedSchedule || "weekly",
+        status: response.backup_status || nextState.status || "Success",
+        lastBackupAt: response.last_backup_at || nextState.lastBackupAt || null,
+        backups: Array.isArray(response.backup_history) ? response.backup_history : nextState.backups || [],
+      });
+    }
+    return response;
+  };
+
+  const handleScheduleChange = async (scheduleId) => {
+    const nextState = { ...backupState, selectedSchedule: scheduleId };
+    setBackupState(nextState);
+    try {
+      await persistBackupState(nextState);
+      toast.success(`Backup schedule set to ${backupOptions.find((option) => option.id === scheduleId)?.label || "custom"}.`);
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to update backup schedule.");
+      setBackupState(backupState);
+    }
+  };
+
+  const handleCreateBackup = async () => {
+    const backupType = "Full System";
+    try {
+      const response = await createSystemBackup(backupType);
+      setBackupState({
+        selectedSchedule: response.backup_schedule || backupState.selectedSchedule,
+        status: response.backup_status || "Success",
+        lastBackupAt: response.last_backup_at || response.backup?.date || null,
+        backups: Array.isArray(response.backup_history) ? response.backup_history : [response.backup, ...(backupState.backups || [])],
+      });
+      recordActivity(user, "Created a full system backup.", "Settings");
+      toast.success("Backup created successfully.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to create backup.");
+    }
+  };
+
+  const handleDownloadBackup = async (backup) => {
+    try {
+      const { blob, filename } = await downloadSystemBackup(backup.id);
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to download backup.");
+    }
+  };
+
+  const handleRestoreBackup = async (backupId) => {
+    const backup = (backupState.backups || []).find((item) => item.id === backupId);
+    if (!backup) return;
+    if (!window.confirm(`Restore ${backup.name}? Current database records and uploaded files will be replaced.`)) return;
+
+    try {
+      const response = await restoreSystemBackup(backupId);
+      setBackupState({
+        selectedSchedule: response.backup_schedule || backupState.selectedSchedule,
+        status: response.backup_status || "Restored",
+        lastBackupAt: response.last_backup_at || backup.date,
+        backups: Array.isArray(response.backup_history) ? response.backup_history : backupState.backups,
+      });
+      recordActivity(user, `Restored backup ${backup.name}.`, "Settings");
+      toast.success(`${backup.name} restored successfully.`);
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to restore backup.");
+    }
+  };
+
+  const handleDeleteBackup = async (backupId) => {
+    const backup = (backupState.backups || []).find((item) => item.id === backupId);
+    if (!backup || !window.confirm(`Delete ${backup.name}? This backup file will be permanently removed.`)) return;
+
+    try {
+      const response = await deleteSystemBackup(backupId);
+      setBackupState({
+        selectedSchedule: response.backup_schedule || backupState.selectedSchedule,
+        status: response.backup_status || "Success",
+        lastBackupAt: response.last_backup_at || null,
+        backups: Array.isArray(response.backup_history) ? response.backup_history : [],
+      });
+      toast.success("Backup deleted.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to delete backup.");
+    }
+  };
+
   return (
     <div className={`admin-settings settings-premium flex h-screen overflow-hidden ${darkMode ? "bg-slate-950 text-slate-100" : "bg-[#eef1f3] text-slate-900"}`}>
       <Toaster position="bottom-right" />
@@ -416,7 +760,24 @@ function Settings() {
             ]}
           />
 
-          {isAdmin && <section className={`mt-7 overflow-hidden rounded-[22px] border shadow-[0_18px_45px_-28px_rgba(15,23,42,0.65)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-red-100 bg-white"}`}>
+          <section className={`mt-6 rounded-2xl border p-2 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+            <div className="flex flex-wrap gap-2">
+              {settingsTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveSettingsTab(tab.key)}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeSettingsTab === tab.key ? (darkMode ? "border border-red-700 bg-red-950/60 text-red-200" : "border border-red-900 bg-red-50 text-red-950") : (darkMode ? "text-slate-400 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-50")}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {activeSettingsTab === "user-management" && (
+            <>
+              {isAdmin && <section className={`mt-7 overflow-hidden rounded-[22px] border shadow-[0_18px_45px_-28px_rgba(15,23,42,0.65)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-red-100 bg-white"}`}>
             <div className={`relative flex flex-col gap-4 border-b px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6 ${darkMode ? "border-slate-700 bg-gradient-to-r from-slate-900 via-slate-900 to-red-950/40" : "border-red-100 bg-gradient-to-r from-red-50 via-white to-orange-50"}`}>
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-red-900 text-white shadow-lg shadow-red-950/20"><Settings2 size={17} /></div>
@@ -470,6 +831,11 @@ function Settings() {
           <section className={`mt-4 overflow-hidden rounded-[22px] border shadow-[0_18px_45px_-28px_rgba(15,23,42,0.55)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
             {loading ? <div className={`flex items-center justify-center gap-2 p-16 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}><Loader2 size={18} className="animate-spin" /> Loading user access...</div> : displayUsers.length === 0 ? <div className="p-16 text-center"><ShieldCheck size={30} className="mx-auto text-slate-300" /><p className={`mt-3 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-600"}`}>No users found</p><p className="mt-1 text-xs text-slate-400">Try another search or permission group.</p></div> : <div className="overflow-x-auto"><table className="min-w-[1180px] w-full border-collapse text-left"><thead className={darkMode ? "bg-slate-800/80" : "bg-slate-50"}><tr className={`border-b ${darkMode ? "border-slate-700" : "border-slate-200"}`}><th className={`sticky left-0 z-10 w-[280px] px-5 py-4 text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "bg-slate-800 text-slate-400" : "bg-slate-50 text-slate-500"}`}>User</th><th className={`w-[200px] px-3 py-4 text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Role</th><th className={`w-[240px] px-3 py-4 text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Module Access</th><th className={`w-[190px] px-3 py-4 text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Actions</th></tr></thead><tbody className={`divide-y ${darkMode ? "divide-slate-800" : "divide-slate-100"}`}>{displayUsers.map((account) => { const accountId = account._id || account.id; const permissions = getPermissions(account); const accountActive = account.is_active !== false; const accountIsAdmin = account.role === "admin" || account.role === "super_admin"; const isStaff = account.role === "skilled_worker"; const staffAccess = isStaff ? normalizeStaffAccess(account.staff_access) : null; const effectivePermissions = accountIsAdmin ? Object.fromEntries(PERMISSIONS.map(({ key }) => [key, true])) : permissions; const enabledStaffModules = isStaff ? STAFF_MODULES.filter(({ key }) => staffAccess.modules[key].enabled).length : 0; const moduleCount = isStaff || accountIsAdmin ? STAFF_MODULES.length : 6; const enabledModuleCount = accountIsAdmin ? moduleCount : isStaff ? enabledStaffModules : Math.min(5, Object.values(effectivePermissions).filter(Boolean).length); const moduleAccessLabel = accountIsAdmin ? "Full Module Access" : isStaff ? `${enabledStaffModules} of ${STAFF_MODULES.length} staff modules` : getModuleAccessLabel(effectivePermissions); const actionClasses = accountIsAdmin ? (darkMode ? "border-emerald-800 bg-emerald-950/70 text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700") : (darkMode ? "border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"); const avatarLetters = `${(account.first_name || account.email || "U").charAt(0)}${(account.last_name || account.email || "U").charAt(0)}`.toUpperCase(); const name = `${account.first_name || ""} ${account.last_name || ""}`.trim() || "User"; return <tr key={accountId} className={`transition ${darkMode ? "hover:bg-slate-800/50" : "hover:bg-slate-50"}`}><td className={`sticky left-0 z-10 px-5 py-4 ${darkMode ? "bg-slate-900" : "bg-white"}`}><div className="flex min-w-[245px] items-center gap-3"><span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-red-700 to-amber-600 text-[10px] font-black text-white shadow-sm ${darkMode ? "ring-1 ring-white/10" : ""}`}>{avatarLetters}</span><div className="min-w-0"><div className="truncate text-[15px] font-semibold text-slate-900 dark:text-slate-200">{name}</div><div className="truncate text-xs text-slate-500">{account.email}</div></div></div></td><td className="px-3 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.08em] ${getRoleBadgeClasses(account.role)}`}>{accountActive ? roleLabel(account.role) : "Disabled"}</span></td><td className="px-3 py-4"><div className="flex items-center gap-2"><span className="inline-flex items-center gap-1">{Array.from({ length: moduleCount }).map((_, dotIndex) => (<span key={dotIndex} className={`h-2.5 w-2.5 rounded-full ${dotIndex < enabledModuleCount ? "bg-red-700" : darkMode ? "bg-slate-600" : "bg-slate-300"}`} />))}</span><span className={`text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{moduleAccessLabel}</span></div></td><td className="px-3 py-4"><div className="flex items-center justify-end">{accountIsAdmin ? <span className={`inline-flex min-w-[120px] items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold ${actionClasses}`}>✓ Full Access</span> : isStaff ? <button type="button" onClick={() => openStaffAccess(account)} className={`inline-flex min-w-[120px] items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition ${actionClasses}`} aria-label={`Manage access for ${name}`}>Manage Access</button> : canManageAccess ? <button type="button" onClick={() => openPermissionMatrix(account)} className={`inline-flex min-w-[120px] items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition ${actionClasses}`} aria-label={`View permissions for ${name}`}>View Permissions</button> : <span className="px-3 py-2 text-xs text-slate-400">Read Only</span>}</div></td></tr>; })}</tbody></table></div>}
           </section>
+            </>
+          )}
+
+          {renderBackupRecovery(backupMetrics)}
+
           {permissionAccount && permissionDraft && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setPermissionAccount(null); setPermissionDraft(null); } }}>
             <section role="dialog" aria-modal="true" aria-labelledby="customer-matrix-title" className={`w-full max-w-[620px] overflow-hidden rounded-xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
               <header className={`flex items-center justify-between border-b px-6 py-5 ${darkMode ? "border-slate-800" : "border-slate-100"}`}>

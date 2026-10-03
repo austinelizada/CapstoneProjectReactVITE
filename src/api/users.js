@@ -25,6 +25,39 @@ export const updateSystemSettings = (payload) =>
     body: JSON.stringify(payload),
   });
 
+export const createSystemBackup = (type) =>
+  apiFetch("/auth/system-settings/backups", {
+    method: "POST",
+    body: JSON.stringify({ type }),
+  });
+
+export const restoreSystemBackup = (backupId) =>
+  apiFetch(`/auth/system-settings/backups/${encodeURIComponent(backupId)}/restore`, {
+    method: "POST",
+  });
+
+export const deleteSystemBackup = (backupId) =>
+  apiFetch(`/auth/system-settings/backups/${encodeURIComponent(backupId)}`, {
+    method: "DELETE",
+  });
+
+export const downloadSystemBackup = async (backupId) => {
+  const token = localStorage.getItem("token");
+  const response = await fetch(
+    `${API_BASE}/auth/system-settings/backups/${encodeURIComponent(backupId)}/download`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || "Unable to download backup.");
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `backup-${backupId}.json.gz`;
+  return { blob: await response.blob(), filename };
+};
+
 export const getSystemSettingsEventsUrl = () => {
   const token = localStorage.getItem("token");
   const base = (API_BASE || "").replace(/\/$/, "");

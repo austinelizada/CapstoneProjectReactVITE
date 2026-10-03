@@ -6,6 +6,12 @@ import Admin from "../models/Admin.js";
 import SystemSetting from "../models/SystemSetting.js";
 import { authMiddleware, roleMiddleware, staffModulePermission } from "../middleware/auth.js";
 import { sendMail } from "../config/mailer.js";
+import {
+  createSystemBackup,
+  deleteSystemBackup,
+  getSystemBackupDownload,
+  restoreSystemBackup,
+} from "../services/backupService.js";
 
 const STAFF_MODULE_KEYS = ["dashboard", "product_management", "site_inspection", "progress_monitoring", "transactions", "settings", "profile"];
 const STAFF_MODULE_ACTIONS = {
@@ -185,6 +191,10 @@ router.get("/system-settings", authMiddleware, async (req, res) => {
       success: true,
       maintenance_mode: settings?.maintenance_mode === true,
       global_permissions: settings?.global_permissions || null,
+      backup_schedule: settings?.backup_schedule || "weekly",
+      backup_status: settings?.backup_status || "Success",
+      last_backup_at: settings?.last_backup_at || null,
+      backup_history: Array.isArray(settings?.backup_history) ? settings.backup_history : [],
     });
   } catch (error) {
     console.error("Get system settings error:", error);
@@ -218,7 +228,7 @@ router.get("/system-settings/events", async (req, res) => {
   }
 });
 
-router.patch("/system-settings", authMiddleware, roleMiddleware("admin"), async (req, res) => {
+router.patch("/system-settings", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
     const update = {};
     if (typeof req.body?.maintenance_mode === "boolean") {
@@ -235,6 +245,18 @@ router.patch("/system-settings", authMiddleware, roleMiddleware("admin"), async 
       }
       update.global_permissions = permissions;
     }
+    if (typeof req.body?.backup_schedule === "string") {
+      update.backup_schedule = req.body.backup_schedule;
+    }
+    if (typeof req.body?.backup_status === "string") {
+      update.backup_status = req.body.backup_status;
+    }
+    if (req.body?.last_backup_at) {
+      update.last_backup_at = new Date(req.body.last_backup_at);
+    }
+    if (Array.isArray(req.body?.backup_history)) {
+      update.backup_history = req.body.backup_history;
+    }
 
     const settings = await SystemSetting.findOneAndUpdate(
       { key: "global" },
@@ -246,10 +268,58 @@ router.patch("/system-settings", authMiddleware, roleMiddleware("admin"), async 
       success: true,
       maintenance_mode: settings.maintenance_mode === true,
       global_permissions: settings.global_permissions || null,
+      backup_schedule: settings.backup_schedule || "weekly",
+      backup_status: settings.backup_status || "Success",
+      last_backup_at: settings.last_backup_at || null,
+      backup_history: Array.isArray(settings.backup_history) ? settings.backup_history : [],
     });
   } catch (error) {
     console.error("Update system settings error:", error);
     res.status(500).json({ success: false, message: "Unable to update system settings." });
+  }
+});
+
+router.post("/system-settings/backups", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+  try {
+    const result = await createSystemBackup(req.body?.type);
+    res.status(201).json({ success: true, ...result });
+  } catch (error) {
+    console.error("Create system backup error:", error);
+    res.status(error.status || 500).json({ success: false, message: error.message || "Unable to create backup." });
+  }
+});
+
+router.get("/system-settings/backups/:backupId/download", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+  try {
+    const { filePath, filename } = await getSystemBackupDownload(req.params.backupId);
+    res.download(filePath, filename, (error) => {
+      if (error && !res.headersSent) {
+        res.status(error.status || 500).json({ success: false, message: "Unable to download backup." });
+      }
+    });
+  } catch (error) {
+    console.error("Download system backup error:", error);
+    res.status(error.status || 500).json({ success: false, message: error.message || "Unable to download backup." });
+  }
+});
+
+router.post("/system-settings/backups/:backupId/restore", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+  try {
+    const result = await restoreSystemBackup(req.params.backupId);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error("Restore system backup error:", error);
+    res.status(error.status || 500).json({ success: false, message: error.message || "Unable to restore backup." });
+  }
+});
+
+router.delete("/system-settings/backups/:backupId", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+  try {
+    const result = await deleteSystemBackup(req.params.backupId);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error("Delete system backup error:", error);
+    res.status(error.status || 500).json({ success: false, message: error.message || "Unable to delete backup." });
   }
 });
 

@@ -20,6 +20,9 @@ body::-webkit-scrollbar,
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --color-brand: #7a1f24;
+  --color-brand-dark-text: #e58a90;
+  --color-brand-dark-fill: #a8343b;
     --font-heading: var(--font-sans);
     --font-sans: 'Geist Variable', sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);

@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
+import process from "node:process";
 import authRoutes from "./routes/auth.js";
 import productRoutes from "./routes/products.js";
 import uploadRoutes from "./routes/uploads.js";
@@ -11,6 +12,7 @@ import { fileURLToPath } from "url";
 import orderRoutes from "./routes/orders.js";
 import cartRoutes from "./routes/cart.js";
 import { connectMongo } from "./config/db.js";
+import { startSystemBackupScheduler } from "./services/backupService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, ".env"), quiet: true });
@@ -144,6 +146,7 @@ const connectWithRetry = async (attempt = 1) => {
   try {
     await connectMongo();
     if (isVerbose) console.log("Connected to MongoDB");
+    startSystemBackupScheduler();
   } catch (error) {
     const delayMs = Math.min(30000, 2000 * attempt);
     console.error(

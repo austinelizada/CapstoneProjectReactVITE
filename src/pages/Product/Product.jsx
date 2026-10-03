@@ -886,14 +886,17 @@ function Products() {
   const [productNamesList, setProductNamesList] = useState(PRODUCT_NAMES);
   const [categoryOptionsList, setCategoryOptionsList] = useState(CATEGORY_OPTIONS);
   const [variantsList, setVariantsList] = useState(VARIANTS);
+  const catalogLoadVersionRef = useRef(0);
 
   const reloadCatalogLists = async () => {
+    const requestVersion = ++catalogLoadVersionRef.current;
     const [types, names, categories, vars] = await Promise.allSettled([
       catalogApi.getTypes(),
       catalogApi.getNames(),
       catalogApi.getCategories(),
       catalogApi.getVariants(),
     ]);
+    if (requestVersion !== catalogLoadVersionRef.current) return;
 
     if (types.status === "fulfilled") {
       setProductTypesList(mergeOptionValues(PRODUCT_TYPES, normalizeOptionValues(types.value)));
@@ -1176,6 +1179,7 @@ function Products() {
         setModalError("Only administrators can manage products.");
         return;
       }
+      void reloadCatalogLists();
       if (product) {
         const safeProduct = normalizeProductForState(product);
         setEditingProduct(product);
