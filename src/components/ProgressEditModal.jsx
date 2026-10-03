@@ -128,7 +128,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   const [delayStageIndex, setDelayStageIndex] = useState(null);
   const [delayReason, setDelayReason] = useState("");
   const [delayExpectedResolution, setDelayExpectedResolution] = useState("");
-  const [delayNotes, setDelayNotes] = useState("");
   const [delayModalError, setDelayModalError] = useState("");
   const [showRemoveSubStageModal, setShowRemoveSubStageModal] = useState(false);
   const [removeStageIndex, setRemoveStageIndex] = useState(null);
@@ -252,7 +251,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     setDelayStageIndex(null);
     setDelayReason("");
     setDelayExpectedResolution("");
-    setDelayNotes("");
     setDelayModalError("");
   };
 
@@ -260,7 +258,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     setDelayStageIndex(stageIndex);
     setDelayReason("");
     setDelayExpectedResolution("");
-    setDelayNotes("");
     setDelayModalError("");
     setShowDelayModal(true);
   };
@@ -298,7 +295,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     const historyEntry = {
       reason: delayReason.trim(),
       expectedResolution: delayExpectedResolution ? new Date(delayExpectedResolution) : null,
-      notes: delayNotes.trim(),
       reportedAt: now,
       reportedBy: "",
       status: "delayed",
@@ -311,7 +307,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
       status: "delayed",
       delayReason: delayReason.trim(),
       delayExpectedResolution: delayExpectedResolution ? new Date(delayExpectedResolution) : null,
-      delayNotes: delayNotes.trim(),
       delayReportedAt: now,
       delayReportedBy: "",
       delayHistory: nextHistory,
@@ -1100,7 +1095,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                           const reportedAt = stage.delayReportedAt || latestDelay?.reportedAt;
                           const expectedResolution = stage.delayExpectedResolution || latestDelay?.expectedResolution;
                           const reportedBy = stage.delayReportedBy || latestDelay?.reportedBy || "Admin";
-                          const notes = stage.delayNotes || latestDelay?.notes;
 
                           return (
                             <>
@@ -1137,12 +1131,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                                   <dt className="text-[11px] font-semibold text-amber-800">Reported by</dt>
                                   <dd className="mt-1 break-all text-sm text-slate-800">{reportedBy}</dd>
                                 </div>
-                                {notes && (
-                                  <div className="sm:col-span-2">
-                                    <dt className="text-[11px] font-semibold text-amber-800">Additional notes</dt>
-                                    <dd className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">{notes}</dd>
-                                  </div>
-                                )}
                               </dl>
                             </>
                           );
@@ -1629,16 +1617,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                     className="mt-2 w-full border p-2 rounded-lg"
                     value={delayExpectedResolution}
                     onChange={(e) => setDelayExpectedResolution(e.target.value)}
-                  />
-                </label>
-
-                <label className="text-sm text-gray-600 block">
-                  Additional Notes
-                  <textarea
-                    className="mt-2 w-full min-h-[100px] border p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    value={delayNotes}
-                    onChange={(e) => setDelayNotes(e.target.value)}
-                    placeholder="Optional additional context for the delay."
                   />
                 </label>
 
