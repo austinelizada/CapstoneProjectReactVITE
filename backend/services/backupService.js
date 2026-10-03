@@ -11,7 +11,7 @@ import SystemSetting from "../models/SystemSetting.js";
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 const BACKUP_FORMAT = "acgc-system-backup-v1";
-const VALID_TYPES = new Set(["Weekly", "Monthly", "Yearly", "Full System", "Pre-Restore"]);
+const VALID_TYPES = new Set(["Weekly", "Monthly", "Yearly", "Full System", "Pre-Restore", "Imported"]);
 const SCHEDULED_BACKUP_TYPES = { weekly: "Weekly", monthly: "Monthly", yearly: "Yearly" };
 let scheduledBackupTimer;
 
@@ -226,6 +226,51 @@ export const createSystemBackup = async (type) => {
     status: "Success",
   };
 
+  try {
+    await fs.rename(temporaryPath, filePath);
+    const settings = await SystemSetting.findOneAndUpdate(
+      { key: "global" },
+      {
+        $set: { backup_status: "Success", last_backup_at: now },
+        $push: { backup_history: { $each: [backup], $position: 0 } },
+      },
+      { returnDocument: "after", upsert: true, setDefaultsOnInsert: true }
+    ).lean();
+    return {
+      backup,
+      backup_schedule: settings.backup_schedule || "weekly",
+      backup_status: settings.backup_status || "Success",
+      last_backup_at: settings.last_backup_at || now,
+      backup_history: settings.backup_history || [backup],
+    };
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true });
+    await fs.rm(filePath, { force: true });
+    throw error;
+  }
+};
+
+export const importSystemBackup = async (sourcePath) => {
+  const backupBuffer = await fs.readFile(sourcePath);
+  await parseSnapshot(backupBuffer);
+
+  const id = randomUUID();
+  const now = new Date();
+  const type = "Imported";
+  const backupDirectory = getBackupDirectory();
+  const filePath = getBackupFilePath(id);
+  const temporaryPath = `${filePath}.tmp`;
+  const backup = {
+    id,
+    name: `IMPORTED_BACKUP_${now.toISOString().slice(0, 10)}`,
+    type,
+    date: now.toISOString(),
+    size: Number((backupBuffer.length / (1024 * 1024)).toFixed(1)),
+    status: "Success",
+  };
+
+  await fs.mkdir(backupDirectory, { recursive: true });
+  await fs.writeFile(temporaryPath, backupBuffer, { flag: "wx" });
   try {
     await fs.rename(temporaryPath, filePath);
     const settings = await SystemSetting.findOneAndUpdate(

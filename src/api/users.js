@@ -31,6 +31,15 @@ export const createSystemBackup = (type) =>
     body: JSON.stringify({ type }),
   });
 
+export const uploadSystemBackup = (file) => {
+  const body = new FormData();
+  body.append("backupFile", file);
+  return apiFetch("/auth/system-settings/backups/import", {
+    method: "POST",
+    body,
+  });
+};
+
 export const restoreSystemBackup = (backupId) =>
   apiFetch(`/auth/system-settings/backups/${encodeURIComponent(backupId)}/restore`, {
     method: "POST",

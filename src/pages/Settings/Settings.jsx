@@ -15,6 +15,7 @@ import {
   Settings2,
   ShieldCheck,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { RadioGroup } from "radix-ui";
@@ -132,6 +133,10 @@ function Settings() {
   const [savingMaintenance, setSavingMaintenance] = useState(false);
   const [loadingBackupSettings, setLoadingBackupSettings] = useState(true);
   const [creatingBackup, setCreatingBackup] = useState(false);
+  const [backupImportFile, setBackupImportFile] = useState(null);
+  const [uploadedBackup, setUploadedBackup] = useState(null);
+  const [uploadingBackupFile, setUploadingBackupFile] = useState(false);
+  const [removingBackupFile, setRemovingBackupFile] = useState(false);
   const [downloadingBackupId, setDownloadingBackupId] = useState(null);
   const [restoreConfirmation, setRestoreConfirmation] = useState(null);
   const [restoringBackup, setRestoringBackup] = useState(false);
@@ -139,6 +144,7 @@ function Settings() {
   const [deletingBackup, setDeletingBackup] = useState(false);
   const restoreDialogRef = useRef(null);
   const restoreDialogTriggerRef = useRef(null);
+  const backupUploadInputRef = useRef(null);
   const deleteDialogRef = useRef(null);
   const deleteDialogTriggerRef = useRef(null);
   const [activeSettingsTab, setActiveSettingsTab] = useState("user-management");
@@ -416,6 +422,71 @@ function Settings() {
                   >
                     {creatingBackup ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Database aria-hidden="true" className="size-4" />}
                     {creatingBackup ? "Creating backup..." : "Back Up Now"}
+                  </button>
+                </div>
+              </section>
+
+              <section className={`w-fit max-w-full space-y-3 self-start rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
+                <div>
+                  <h3 className={`text-[15px] font-semibold ${darkMode ? "text-slate-100" : "text-foreground"}`}>Upload Backup File</h3>
+                  <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>
+                    Upload a previously downloaded .json.gz system backup, then sync it to restore the system.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <label
+                    htmlFor="system-backup-upload"
+                    className={`inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${uploadedBackup || uploadingBackupFile ? "cursor-not-allowed opacity-50" : ""} ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-border bg-background text-slate-700 hover:bg-muted"}`}
+                  >
+                    <Upload aria-hidden="true" className="size-3.5" />
+                    Choose backup file
+                  </label>
+                  <input
+                    ref={backupUploadInputRef}
+                    id="system-backup-upload"
+                    type="file"
+                    accept=".json.gz,application/gzip,application/x-gzip"
+                    disabled={Boolean(uploadedBackup) || uploadingBackupFile}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] || null;
+                      if (file && !file.name.toLowerCase().endsWith(".json.gz")) {
+                        toast.error("Choose a .json.gz system backup file.");
+                        event.target.value = "";
+                        return;
+                      }
+                      if (file && file.size > 512 * 1024 * 1024) {
+                        toast.error("Backup files must be 512 MB or smaller.");
+                        event.target.value = "";
+                        return;
+                      }
+                      setBackupImportFile(file);
+                    }}
+                    className="sr-only"
+                  />
+                  <span className={`min-w-0 flex-1 truncate text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                    {uploadedBackup
+                      ? `Uploaded: ${backupImportFile?.name || uploadedBackup.name}`
+                      : backupImportFile?.name || "No backup file selected"}
+                  </span>
+                </div>
+                <div className="flex flex-wrap justify-start gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleSyncUploadedBackup}
+                    disabled={(!uploadedBackup && !backupImportFile) || restoringBackup || uploadingBackupFile}
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "bg-red-800 hover:bg-red-700" : "bg-brand hover:bg-red-900"}`}
+                  >
+                    {uploadingBackupFile || restoringBackup ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <RotateCcw aria-hidden="true" className="size-3.5" />}
+                    {uploadingBackupFile ? "Uploading..." : restoringBackup ? "Syncing..." : "Sync"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRemoveBackupFile}
+                    disabled={(!backupImportFile && !uploadedBackup) || uploadingBackupFile || removingBackupFile || restoringBackup}
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-border text-slate-700 hover:bg-muted"}`}
+                  >
+                    {removingBackupFile ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <Trash2 aria-hidden="true" className="size-3.5" />}
+                    {removingBackupFile ? "Removing..." : "Remove File"}
                   </button>
                 </div>
               </section>
@@ -843,6 +914,66 @@ function Settings() {
     }
   };
 
+  const handleSyncUploadedBackup = async () => {
+    if (restoringBackup || uploadingBackupFile) return;
+    let backup = uploadedBackup;
+    if (!backup) {
+      if (!backupImportFile) return;
+      setUploadingBackupFile(true);
+      try {
+        const response = await uploadSystemBackup(backupImportFile);
+        backup = response.backup;
+        setUploadedBackup(backup);
+        setBackupState((current) => ({
+          ...current,
+          selectedSchedule: response.backup_schedule || current.selectedSchedule,
+          status: response.backup_status || "Success",
+          lastBackupAt: response.last_backup_at || backup?.date || null,
+          backups: Array.isArray(response.backup_history)
+            ? response.backup_history
+            : [backup, ...(current.backups || [])].filter(Boolean),
+        }));
+        recordActivity(user, `Uploaded system backup ${backup?.name || backupImportFile.name}.`, "Settings");
+      } catch (error) {
+        toast.error(error?.data?.message || error?.message || "Unable to upload backup file.");
+        return;
+      } finally {
+        setUploadingBackupFile(false);
+      }
+    }
+    if (!backup) return;
+
+    restoreDialogTriggerRef.current = document.activeElement;
+    setRestoreConfirmation(backup);
+  };
+
+  const handleRemoveBackupFile = async () => {
+    if (removingBackupFile || uploadingBackupFile || restoringBackup) return;
+    if (uploadedBackup) {
+      setRemovingBackupFile(true);
+      try {
+        const response = await deleteSystemBackup(uploadedBackup.id);
+        setBackupState((current) => ({
+          ...current,
+          selectedSchedule: response.backup_schedule || current.selectedSchedule,
+          status: response.backup_status || "Success",
+          lastBackupAt: response.last_backup_at || null,
+          backups: Array.isArray(response.backup_history) ? response.backup_history : current.backups,
+        }));
+      } catch (error) {
+        toast.error(error?.data?.message || error?.message || "Unable to remove uploaded backup.");
+        return;
+      } finally {
+        setRemovingBackupFile(false);
+      }
+    }
+
+    setUploadedBackup(null);
+    setBackupImportFile(null);
+    if (backupUploadInputRef.current) backupUploadInputRef.current.value = "";
+    toast.success("Backup file removed.");
+  };
+
   const handleDownloadBackup = async (backup) => {
     if (downloadingBackupId !== null) return;
     setDownloadingBackupId(backup.id);
@@ -1184,7 +1315,9 @@ function Settings() {
                   <RotateCcw aria-hidden="true" className="size-5" />
                 </span>
                 <div className="min-w-0">
-                  <h2 id="restore-confirm-title" className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Restore backup?</h2>
+                  <h2 id="restore-confirm-title" className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                    {uploadedBackup?.id === restoreConfirmation.id ? "Sync uploaded backup?" : "Restore backup?"}
+                  </h2>
                   <p className={`mt-1 break-words text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{restoreConfirmation.name}</p>
                 </div>
               </div>
@@ -1207,7 +1340,9 @@ function Settings() {
                   className="inline-flex items-center justify-center gap-2 rounded-md bg-red-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {restoringBackup && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
-                  {restoringBackup ? "Restoring..." : "Restore Backup"}
+                  {restoringBackup
+                    ? uploadedBackup?.id === restoreConfirmation.id ? "Syncing..." : "Restoring..."
+                    : uploadedBackup?.id === restoreConfirmation.id ? "Sync Backup" : "Restore Backup"}
                 </button>
               </footer>
             </section>

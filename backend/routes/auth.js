@@ -1,6 +1,8 @@
 import express from "express";
 import jwt from "jsonwebtoken";
 import { createHash, randomBytes, randomInt } from "crypto";
+import { promises as fs } from "node:fs";
+import multer from "multer";
 import User from "../models/User.js";
 import Admin from "../models/Admin.js";
 import SystemSetting from "../models/SystemSetting.js";
@@ -10,8 +12,23 @@ import {
   createSystemBackup,
   deleteSystemBackup,
   getSystemBackupDownload,
+  importSystemBackup,
   restoreSystemBackup,
 } from "../services/backupService.js";
+
+const backupImportUpload = multer({
+  dest: "backups/incoming",
+  limits: { fileSize: 512 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => {
+    if (!file.originalname.toLowerCase().endsWith(".json.gz")) {
+      const error = new Error("Upload a .json.gz system backup file.");
+      error.status = 400;
+      callback(error);
+      return;
+    }
+    callback(null, true);
+  },
+});
 
 const STAFF_MODULE_KEYS = ["dashboard", "product_management", "site_inspection", "progress_monitoring", "transactions", "settings", "profile"];
 const STAFF_MODULE_ACTIONS = {
@@ -299,6 +316,34 @@ router.post("/system-settings/backups", authMiddleware, roleMiddleware(["admin",
     res.status(error.status || 500).json({ success: false, message: error.message || "Unable to create backup." });
   }
 });
+
+router.post(
+  "/system-settings/backups/import",
+  authMiddleware,
+  roleMiddleware(["admin", "super_admin"]),
+  (req, res, next) => {
+    backupImportUpload.single("backupFile")(req, res, (error) => {
+      if (!error) return next();
+      const status = error.code === "LIMIT_FILE_SIZE" ? 413 : error.status || 400;
+      return res.status(status).json({ success: false, message: error.message || "Unable to upload backup." });
+    });
+  },
+  async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "Select a backup file to upload." });
+    }
+
+    try {
+      const result = await importSystemBackup(req.file.path);
+      res.status(201).json({ success: true, ...result });
+    } catch (error) {
+      console.error("Import system backup error:", error);
+      res.status(error.status || 400).json({ success: false, message: error.message || "Unable to import backup." });
+    } finally {
+      await fs.rm(req.file.path, { force: true });
+    }
+  }
+);
 
 router.get("/system-settings/backups/:backupId/download", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
