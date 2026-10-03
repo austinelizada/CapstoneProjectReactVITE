@@ -355,6 +355,7 @@ function CustomerDashboard() {
   const [reviewFormError, setReviewFormError] = useState("");
   const [reviewFormLoading, setReviewFormLoading] = useState(false);
   const [selectedReviewOrder, setSelectedReviewOrder] = useState(null);
+  const [batchReviewSession, setBatchReviewSession] = useState(null);
   const [estimateFlowType, setEstimateFlowType] = useState(null);
   const [showDeliveryConfirmModal, setShowDeliveryConfirmModal] = useState(false);
   const [deliveryConfirmMode, setDeliveryConfirmMode] = useState("estimate");
@@ -759,9 +760,25 @@ function CustomerDashboard() {
   const isOrderCompletedAndReviewable = (order) => {
     if (!order) return false;
     const status = normalizeOrderStatusKey(order?.status);
-    const completed = status === "completed" && Number(order.progress) >= 100;
-    if (!completed) return false;
-    const lastStage = Array.isArray(order.progress_stages) ? order.progress_stages[order.progress_stages.length - 1] : null;
+    if (["cancelled", "declined", "contract_declined", "rejected"].includes(status)) return false;
+
+    const isStageComplete = (stage) =>
+      stage?.completed === true || ["done", "completed"].includes(normalizeOrderStatusKey(stage?.status));
+    const orderStages = Array.isArray(order.progress_stages) ? order.progress_stages : [];
+    const orderStagesComplete = orderStages.length > 0 && orderStages.every(isStageComplete);
+    const orderFieldsComplete = status === "completed" && Number(order.progress) >= 100;
+    const batchItems = Array.isArray(order.items) ? order.items : [];
+    const batchItemsComplete = batchItems.length > 1 && batchItems.every((item) => {
+      const itemStages = Array.isArray(item?.progress_stages) ? item.progress_stages : [];
+      return itemStages.length > 0
+        ? itemStages.every(isStageComplete)
+        : Number(item?.progress) >= 100;
+    });
+
+    if (!orderFieldsComplete && !orderStagesComplete && !batchItemsComplete) return false;
+    if (orderStagesComplete || batchItemsComplete) return true;
+
+    const lastStage = orderStages[orderStages.length - 1];
     const lastStageStatus = normalizeOrderStatusKey(lastStage?.status);
     if (!lastStage) return true;
     return Boolean(lastStage.completed || lastStageStatus === "done" || lastStageStatus === "completed");
@@ -841,8 +858,23 @@ function CustomerDashboard() {
     setShowCustomerReviewModal(true);
   };
 
+  const openBatchOrderReviewModal = (order) => {
+    if (!canUploadFeedback) {
+      showPermissionNotice("Feedback access is disabled for your account.");
+      return;
+    }
+    const itemIndexes = (order.items || []).flatMap((_, index) =>
+      getOrderItemReview(order, index)?.submittedAt ? [] : [index]
+    );
+    if (!itemIndexes.length) return;
+
+    setBatchReviewSession({ itemIndexes, currentPosition: 0 });
+    openCustomerReviewModal(order, itemIndexes[0]);
+  };
+
   const closeCustomerReviewModal = () => {
     setSelectedReviewOrder(null);
+    setBatchReviewSession(null);
     setShowCustomerReviewModal(false);
     setReviewFormError("");
     setOrderReviewForm({ rating: 0, title: "", comment: "", photos: [], photoPreviews: [] });
@@ -928,6 +960,32 @@ function CustomerDashboard() {
         if (selectedOrderForModal && (selectedOrderForModal._id || selectedOrderForModal.id) === response.order._id) {
           setSelectedOrderForModal(response.order);
         }
+
+        const nextItemIndex = batchReviewSession?.itemIndexes?.[batchReviewSession.currentPosition + 1];
+        if (Number.isInteger(nextItemIndex)) {
+          const nextItem = response.order.items[nextItemIndex];
+          const nextReview = getOrderItemReview(response.order, nextItemIndex) || {};
+          setBatchReviewSession((current) => current ? {
+            ...current,
+            currentPosition: current.currentPosition + 1,
+          } : null);
+          setSelectedReviewOrder({
+            ...response.order,
+            reviewItemIndex: nextItemIndex,
+            reviewProductName: nextItem?.name || nextItem?.product_name || "Product",
+          });
+          setOrderReviewForm({
+            rating: nextReview.rating || 0,
+            title: nextReview.title || "",
+            comment: nextReview.comment || "",
+            photos: nextReview.photos || [],
+            photoPreviews: nextReview.photos || [],
+          });
+          toast.success("Review saved. Continue with the next product.");
+          return;
+        }
+
+        setBatchReviewSession(null);
         setSelectedReviewOrder(response.order);
         toast.success("Thank you for your feedback. Your review has been submitted.");
         closeCustomerReviewModal();
@@ -5456,7 +5514,7 @@ function CustomerDashboard() {
                     order.order_type !== "walk_in_customer";
                   const isCustomerAcceptedContract = isCustomerContractAccepted(order);
                   const isOnlineContractAccepted = order.acceptedByCustomer === true || (order.contract_status === "accepted" && order.acceptance_method === "online");
-                  const isProjectFinished = String(order.status || "").toLowerCase() === "completed";
+                  const isProjectFinished = isOrderCompletedAndReviewable(order);
                   const isOrderCancelled = String(order.status || "").toLowerCase() === "cancelled";
                   const paymentProofSubmission = paymentProofSuccessByOrder[orderId];
                   const lastPaymentProofUrl = paymentProofSubmission?.fileUrl || order.payment_proof_file_url || order.proof_file_url || "";
@@ -5541,7 +5599,7 @@ function CustomerDashboard() {
                               {canUploadFeedback && orderFilter === "review" && isProjectFinished && isOrderCompletedAndReviewable(order) && isBatchOrder && !hasOrderReview(order) && (
                                 <button
                                   type="button"
-                                  onClick={() => setExpandedOrderId(orderId)}
+                                  onClick={() => openBatchOrderReviewModal(order)}
                                   className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-[10px] font-black leading-none shadow-sm ${darkMode ? "border-amber-500/70 bg-amber-500/15 text-amber-200" : "border-amber-500 bg-amber-400 text-slate-950"}`}
                                 >
                                   <Star size={12} fill="currentColor" aria-hidden="true" />
@@ -5923,6 +5981,7 @@ function CustomerDashboard() {
         {showCustomerReviewModal && canUploadFeedback && selectedReviewOrder && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
             <div
+              key={`${selectedReviewOrder._id || selectedReviewOrder.id}-${selectedReviewOrder.reviewItemIndex ?? "order"}`}
               role="dialog"
               aria-modal="true"
               aria-labelledby="customer-review-title"
@@ -5931,9 +5990,13 @@ function CustomerDashboard() {
               <div className={`flex items-center justify-between border-b px-5 py-3.5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                 <div>
                   <h2 id="customer-review-title" className={`text-lg font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>
-                    {hasOrderReview(selectedReviewOrder) ? "Edit Review" : "Write a Review"}
+                    {batchReviewSession
+                      ? `Product ${batchReviewSession.currentPosition + 1} of ${batchReviewSession.itemIndexes.length}`
+                      : hasOrderReview(selectedReviewOrder) ? "Edit Review" : "Write a Review"}
                   </h2>
-                  <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Share your experience after your completed order.</p>
+                  <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                    {batchReviewSession ? "Review each product in your batch order." : "Share your experience after your completed order."}
+                  </p>
                   {selectedReviewOrder.reviewProductName && Array.isArray(selectedReviewOrder.items) && selectedReviewOrder.items.length > 1 && (
                     <p className={`mt-1 text-xs font-semibold ${darkMode ? "text-amber-300" : "text-amber-700"}`}>
                       Product: {selectedReviewOrder.reviewProductName}
@@ -6080,7 +6143,13 @@ function CustomerDashboard() {
                   disabled={reviewFormLoading}
                   className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {reviewFormLoading ? "Submitting..." : hasOrderReview(selectedReviewOrder) ? "Update Review" : "Submit Review"}
+                  {reviewFormLoading
+                    ? "Submitting..."
+                    : batchReviewSession
+                      ? batchReviewSession.currentPosition < batchReviewSession.itemIndexes.length - 1
+                        ? "Save & Next Product"
+                        : "Save & Finish"
+                      : hasOrderReview(selectedReviewOrder) ? "Update Review" : "Submit Review"}
                 </button>
               </div>
             </div>

@@ -797,12 +797,27 @@ export const submitOrderReview = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to review this order." });
     }
 
-    const isCompleted = order.status === "completed" && Number(order.progress) >= 100;
+    const orderStatus = String(order.status || "").toLowerCase();
+    const invalidReviewStatuses = ["cancelled", "declined", "contract_declined", "rejected"];
+    const isStageComplete = (stage) =>
+      stage?.completed === true || ["done", "completed"].includes(String(stage?.status || "").toLowerCase());
+    const orderStages = Array.isArray(order.progress_stages) ? order.progress_stages : [];
+    const orderStagesComplete = orderStages.length > 0 && orderStages.every(isStageComplete);
+    const isBatchOrder = Array.isArray(order.items) && order.items.length > 1;
+    const batchItemsComplete = isBatchOrder && order.items.every((item) => {
+      const itemStages = Array.isArray(item.progress_stages) ? item.progress_stages : [];
+      return itemStages.length > 0
+        ? itemStages.every(isStageComplete)
+        : Number(item.progress) >= 100;
+    });
+    const parentOrderComplete = orderStatus === "completed" && Number(order.progress) >= 100;
+    const isCompleted =
+      !invalidReviewStatuses.includes(orderStatus) &&
+      (parentOrderComplete || orderStagesComplete || batchItemsComplete);
     if (!isCompleted) {
       return res.status(400).json({ success: false, message: "Only completed orders may be reviewed." });
     }
 
-    const isBatchOrder = Array.isArray(order.items) && order.items.length > 1;
     const itemIndex = rawItemIndex === undefined || rawItemIndex === null ? null : Number(rawItemIndex);
     if (isBatchOrder && itemIndex === null) {
       return res.status(400).json({ success: false, message: "Select the product you want to review." });
@@ -836,17 +851,18 @@ export const submitOrderReview = async (req, res) => {
     const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
     const customerEmail = req.user.email || order.customer_email || "";
 
-    try {
-      await sendMail({
-        to: adminEmail,
-        subject: `New customer review received for ${productName || order.tracking}`,
-        text: reviewMessage,
-      });
-    } catch (mailError) {
-      console.error("Review notification email failed:", mailError);
-    }
+    const sendReviewNotifications = async () => {
+      try {
+        await sendMail({
+          to: adminEmail,
+          subject: `New customer review received for ${productName || order.tracking}`,
+          text: reviewMessage,
+        });
+      } catch (mailError) {
+        console.error("Review notification email failed:", mailError);
+      }
 
-    if (customerEmail) {
+      if (!customerEmail) return;
       try {
         await sendMail({
           to: customerEmail,
@@ -856,8 +872,9 @@ export const submitOrderReview = async (req, res) => {
       } catch (mailError) {
         console.error("Customer review confirmation email failed:", mailError);
       }
-    }
+    };
 
+    void sendReviewNotifications();
     res.json({ success: true, order });
   } catch (error) {
     console.error("Submit order review error:", error);
@@ -1546,6 +1563,30 @@ export const updateOrderProgress = async (req, res) => {
         });
         order.items[itemIndex].progress_stages = targetStages;
         order.items[itemIndex].progress = Number(progress) || 0;
+
+        const allBatchItemsCompleted = order.items.length > 0 && order.items.every((item) => {
+          const itemStages = Array.isArray(item.progress_stages) ? item.progress_stages : [];
+          const stagesCompleted = itemStages.length > 0 && itemStages.every((stage) =>
+            stage.completed === true || ["done", "completed"].includes(String(stage.status || "").toLowerCase())
+          );
+          return itemStages.length > 0 ? stagesCompleted : Number(item.progress) >= 100;
+        });
+
+        if (allBatchItemsCompleted) {
+          order.progress = 100;
+          order.status = "completed";
+          order.progress_stages = (order.progress_stages || []).map((stage) => {
+            const stageData = stage.toObject?.() || stage;
+            return {
+              ...stageData,
+              status: "done",
+              completed: true,
+              subStages: Array.isArray(stageData.subStages)
+                ? stageData.subStages.map((subStage) => ({ ...subStage, status: "done", completed: true }))
+                : stageData.subStages,
+            };
+          });
+        }
       } else {
         order.progress_stages = targetStages;
         const allProjectStagesDone =

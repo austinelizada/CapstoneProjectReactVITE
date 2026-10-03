@@ -117,7 +117,18 @@ function Transactions() {
       return false;
     }
 
-    return status === "completed" || progress >= 100;
+    const batchItems = Array.isArray(order.items) ? order.items : [];
+    const allBatchItemsCompleted = batchItems.length > 1 && batchItems.every((item) => {
+      const stages = Array.isArray(item?.progress_stages) ? item.progress_stages : [];
+      if (stages.length > 0) {
+        return stages.every((stage) =>
+          stage.completed === true || ["done", "completed"].includes(String(stage.status || "").toLowerCase())
+        );
+      }
+      return Number(item?.progress) >= 100;
+    });
+
+    return status === "completed" || progress >= 100 || allBatchItemsCompleted;
   };
 
   const hasAcceptedContract = (order) => {
