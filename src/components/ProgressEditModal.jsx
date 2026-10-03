@@ -877,7 +877,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[70] flex items-stretch justify-center bg-black/50 p-0 lg:items-center lg:p-4"
       onClick={handleOverlayClick}
       role="presentation"
     >
@@ -894,7 +894,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
         }
       `}</style>
       <div
-        className="progress-edit-dialog flex max-h-[92dvh] w-full max-w-[600px] flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white sm:max-h-[90vh] sm:rounded-2xl"
+        className="progress-edit-dialog flex h-[100dvh] max-h-[100dvh] w-full max-w-none flex-col overflow-hidden rounded-none border border-slate-200 bg-white lg:h-auto lg:max-h-[90vh] lg:max-w-[600px] lg:rounded-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="progress-edit-title"
@@ -932,7 +932,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
           </div>
         </div>
 
-        <div className="min-h-0 max-h-[460px] flex-1 overflow-y-auto bg-slate-50 px-3 py-3 sm:px-4">
+        <div className="min-h-0 max-h-none flex-1 overflow-y-auto bg-slate-50 px-3 py-3 sm:px-4 lg:max-h-[460px]">
           <div className="space-y-3">
           {stages.length === 0 && (
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">
@@ -1736,7 +1736,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
           </div>
         )}
 
-        <div className="flex shrink-0 justify-end gap-3 border-t border-slate-200 px-4 py-3 sm:px-5">
+        <div className="flex shrink-0 justify-end gap-3 border-t border-slate-200 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5 lg:pb-3">
           <button
             type="button"
             onClick={onClose}

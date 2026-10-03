@@ -236,7 +236,7 @@ export default function OrderTimelineModal({
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/45 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[70] flex items-stretch justify-center bg-black/45 p-0 lg:items-center lg:p-4"
       role="presentation"
       onClick={(event) => event.target === event.currentTarget && onClose()}
     >
@@ -246,7 +246,7 @@ export default function OrderTimelineModal({
         aria-modal="true"
         aria-labelledby="order-timeline-title"
         onKeyDown={handleDialogKeyDown}
-        className={`flex max-h-[92dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-t-2xl border shadow-2xl sm:max-h-[90vh] sm:rounded-2xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+        className={`flex h-[100dvh] max-h-[100dvh] w-full max-w-none flex-col overflow-hidden rounded-none border shadow-2xl lg:h-auto lg:max-h-[90vh] lg:max-w-[560px] lg:rounded-2xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
       >
         <header className={`grid shrink-0 grid-cols-[minmax(0,1fr)_2.25rem] items-start gap-x-3 gap-y-2 border-b px-4 py-3.5 sm:px-5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
           <div className="min-w-0">
@@ -277,7 +277,7 @@ export default function OrderTimelineModal({
           </button>
         </header>
 
-        <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3.5 sm:max-h-[70vh] sm:px-5 ${darkMode ? "bg-slate-950/40" : "bg-slate-50/70"}`}>
+        <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3.5 lg:max-h-[70vh] lg:px-5 ${darkMode ? "bg-slate-950/40" : "bg-slate-50/70"}`}>
           {items.length > 1 && !loading && !isEmpty && (
             <div className={`mb-3 flex flex-col gap-3 border-b pb-3 sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
               <div className="min-w-0">

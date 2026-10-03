@@ -132,7 +132,7 @@ function TrackOrder() {
               <Truck size={30} className="text-red-600" />
               <div>
                 <h2 className="text-2xl font-bold text-slate-950">Track an Order</h2>
-                <p className="text-slate-500">Enter your tracking number to see current order status.</p>
+                <p className="text-slate-500">Enter your Order ID to see current order status.</p>
               </div>
             </div>
 
@@ -142,7 +142,7 @@ function TrackOrder() {
                 type="text"
                 value={trackingNumber}
                 onChange={(event) => setTrackingNumber(event.target.value)}
-                placeholder="Enter tracking ID"
+                placeholder="Enter Order ID"
                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500"
               />
 

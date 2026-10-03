@@ -4,6 +4,21 @@ import { describe, it, expect, vi } from "vitest";
 import ProgressEditModal from "../ProgressEditModal";
 
 describe("ProgressEditModal", () => {
+  it("places the mobile dialog above navigation and keeps its actions available", () => {
+    render(
+      <ProgressEditModal
+        project={{ id: "order-123", client: "Acme Corp", stages: [] }}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    const dialog = screen.getByRole("dialog", { name: /Edit Progress/ });
+    expect(dialog.parentElement.className).toContain("z-[70]");
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeTruthy();
+  });
+
   it("shows add sub-stage only for the latest completed parent stage", () => {
     const project = {
       id: "order-123",
@@ -14,6 +29,10 @@ describe("ProgressEditModal", () => {
       ],
     };
     render(<ProgressEditModal project={project} onSave={vi.fn()} onClose={vi.fn()} />);
+
+    const dialog = screen.getByRole("dialog", { name: /Edit Progress/ });
+    expect(dialog.className).toContain("h-[100dvh]");
+    expect(dialog.className).toContain("lg:max-w-[600px]");
 
     const buttons = screen.getAllByRole("button", { name: /Add Sub-Stage/i });
     expect(buttons).toHaveLength(1);

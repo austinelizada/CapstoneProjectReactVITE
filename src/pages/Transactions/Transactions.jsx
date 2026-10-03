@@ -27,7 +27,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
-import { getCustomerPaymentProof, isPaymentProofConfirmed } from "./paymentProofUtils";
+import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed } from "./paymentProofUtils";
 
 function Transactions() {
   const { user } = useAuth();
@@ -140,15 +140,8 @@ function Transactions() {
     const excludedStatuses = ["declined", "rejected", "cancelled", "contract_declined"];
     return !excludedStatuses.includes(status) && !excludedStatuses.includes(contractStatus);
   });
-  const toNonNegativeAmount = (value) => {
-    const amount = Number(value);
-    return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
-  };
-  const getTransactionTotal = (order) => toNonNegativeAmount(order.contract_amount ?? order.total_amount);
-  const getConfirmedPayment = (order) => toNonNegativeAmount(
-    order.payment_amount || order.downpayment_amount ||
-    (order.downpayment_received ? getTransactionTotal(order) * 0.5 : 0)
-  );
+  const getTransactionTotal = (order) => getPaymentSummary(order).totalAmount;
+  const getConfirmedPayment = (order) => getPaymentSummary(order).paidAmount;
 
   const hasVerifiedContractAcceptance = (order) => {
     if (String(order.contract_status || "").toLowerCase() !== "accepted") return false;
@@ -364,7 +357,7 @@ function Transactions() {
     if (!order) return null;
 
     const amount = Number(order.contract_amount || order.total_amount || 0);
-    const downPayment = Math.round((amount * 0.5) * 100) / 100;
+    const downPayment = getPaymentSummary(order).requiredAmount;
     const items = (order.items || []).map((item) => ({
       name: item.name || "Item",
       category: item.category || item.product_type || "General",
@@ -373,7 +366,7 @@ function Transactions() {
       height: item.height || "—",
       area: item.area || 0,
       unitPrice: Number(item.unit_price || 0),
-      amount: Number(item.is_estimate ? item.estimated_price || 0 : (item.quantity || 0) * Number(item.unit_price || 0)),
+      amount: Number(item.line_total || (item.is_estimate ? item.estimated_price : 0) || (item.quantity || 0) * Number(item.unit_price || 0)),
     }));
 
     const contractStatus = order.contract_status?.replace(/_/g, " ") || order.status?.replace(/_/g, " ") || "Pending";
@@ -425,10 +418,13 @@ function Transactions() {
     if (!order) return;
     const proof = getCustomerPaymentProof(order);
     const method = proof.paymentMethod || order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
+    const hasUnconfirmedProof = Boolean(
+      order.payment_proof_submitted_at && !isPaymentProofConfirmed(order),
+    );
 
     setEditPaymentOrder(order);
     setEditPaymentMethod(method);
-    setEditPaymentAmount("");
+    setEditPaymentAmount(hasUnconfirmedProof && proof.amount > 0 ? String(proof.amount) : "");
     setEditPaymentTransactionNumber(proof.transactionNumber || order.transaction_number || order.transactionNumber || "");
     setShowEditPaymentModal(true);
   };
@@ -457,21 +453,30 @@ function Transactions() {
     }
 
     const orderId = editPaymentOrder._id || editPaymentOrder.id;
-    const totalAmount = Number(editPaymentOrder.contract_amount || editPaymentOrder.total_amount || 0);
-    const existingPaid = Number(editPaymentOrder.payment_amount || editPaymentOrder.downpayment_amount || 0);
+    if (nextAmount <= 0) {
+      toast.error("Enter an amount greater than zero.");
+      return;
+    }
+
+    const existingSummary = getPaymentSummary(editPaymentOrder);
+    const totalAmount = existingSummary.totalAmount;
+    const existingPaid = existingSummary.paidAmount;
+    if (Math.round(nextAmount * 100) > Math.round(existingSummary.remainingAmount * 100)) {
+      toast.error("Payment cannot exceed the remaining balance.");
+      return;
+    }
     const updatedPaid = existingPaid + nextAmount;
     const remainingAfter = Math.max(totalAmount - updatedPaid, 0);
-    const isFullyPaid = totalAmount > 0 ? updatedPaid >= totalAmount : false;
+    const updatedSummary = getPaymentSummary({ ...editPaymentOrder, amount_paid: updatedPaid });
+    const isFullyPaid = updatedSummary.status.key === "paid";
 
     try {
       const payload = {
-        payment_amount: updatedPaid,
-        downpayment_amount: updatedPaid,
-        payment_proof_amount: updatedPaid,
-        payment_status: isFullyPaid ? "paid" : "not_paid",
+        amount_paid: updatedPaid,
+        payment_status: updatedSummary.status.key,
         payment_method: editPaymentMethod,
         transaction_number: editPaymentTransactionNumber || editPaymentOrder.transaction_number || "",
-        ...(editPaymentOrder.payment_proof_submitted_at
+        ...(editPaymentOrder.payment_proof_submitted_at && !isPaymentProofConfirmed(editPaymentOrder)
           ? { payment_proof_confirmed_at: new Date().toISOString() }
           : {}),
       };
@@ -481,14 +486,14 @@ function Transactions() {
       updateOrderLocally(orderId, {
         ...updated,
         ...payload,
-        payment_proof_amount: updated.payment_proof_amount || updatedPaid,
+        payment_proof_amount: updated.payment_proof_amount ?? editPaymentOrder.payment_proof_amount ?? 0,
         payment_method: editPaymentMethod,
       });
 
       toast.success(
         isFullyPaid
           ? "Payment confirmed. Customer is now marked as Fully Paid."
-          : `Payment saved successfully. Remaining balance: ₱${remainingAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : `Payment saved. Status: ${updatedSummary.status.label}. Remaining balance: ₱${remainingAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       );
     } catch (error) {
       console.error("Save payment edit failed", error);
@@ -1024,7 +1029,7 @@ function Transactions() {
 
                           <div className={`mt-4 space-y-2 border-t pt-3 text-sm ${secondaryTextClass} ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium">Admin recorded</span>
+                              <span className="font-medium">Submitted amount</span>
                               <span className={darkMode ? "font-semibold text-red-400" : "font-semibold text-red-600"}>₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             {proof.transactionNumber && (
@@ -1078,19 +1083,25 @@ function Transactions() {
             })()}
 
             <div>
-              <label className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>NEW PAYMENT RECEIVED (P)</label>
+              <label className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>AMOUNT CONFIRMED (P)</label>
               <input
                 id="edit-payment-amount-field"
                 type="number"
                 min="0"
+                max={getPaymentSummary(editPaymentOrder).remainingAmount}
                 step="0.01"
                 value={editPaymentAmount}
                 onChange={(e) => setEditPaymentAmount(e.target.value)}
                 className={inputClass}
               />
               <div className={`mt-2 text-xs ${tertiaryTextClass}`}>
-                Already paid: ₱{Number(editPaymentOrder.payment_amount || editPaymentOrder.downpayment_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Remaining balance: ₱{Math.max((Number(editPaymentOrder.contract_amount || editPaymentOrder.total_amount || 0) - Number(editPaymentOrder.payment_amount || editPaymentOrder.downpayment_amount || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                Already paid: ₱{getPaymentSummary(editPaymentOrder).paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Required downpayment: ₱{getPaymentSummary(editPaymentOrder).requiredAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
+              {editPaymentOrder.payment_proof_submitted_at && !isPaymentProofConfirmed(editPaymentOrder) && (
+                <div className={`mt-1 text-xs ${tertiaryTextClass}`}>
+                  The submitted amount is prefilled. Adjust it only if the amount actually received differs.
+                </div>
+              )}
             </div>
 
             <div>
@@ -1143,17 +1154,26 @@ function Transactions() {
             )}
 
             <div className={panelClass + " px-3 py-2"}>
+              {(() => {
+                const paymentSummary = getPaymentSummary(editPaymentOrder);
+                const preview = getPaymentSummary({
+                  ...editPaymentOrder,
+                  amount_paid: paymentSummary.paidAmount + (Number(editPaymentAmount) || 0),
+                });
+                return (
               <div className="flex items-center justify-between gap-3 text-sm">
                 <span className={darkMode ? "font-medium text-slate-300" : "font-medium text-slate-600"}>Payment Status Preview</span>
-                <span className={darkMode ? "inline-flex items-center rounded-full border border-amber-400/40 bg-[#2f2a18] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-300" : "inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700"}>Pending</span>
+                <span className={darkMode ? "inline-flex items-center rounded-full border border-amber-400/40 bg-[#2f2a18] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-300" : "inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700"}>{preview.status.label}</span>
               </div>
+                );
+              })()}
             </div>
 
             <div className={panelClass + " px-3 py-3"}>
               <div className="flex items-center justify-between gap-3">
                 <span className={darkMode ? "text-sm text-slate-300" : "text-sm text-slate-600"}>Remaining Balance After This Payment</span>
                 <span className={darkMode ? "text-sm font-bold text-red-400" : "text-sm font-bold text-red-600"}>
-                  ₱{Math.max((Number(editPaymentOrder.contract_amount || editPaymentOrder.total_amount || 0) - (Number(editPaymentOrder.payment_amount || editPaymentOrder.downpayment_amount || 0) + Number(editPaymentAmount || 0))), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ₱{Math.max(getPaymentSummary(editPaymentOrder).remainingAmount - (Number(editPaymentAmount || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </div>
@@ -1289,21 +1309,18 @@ function Transactions() {
                       const productLabel = Array.isArray(order.items) && order.items.length > 0
                         ? (order.items.length > 1 ? "Batch Order" : (order.items[0].name || order.items[0].product_name || "Project"))
                         : "N/A";
-                      const amountVal = order.contract_amount || order.total_amount || 0;
-                      const paidAmount = Number(order.payment_amount || order.downpayment_amount || (order.downpayment_received ? amountVal * 0.5 : 0));
+                      const paymentSummary = getPaymentSummary(order);
+                      const amountVal = paymentSummary.totalAmount;
+                      const paidAmount = paymentSummary.paidAmount;
                       const amount = `₱${Number(amountVal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                       const inspectionLabel = productLabel;
                       const orderType = order.order_type === "walk_in_customer" ? "Walk-in" : "Website Order";
                       const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
                       const installDate = order.estimated_installation_date ? formatDateToMMDDYYYY(order.estimated_installation_date) : "—";
                       const projectCategory = isCompletedProject(order) ? "Completed" : "In Progress";
-                      const totalProjectAmount = Number(order.contract_amount || order.total_amount || 0);
-                      const paidAmountForStatus = Number(order.payment_proof_amount ?? order.payment_amount ?? order.downpayment_amount ?? 0);
-                      const proof = getCustomerPaymentProof(order);
-                      const hasProofSubmission = proof.submitted || (order.payment_status || "").toString().toLowerCase() === "paid" || (order.payment_status || "").toString().toLowerCase() === "pending_confirmation" || (order.payment_status || "").toString().toLowerCase() === "needs_confirmation";
-                      const isFullyPaid = totalProjectAmount > 0 ? paidAmountForStatus >= totalProjectAmount : false;
-                      const statusLabel = isFullyPaid ? "Fully Paid" : "Pending";
-                      const showNeedsConfirmation = !isFullyPaid && hasProofSubmission;
+                      const statusLabel = paymentSummary.status.label;
+                      const isFullyPaid = paymentSummary.status.key === "paid";
+                      const showNeedsConfirmation = Boolean(order.payment_proof_submitted_at && !isPaymentProofConfirmed(order));
 
                       return (
                         <tr key={order._id || index} className="border-t hover:bg-gray-50">
@@ -1317,7 +1334,7 @@ function Transactions() {
                                       {item.name || item.product_name || "Product"}
                                     </div>
                                   ))}
-                                  <div className="text-xs text-slate-500">{order.tracking || "—"}</div>
+                                  <div className="text-xs text-slate-500">Order ID: {order.tracking || order._id || order.id || "—"}</div>
                                 </div>
                               </td>
                               <td className="p-4">
@@ -1355,14 +1372,14 @@ function Transactions() {
                           ) : (
                             <>
                               <td className="p-4">{renderClientCell(order, customerName)}</td>
-                              <td className="p-4"><div className="font-semibold text-slate-900">{inspectionLabel}</div><div className="text-xs text-slate-500">{order.tracking || "—"}</div></td>
+                              <td className="p-4"><div className="font-semibold text-slate-900">{inspectionLabel}</div><div className="text-xs text-slate-500">Order ID: {order.tracking || order._id || order.id || "—"}</div></td>
                               <td className="p-4"><div className="font-bold text-emerald-600">₱{paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div><div className="text-xs text-slate-500">of {amount}</div></td>
                               <td className="p-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${paymentMethod === "Online" ? (darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-50 text-rose-700") : (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-50 text-emerald-700")}`}>{paymentMethod}</span></td>
                               <td className="p-4"><span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{orderType}</span></td>
                               <td className="p-4 text-sm text-slate-600">{installDate}</td>
                               <td className="p-4"><span className={`inline-flex rounded-md px-3 py-1 text-xs font-semibold ${projectCategory === "Completed" ? "bg-rose-50 text-rose-700" : "bg-violet-50 text-violet-700"}`}>{projectCategory}</span></td>
-                              <td className="p-4">{isFullyPaid ? (<span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700"}`}>{statusLabel}</span>) : (<div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700"}`}>{statusLabel}</span>{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div>)}</td>
-                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isPaymentProofConfirmed(order) ? (<button type="button" title="Payment proof confirmed" aria-label="Payment proof confirmed" disabled className="p-2 rounded-lg bg-slate-100 text-slate-400 cursor-not-allowed"><Lock size={18} /></button>) : (<button type="button" title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
+                              <td className="p-4"><div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isFullyPaid ? (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700")}`}>{statusLabel}</span>{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div></td>
+                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
                             </>
                           )}
                         </tr>
@@ -1377,11 +1394,10 @@ function Transactions() {
               {currentData.map((order, index) => {
                 const customerName = order.customer_name || (order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : "N/A");
                 const productLabel = Array.isArray(order.items) && order.items.length > 0 ? (order.items.length > 1 ? "Batch Order" : (order.items[0].name || order.items[0].product_name || "Project")) : "N/A";
-                const amountVal = order.contract_amount || order.total_amount || 0;
+                const paymentSummary = getPaymentSummary(order);
+                const amountVal = paymentSummary.totalAmount;
                 const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
-                const totalProjectAmount = Number(order.contract_amount || order.total_amount || 0);
-                const paidAmountForStatus = Number(order.payment_proof_amount ?? order.payment_amount ?? order.downpayment_amount ?? 0);
-                const isFullyPaid = totalProjectAmount > 0 ? paidAmountForStatus >= totalProjectAmount : false;
+                const isFullyPaid = paymentSummary.status.key === "paid";
 
                 return (
                   <div key={order._id || index} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
@@ -1389,9 +1405,10 @@ function Transactions() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-bold text-slate-900">{productLabel}</p>
                         <p className="mt-1 text-xs text-slate-500">{customerName}</p>
+                        <p className="mt-1 break-all text-[10px] text-slate-500">Order ID: {order.tracking || order._id || order.id || "—"}</p>
                       </div>
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold ${isFullyPaid ? "bg-emerald-100 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                        {isFullyPaid ? "Fully Paid" : "Pending"}
+                        {paymentSummary.status.label}
                       </span>
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
@@ -1406,6 +1423,13 @@ function Transactions() {
                     </div>
                     <div className="mt-3 flex justify-end gap-2">
                       <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
+                      {isFullyPaid ? (
+                        <button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className="cursor-not-allowed rounded-lg bg-slate-100 p-2 text-slate-500">
+                          <Lock size={18} aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>
+                      )}
                       {activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}
                       <button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button>
                     </div>
@@ -1481,6 +1505,8 @@ function Transactions() {
             const inspectionDate = formatDateToMMMDDYYYY(contractPreviewOrder.inspection_date) || "TBD";
             const paymentTermsText = contractPreviewOrder.payment_terms || "50% downpayment, 50% upon completion";
             const previewItems = Array.isArray(contractPreviewOrder.items) ? contractPreviewOrder.items : [];
+            const paymentSummary = getPaymentSummary(contractPreviewOrder);
+            const orderIdentifier = contractPreviewOrder.tracking || contractPreviewOrder._id || contractPreviewOrder.id || "—";
 
             return (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1492,7 +1518,7 @@ function Transactions() {
                       {contractPreviewOrder.customer_name || `${contractPreviewOrder.customer?.first_name || ""} ${contractPreviewOrder.customer?.last_name || ""}`.trim() || "Customer"}
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      {contractPreviewOrder.tracking || contractPreviewOrder._id || "N/A"}
+                      Order ID: {orderIdentifier}
                     </div>
                   </div>
 
@@ -1508,8 +1534,8 @@ function Transactions() {
 
                 <div className="overflow-y-auto bg-slate-100 p-3">
                   <div className="mb-3 flex flex-wrap gap-2">
-                    <span className="rounded-md border border-emerald-200 bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">
-                      ✓ Fully Paid
+                    <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${paymentSummary.status.key === "paid" ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                      {paymentSummary.status.label}
                     </span>
                     <span className="rounded-md border border-blue-200 bg-blue-100 px-2 py-1 text-[10px] font-semibold text-blue-700">
                       Completed Project
@@ -1530,6 +1556,10 @@ function Transactions() {
                         <div className="text-[13px] font-semibold text-slate-800">
                           {contractPreviewOrder.customer_name || `${contractPreviewOrder.customer?.first_name || ""} ${contractPreviewOrder.customer?.last_name || ""}`.trim() || "N/A"}
                         </div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[10px] font-semibold text-slate-500">Order ID</div>
+                        <div className="break-all text-[13px] font-semibold text-slate-800">{orderIdentifier}</div>
                       </div>
                       <div className="space-y-1">
                         <div className="text-[10px] font-semibold text-slate-500">Email</div>
@@ -1582,20 +1612,20 @@ function Transactions() {
                     <div className="space-y-2 text-[13px]">
                       <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
                         <span className="text-slate-600">Total Project Amount</span>
-                        <span className="font-semibold text-slate-800">₱{Number(contractPreviewOrder.contract_amount || contractPreviewOrder.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="font-semibold text-slate-800">₱{paymentSummary.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
                         <span className="text-slate-600">Amount Paid</span>
-                        <span className="font-semibold text-slate-800">₱{Number(contractPreviewOrder.payment_amount || contractPreviewOrder.downpayment_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="font-semibold text-slate-800">₱{paymentSummary.paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex items-center justify-between gap-4">
                         <span className="text-slate-600">Remaining Balance</span>
                         <span className="font-bold text-red-600">
-                          ₱{(Number(contractPreviewOrder.contract_amount || contractPreviewOrder.total_amount || 0) - Number(contractPreviewOrder.payment_amount || contractPreviewOrder.downpayment_amount || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ₱{paymentSummary.remainingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="mt-2 h-2 overflow-hidden rounded-full bg-emerald-100">
-                        <div className="h-full w-full rounded-full bg-emerald-500" style={{ width: "100%" }} />
+                        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${paymentSummary.totalAmount > 0 ? Math.min((paymentSummary.paidAmount / paymentSummary.totalAmount) * 100, 100) : 0}%` }} />
                       </div>
                     </div>
                   </section>

@@ -61,4 +61,26 @@ describe("contract state tracking", () => {
     current.shipping_address = "456 New St";
     expect(hasContractSnapshotChanged(current)).toBe(true);
   });
+
+  it("uses a configured downpayment amount in the contract snapshot", () => {
+    const snapshot = buildContractSnapshot({
+      total_amount: 20000,
+      required_downpayment_amount: 10000,
+      payment_terms: "50%_down_payment",
+    });
+
+    expect(snapshot.downpayment).toBe(10000);
+  });
+
+  it("falls back to half of the project cost when stored downpayment is zero", () => {
+    const snapshot = buildContractSnapshot({
+      total_amount: 40240,
+      contract_amount: 40240,
+      required_downpayment_amount: 0,
+      downpayment_amount: 0,
+      payment_terms: "50%_down_payment",
+    });
+
+    expect(snapshot.downpayment).toBe(20120);
+  });
 });

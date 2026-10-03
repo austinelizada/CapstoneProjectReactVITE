@@ -13,7 +13,16 @@ export const buildContractSnapshot = (order = {}) => {
   const height = Number(firstItem.height ?? firstItem.dimensions?.height ?? 0) || 0;
   const quantity = Number(firstItem.quantity ?? firstItem.qty ?? 1) || 1;
   const projectCost = Number(order.contract_amount || order.total_amount || 0);
-  const downpayment = Math.round((projectCost * 0.5) * 100) / 100;
+  const configuredDownpayment = order.required_downpayment_amount ?? order.downpayment_amount;
+  const hasConfiguredDownpayment = Number(configuredDownpayment) > 0;
+  const defaultDownpayment = order.payment_terms === "full_payment" ? projectCost : projectCost * 0.5;
+  const downpayment = Math.min(
+    projectCost,
+    Math.max(
+      Math.round((hasConfiguredDownpayment ? Number(configuredDownpayment) : defaultDownpayment) * 100) / 100,
+      0,
+    ),
+  );
   const inspectionDate = order.inspection_date
     ? new Date(order.inspection_date).toISOString().slice(0, 10)
     : "";

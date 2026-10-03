@@ -16,6 +16,41 @@ const OrderItemSchema = new mongoose.Schema(
       required: true,
       default: 0,
     },
+    pricing_method: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    price_per_sqft: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    price_per_blade: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    base_price: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    blade_count: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    estimated_price_override: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    line_total: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     quantity: {
       type: Number,
       required: true,
@@ -177,6 +212,10 @@ const OrderSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    amount_paid: {
+      type: Number,
+      min: 0,
+    },
     payment_proof_submitted_at: {
       type: Date,
       default: null,
@@ -233,8 +272,8 @@ const OrderSchema = new mongoose.Schema(
     },
     payment_status: {
       type: String,
-      enum: ["not_paid", "paid"],
-      default: "not_paid",
+      enum: ["not_paid", "pending", "partial_downpayment", "downpayment", "partial", "paid"],
+      default: "pending",
     },
     tracking: {
       type: String,
@@ -371,6 +410,10 @@ const OrderSchema = new mongoose.Schema(
     downpayment_amount: {
       type: Number,
       default: 0,
+    },
+    required_downpayment_amount: {
+      type: Number,
+      min: 0,
     },
     contractGenerated: {
       type: Boolean,

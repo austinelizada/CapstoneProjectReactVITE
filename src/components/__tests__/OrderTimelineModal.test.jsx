@@ -16,7 +16,9 @@ describe("OrderTimelineModal", () => {
   it("shows a single item's summary and expanded custom stage timeline", () => {
     render(<OrderTimelineModal order={singleItemOrderMock} onClose={vi.fn()} />);
 
-    expect(screen.getByRole("dialog", { name: "Order timeline" })).toBeTruthy();
+    const dialog = screen.getByRole("dialog", { name: "Order timeline" });
+    expect(dialog.className).toContain("h-[100dvh]");
+    expect(dialog.className).toContain("lg:max-w-[560px]");
     expect(screen.getByText("Glass Door")).toBeTruthy();
     expect(screen.getByText('121" × 121" · 101.67 sq ft')).toBeTruthy();
     expect(screen.getByText("Assembly", { selector: "p" })).toBeTruthy();

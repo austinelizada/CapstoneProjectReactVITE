@@ -2,8 +2,10 @@ import fs from "fs";
 import path from "path";
 import mongoose from "mongoose";
 import Order from "../models/Order.js";
+import Product from "../models/Product.js";
 import User from "../models/User.js";
 import { sendMail } from "../config/mailer.js";
+import { buildProductPriceSnapshot } from "../../src/lib/productPricing.js";
 
 const isWithinReviewEditWindow = (submittedAt) => {
   if (!submittedAt) return false;
@@ -136,6 +138,13 @@ const sanitizeOrderItems = (items = []) => {
       name: item.name,
       quantity,
       unit_price,
+      pricing_method: item.pricing_method || "",
+      price_per_sqft: Number(item.price_per_sqft) || 0,
+      price_per_blade: Number(item.price_per_blade) || 0,
+      base_price: Number(item.base_price) || 0,
+      blade_count: Number(item.blade_count) || 0,
+      estimated_price_override: Number(item.estimated_price_override) || 0,
+      line_total: Number(item.line_total) || 0,
       unit: item.unit || "piece",
       category: item.category || "",
       product_type: item.product_type || "",
@@ -163,6 +172,10 @@ const sanitizeOrderItems = (items = []) => {
 const getItemAmountValue = (item) => {
   if (!item) return 0;
 
+  if (Number(item.line_total) > 0) {
+    return Number(item.line_total);
+  }
+
   if (item.is_estimate && Number(item.estimated_price || item.manual_estimated_total || 0) > 0) {
     return Number(item.estimated_price || item.manual_estimated_total || 0);
   }
@@ -183,6 +196,53 @@ const generateTrackingNumber = () => {
   return `TRK-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 };
 
+const getOrderPaymentAmounts = (order) => {
+  const totalAmount = Math.max(Number(order.contract_amount || order.total_amount) || 0, 0);
+  const configuredRequired = order.required_downpayment_amount;
+  const legacyRequired = Number(order.downpayment_amount) || 0;
+  const defaultRequired = order.payment_terms === "full_payment" ? totalAmount : totalAmount * 0.5;
+  const requiredAmount = Math.min(
+    totalAmount,
+    Math.max(
+      configuredRequired !== undefined && configuredRequired !== null
+        ? Number(configuredRequired) || 0
+        : legacyRequired > 0
+          ? legacyRequired
+          : defaultRequired,
+      0,
+    ),
+  );
+
+  let paidAmount = Number(order.amount_paid);
+  if (order.amount_paid === undefined || order.amount_paid === null || !Number.isFinite(paidAmount)) {
+    if (order.payment_proof_confirmed_at) {
+      paidAmount = Number(order.payment_proof_amount) || 0;
+    } else if (order.payment_status === "paid" && !order.payment_proof_submitted_at) {
+      paidAmount = totalAmount;
+    } else if (order.downpayment_received) {
+      paidAmount = requiredAmount;
+    } else {
+      paidAmount = 0;
+    }
+  }
+
+  paidAmount = Math.min(Math.max(paidAmount, 0), totalAmount);
+  return { totalAmount, requiredAmount, paidAmount };
+};
+
+const getOrderPaymentStatus = (order) => {
+  const { totalAmount, requiredAmount, paidAmount } = getOrderPaymentAmounts(order);
+  const paidCents = Math.round(paidAmount * 100);
+  const requiredCents = Math.round(requiredAmount * 100);
+  const totalCents = Math.round(totalAmount * 100);
+  if (totalCents > 0 && paidCents >= totalCents) return "paid";
+  if (paidAmount <= 0) return "pending";
+  if (order.payment_terms === "full_payment") return "partial";
+  if (paidCents < requiredCents) return "partial_downpayment";
+  if (paidCents === requiredCents) return "downpayment";
+  return "partial";
+};
+
 export const listOrders = async (req, res) => {
   try {
     const filter = {};
@@ -194,7 +254,7 @@ export const listOrders = async (req, res) => {
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
-      .populate("items.product_id", "image_url image images name product_name category product_type unit unit_price price_per_sqft price_per_blade width height measurement_unit standard_size");
+      .populate("items.product_id", "image_url image images name product_name category product_type unit pricing_method unit_price base_price price_per_sqft price_per_blade blade_count estimated_price estimated_price_override width height measurement_unit standard_size");
 
     res.json({ success: true, orders });
   } catch (error) {
@@ -227,18 +287,43 @@ export const createOrder = async (req, res) => {
       });
     }
 
-    const total_amount = sanitizedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
+    const productIds = [...new Set(sanitizedItems.map((item) => item.product_id).filter(Boolean))];
+    if (
+      productIds.length !== sanitizedItems.length ||
+      productIds.some((productId) => !mongoose.Types.ObjectId.isValid(productId))
+    ) {
+      return res.status(400).json({ success: false, message: "Each order item must reference a valid product." });
+    }
+
+    const products = productIds.length
+      ? await Product.find({ _id: { $in: productIds } })
+          .select("pricing_method unit unit_price base_price price_per_sqft price_per_blade blade_count customization customization_fee estimated_price estimated_price_override width height measurement_unit")
+          .lean()
+      : [];
+    const productsById = new Map(products.map((product) => [String(product._id), product]));
+    if (productsById.size !== productIds.length) {
+      return res.status(400).json({ success: false, message: "One or more selected products are no longer available." });
+    }
+    const pricedItems = sanitizedItems.map((item) => {
+      const product = productsById.get(String(item.product_id));
+      return { ...item, ...buildProductPriceSnapshot(product, item) };
+    });
+
+    const total_amount = pricedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
 
     const order = new Order({
       customer: req.user.id,
       customer_phone: String(customer_phone || req.user.phone || "").trim(),
-      items: sanitizedItems,
+      items: pricedItems,
       total_amount,
+      downpayment_amount: total_amount * 0.5,
+      required_downpayment_amount: total_amount * 0.5,
+      amount_paid: 0,
       shipping_address: normalizeAddress(shipping_address || buildAddressFromUser(req.user)),
       tracking: generateTrackingNumber(),
       order_type: order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
       contract_status: "pending",
-      payment_status: "not_paid",
+      payment_status: "pending",
       status: "site_inspection",
     });
 
@@ -268,6 +353,7 @@ export const createOrderAsAdmin = async (req, res) => {
       downpayment_received,
       warranty_period,
       custom_warranty_days,
+      required_downpayment_amount,
       // Walk-in customer fields
       signed_contract_url,
       contract_number,
@@ -308,6 +394,18 @@ export const createOrderAsAdmin = async (req, res) => {
       .map(Number)
       .find((amount) => Number.isFinite(amount) && amount > 0) || 0;
     const total_amount = overrideAmount > 0 ? overrideAmount : totalAmountFromItems;
+    const providedRequiredAmount = Number(required_downpayment_amount);
+    const defaultRequiredAmount = payment_terms === "full_payment" ? total_amount : total_amount * 0.5;
+    const requiredAmount = Math.min(
+      total_amount,
+      Math.max(
+        required_downpayment_amount !== undefined && Number.isFinite(providedRequiredAmount)
+          ? providedRequiredAmount
+          : defaultRequiredAmount,
+        0,
+      ),
+    );
+    const initialPaidAmount = downpayment_received ? requiredAmount : 0;
 
     const hasWebsiteAccount = Boolean(linkedCustomer);
     const walkInSignedAt = contract_signed_date ? new Date(contract_signed_date) : new Date();
@@ -318,16 +416,18 @@ export const createOrderAsAdmin = async (req, res) => {
       customer_name: linkedCustomerName || customer_name || "",
       customer_phone: linkedCustomer?.phone || customer_phone || "",
       customer_email: linkedCustomer?.email || customer_email || "",
-      items: sanitizedItems,
+      items: pricedItems,
       total_amount,
       manual_override: Number(req.body.manual_override) || 0,
       contract_amount: isWalkInCustomer ? total_amount : 0,
-      downpayment_amount: payment_terms === "full_payment" ? total_amount : total_amount * 0.5,
+      downpayment_amount: requiredAmount,
+      required_downpayment_amount: requiredAmount,
+      amount_paid: initialPaidAmount,
       shipping_address: normalizeAddress(shipping_address || buildAddressFromUser(linkedCustomer)),
       payment_terms: payment_terms || "",
       agreed_payment_date: agreed_payment_date ? new Date(agreed_payment_date) : null,
       has_account_on_website: hasWebsiteAccount,
-      downpayment_received: Boolean(downpayment_received),
+      downpayment_received: initialPaidAmount >= requiredAmount && requiredAmount > 0,
       warranty_period: warranty_period !== undefined && warranty_period !== null && String(warranty_period).trim() !== ""
         ? String(warranty_period)
         : "90",
@@ -338,7 +438,7 @@ export const createOrderAsAdmin = async (req, res) => {
       tracking: generateTrackingNumber(),
       order_type: normalizedOrderType,
       contract_status: isWalkInCustomer ? "accepted" : "pending",
-      payment_status: "not_paid",
+      payment_status: "pending",
       status: isWalkInCustomer ? "contract_accepted" : "site_inspection",
       inspection_status: isWalkInCustomer ? "completed" : "pending",
       inspection_completed_at: isWalkInCustomer ? walkInSignedAt : null,
@@ -371,6 +471,7 @@ export const createOrderAsAdmin = async (req, res) => {
       }] : [],
     });
 
+    order.payment_status = getOrderPaymentStatus(order);
     await order.save();
 
     res.status(201).json({ success: true, order });
@@ -387,7 +488,10 @@ export const trackOrder = async (req, res) => {
       return res.status(400).json({ success: false, message: "Tracking number is required" });
     }
 
-    const order = await Order.findOne({ tracking })
+    const orderQuery = mongoose.Types.ObjectId.isValid(tracking)
+      ? { $or: [{ tracking }, { _id: tracking }] }
+      : { tracking };
+    const order = await Order.findOne(orderQuery)
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
       .populate("items.product_id", "image_url image images name product_name category product_type unit unit_price price_per_sqft price_per_blade width height measurement_unit standard_size");
     if (!order) {
@@ -471,9 +575,10 @@ export const updateOrderStatus = async (req, res) => {
     const {
       status,
       contract_status,
-      payment_status,
       payment_amount,
+      amount_paid,
       downpayment_amount,
+      required_downpayment_amount,
       payment_proof_amount,
       payment_proof_confirmed_at,
       payment_method,
@@ -542,11 +647,33 @@ export const updateOrderStatus = async (req, res) => {
       });
     }
 
+    const requestedPaidAmount = amount_paid ?? payment_amount;
+    if (requestedPaidAmount !== undefined) {
+      const totalAmount = getOrderPaymentAmounts(order).totalAmount;
+      if (Math.round(Number(requestedPaidAmount) * 100) > Math.round(totalAmount * 100)) {
+        return res.status(400).json({ success: false, message: "Payment cannot exceed the project total." });
+      }
+    }
+
     if (status) order.status = status;
     if (contract_status) order.contract_status = contract_status;
-    if (payment_status) order.payment_status = payment_status;
-    if (downpayment_amount !== undefined) order.downpayment_amount = Number(downpayment_amount) || 0;
-    if (payment_amount !== undefined) order.downpayment_amount = Number(payment_amount) || 0;
+    if (required_downpayment_amount !== undefined) {
+      const nextRequiredAmount = Math.min(
+        getOrderPaymentAmounts(order).totalAmount,
+        Math.max(Number(required_downpayment_amount) || 0, 0),
+      );
+      order.required_downpayment_amount = nextRequiredAmount;
+      order.downpayment_amount = nextRequiredAmount;
+    } else if (downpayment_amount !== undefined && payment_amount === undefined && amount_paid === undefined) {
+      const nextRequiredAmount = Math.min(
+        getOrderPaymentAmounts(order).totalAmount,
+        Math.max(Number(downpayment_amount) || 0, 0),
+      );
+      order.required_downpayment_amount = nextRequiredAmount;
+      order.downpayment_amount = nextRequiredAmount;
+    }
+    if (amount_paid !== undefined) order.amount_paid = Math.max(Number(amount_paid) || 0, 0);
+    if (payment_amount !== undefined) order.amount_paid = Math.max(Number(payment_amount) || 0, 0);
     if (payment_proof_amount !== undefined) order.payment_proof_amount = Number(payment_proof_amount) || 0;
     if (payment_proof_confirmed_at !== undefined) {
       order.payment_proof_confirmed_at = payment_proof_confirmed_at ? new Date(payment_proof_confirmed_at) : null;
@@ -579,6 +706,10 @@ export const updateOrderStatus = async (req, res) => {
     }
     if (warranty_status !== undefined) order.warranty_status = warranty_status;
     if (warranty_terms !== undefined) order.warranty_terms = warranty_terms;
+
+    const { requiredAmount, paidAmount } = getOrderPaymentAmounts(order);
+    order.downpayment_received = requiredAmount > 0 && paidAmount >= requiredAmount;
+    order.payment_status = getOrderPaymentStatus(order);
 
     await order.save();
 
@@ -677,7 +808,7 @@ export const submitOrderReview = async (req, res) => {
         await sendMail({
           to: customerEmail,
           subject: "Thank you for your review",
-          text: `Thank you for your feedback on order ${order.tracking}. Your review has been submitted successfully.`,
+          text: `Thank you for your feedback on order ${order.tracking || order._id}. Your review has been submitted successfully.\nOrder ID: ${order.tracking || order._id}`,
         });
       } catch (mailError) {
         console.error("Customer review confirmation email failed:", mailError);
@@ -872,22 +1003,26 @@ export const submitCustomerPaymentProof = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to update payment proof for this order." });
     }
 
-    const paymentBaseAmount = Number(order.contract_amount || order.total_amount || 0);
-    const requiredPaymentAmount = Number(order.downpayment_amount)
-      || (order.payment_terms === "full_payment" ? paymentBaseAmount : paymentBaseAmount * 0.5);
-    if (Math.round(normalizedAmount * 100) !== Math.round(requiredPaymentAmount * 100)) {
-      const roundedRequiredAmount = Math.round(requiredPaymentAmount * 100) / 100;
-      const formattedRequiredAmount = roundedRequiredAmount.toLocaleString("en-PH", {
-        minimumFractionDigits: Number.isInteger(roundedRequiredAmount) ? 0 : 2,
+    if (order.payment_proof_submitted_at && !order.payment_proof_confirmed_at) {
+      return res.status(409).json({
+        success: false,
+        message: "Your previous payment is awaiting confirmation before another payment can be submitted.",
+      });
+    }
+
+    const { totalAmount, paidAmount } = getOrderPaymentAmounts(order);
+    const remainingAmount = Math.max(totalAmount - paidAmount, 0);
+    if (normalizedAmount > remainingAmount) {
+      const formattedRemainingAmount = remainingAmount.toLocaleString("en-PH", {
+        minimumFractionDigits: Number.isInteger(remainingAmount) ? 0 : 2,
         maximumFractionDigits: 2,
       });
       return res.status(400).json({
         success: false,
-        message: `Please enter the exact required payment amount of ₱${formattedRequiredAmount}.`,
+        message: `Payment cannot exceed the remaining balance of ₱${formattedRemainingAmount}.`,
       });
     }
 
-    order.payment_status = "paid";
     order.payment_proof_amount = normalizedAmount;
     order.payment_proof_submitted_at = new Date();
     order.payment_proof_confirmed_at = null;
@@ -895,6 +1030,7 @@ export const submitCustomerPaymentProof = async (req, res) => {
     order.payment_proof_file_url = proof_file_url || order.payment_proof_file_url || "";
     order.payment_method = payment_method || order.payment_method || "Cash";
     order.transaction_number = transaction_number || order.transaction_number || "";
+    order.payment_status = getOrderPaymentStatus(order);
 
     await order.save();
 
@@ -1068,7 +1204,7 @@ export const updateOrderInspection = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, manual_override, warranty_period, custom_warranty_days } = req.body;
+    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, required_downpayment_amount, manual_override, warranty_period, custom_warranty_days } = req.body;
 
     updateData = {
       status: "site_inspection",
@@ -1148,10 +1284,36 @@ export const updateOrderInspection = async (req, res) => {
 
     const updatedTotalAmount = total_amount !== undefined ? Number(total_amount) || 0 : order.total_amount;
     const updatedPaymentTerms = payment_terms !== undefined ? payment_terms : order.payment_terms;
+    const providedRequiredAmount = Number(required_downpayment_amount);
+    const existingRequiredAmount = Number(order.required_downpayment_amount ?? order.downpayment_amount);
+    const defaultRequiredAmount = updatedPaymentTerms === "full_payment" ? updatedTotalAmount : updatedTotalAmount * 0.5;
+    const updatedRequiredAmount = Math.min(
+      updatedTotalAmount,
+      Math.max(
+        required_downpayment_amount !== undefined && Number.isFinite(providedRequiredAmount)
+          ? providedRequiredAmount
+          : updatedPaymentTerms === "full_payment"
+            ? updatedTotalAmount
+            : existingRequiredAmount > 0
+              ? existingRequiredAmount
+              : defaultRequiredAmount,
+        0,
+      ),
+    );
     updateData.contract_amount = updatedTotalAmount;
-    updateData.downpayment_amount = updatedPaymentTerms === "full_payment" ? updatedTotalAmount : updatedTotalAmount * 0.5;
+    updateData.downpayment_amount = updatedRequiredAmount;
+    updateData.required_downpayment_amount = updatedRequiredAmount;
 
     Object.assign(order, updateData);
+    if (downpayment_received === true && (Number(order.amount_paid) || 0) < updatedRequiredAmount) {
+      order.amount_paid = updatedRequiredAmount;
+    }
+    if (order.amount_paid === undefined && order.downpayment_received) {
+      order.amount_paid = existingRequiredAmount;
+    }
+    const { requiredAmount, paidAmount } = getOrderPaymentAmounts(order);
+    order.downpayment_received = requiredAmount > 0 && paidAmount >= requiredAmount;
+    order.payment_status = getOrderPaymentStatus(order);
     await order.save();
 
     res.json({ success: true, order });
@@ -1414,7 +1576,7 @@ export const updateOrderProgress = async (req, res) => {
             `Expected resolution: ${expectedResolution}`,
             delayEvent.notes ? `Additional notes: ${delayEvent.notes}` : "",
             "",
-            `Order: ${order.tracking || order._id}`,
+            `Order ID: ${order.tracking || order._id}`,
           ].filter(Boolean).join("\n");
 
           try {
@@ -1486,7 +1648,16 @@ export const generateContract = async (req, res) => {
     order.contract_email_error = "";
     order.contract_terms = contract_terms || "";
     order.contract_amount = Number(contract_amount) || order.total_amount;
-    order.downpayment_amount = order.payment_terms === "full_payment" ? order.contract_amount : order.contract_amount * 0.5;
+    const configuredRequiredAmount = Number(order.required_downpayment_amount ?? order.downpayment_amount);
+    const fallbackRequiredAmount = order.payment_terms === "full_payment"
+      ? order.contract_amount
+      : order.contract_amount * 0.5;
+    const requiredAmount = Math.min(
+      order.contract_amount,
+      Math.max(configuredRequiredAmount > 0 ? configuredRequiredAmount : fallbackRequiredAmount, 0),
+    );
+    order.required_downpayment_amount = requiredAmount;
+    order.downpayment_amount = requiredAmount;
     order.inspection_status = order.inspection_status || "pending";
 
     if (order.status === "contract_sent") {
@@ -1541,7 +1712,7 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
     const customerNameValue = customerName || order.customer_name || "Valued Customer";
-    const orderNumber = order.tracking || "N/A";
+    const orderIdentifier = order.tracking || order._id.toString();
     const contractLink = contractUrl || order.signed_contract_url || "";
     const fromAddress = process.env.EMAIL_FROM || "ACGC Site Inspection <no-reply@acgc.com>";
     const frontendUrl = (process.env.FRONTEND_URL || process.env.CLIENT_URL || "http://localhost:5173").replace(/\/$/, "");
@@ -1552,6 +1723,7 @@ export const sendWalkInApprovalEmail = async (req, res) => {
         <h2 style="color:#dc2626">ACGC Glass &amp; Aluminum Services</h2>
         <p>Hi ${escapeHtml(customerNameValue)},</p>
         <p>Your site inspection contract details are attached as a PDF file.</p>
+        <p><strong>Order ID:</strong> ${escapeHtml(orderIdentifier)}</p>
         <p><a href="${escapeHtml(contractLoginLink)}" style="display:inline-block;background:#dc2626;color:#fff;padding:10px 16px;text-decoration:none;border-radius:6px">Log in to view your contract</a></p>
         <p>Please review the attached document and contact our support team if anything needs to be corrected.</p>
         <p>Thank you,<br/>ACGC Site Inspection Team</p>
@@ -1562,6 +1734,8 @@ export const sendWalkInApprovalEmail = async (req, res) => {
 Hi ${customerNameValue},
 
 Your site inspection contract details are attached as a PDF file.
+
+Order ID: ${orderIdentifier}
 
 Log in to view your contract: ${contractLoginLink}
 

@@ -3,7 +3,8 @@ import logo from "@/assets/images/ACGCLOGO1.png";
 import approvedStamp from "@/assets/approved.png";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 
-function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, darkMode = false }) {
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false }) {
+  const darkMode = false;
   if (!isOpen || !inspection || !contractData) return null;
 
   const formatCurrency = (value) => new Intl.NumberFormat("en-PH", {
@@ -44,7 +45,14 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const isWalkInCustomer = inspection.order_type === "walk_in_customer" || inspection.acceptance_method === "walk_in_signed_contract";
   const actionsAllowed = Boolean(onAccept || onDecline) && isAwaitingCustomerResponse && !isAccepted && !isWalkInCustomer;
   const totalAmount = Number(contractData.totalProjectCost || inspection.total_amount || 0);
-  const downPayment = Number(contractData.downPayment || totalAmount * 0.5);
+  const isFullPaymentMethod = String(inspection.payment_terms || "").trim() === "full_payment";
+  const configuredDownPayment = Number(inspection.required_downpayment_amount ?? inspection.downpayment_amount);
+  const contractDataDownPayment = Number(contractData.downPayment);
+  const fallbackDownPayment = isFullPaymentMethod ? totalAmount : totalAmount * 0.5;
+  const downPayment = Math.min(
+    totalAmount,
+    Math.max(configuredDownPayment > 0 ? configuredDownPayment : contractDataDownPayment > 0 ? contractDataDownPayment : fallbackDownPayment, 0),
+  );
   const isNoWarranty = inspection.warranty_period === "No Warranty";
   const hasCustomWarranty = !isNoWarranty && (inspection.warranty_period === "Custom" || (
     Number.isFinite(Number(inspection.warranty_period)) &&
@@ -61,11 +69,12 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const customerEmail = contractData.customerEmail || inspection.customer_email || "N/A";
   const customerPhone = contractData.customerPhone || inspection.customer_phone || "N/A";
   const siteAddress = contractData.projectLocation || inspection.shipping_address || "N/A";
-  const paymentTerms = contractData.paymentTerms || inspection.payment_terms || "50% downpayment, 50% upon completion";
+  const paymentTerms = contractData.paymentTerms || inspection.payment_terms || (isFullPaymentMethod
+    ? "Full payment is required before project commences."
+    : "50% downpayment, 50% upon completion");
   const siteNotes = inspection.inspection_notes || inspection.site_notes || "No additional site notes provided.";
-  const isFullPaymentMethod = String(inspection.payment_terms || "").trim() === "full_payment";
-  const paymentReceivedLabel = isFullPaymentMethod ? "Full Payment Amount" : "50% Downpayment Required";
-  const balanceLabel = isFullPaymentMethod ? "Balance" : "Balance Upon Completion";
+  const paymentReceivedLabel = isFullPaymentMethod ? "Full Payment Required" : "Required Downpayment";
+  const balanceLabel = isFullPaymentMethod ? "Balance Due" : "Balance Upon Completion";
   const agreedPaymentDate = contractData.agreedPaymentDate || formatDate(inspection.agreed_payment_date, null);
 
   return (
@@ -86,8 +95,8 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             {onDownloadPNG && <button type="button" onClick={onDownloadPNG} className={buttonShellClass}>Download PNG</button>}
             {onPrint && <button type="button" onClick={onPrint} className={buttonShellClass}>Print Contract</button>}
             {onSendToCustomer && (
-              <button type="button" onClick={onSendToCustomer} disabled={isSendingToCustomer || isAwaitingCustomerResponse || isAccepted} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
-                {isSendingToCustomer ? "Sending..." : isAwaitingCustomerResponse ? "Contract Sent to Customer" : "Send Contract to Customer"}
+              <button type="button" onClick={onSendToCustomer} disabled={isSendingToCustomer || isAccepted} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
+                {isSendingToCustomer ? "Sending..." : isAwaitingCustomerResponse ? "Resend Contract to Customer" : "Send Contract to Customer"}
               </button>
             )}
             {isAccepted && <span className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">✓ Contract Accepted &amp; Signed</span>}
@@ -111,6 +120,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             <div><span className={infoLabelClass}>Contract Version</span><p className={infoValueClass}>{inspection.contractVersion || contractData.currentContractVersion || 1}</p></div>
             <div><span className={infoLabelClass}>Generated Date</span><p className={infoValueClass}>{inspection.contractGeneratedAt ? formatDate(inspection.contractGeneratedAt) : contractData.contractDate || "N/A"}</p></div>
             <div><span className={infoLabelClass}>Customer</span><p className={infoValueClass}>{customerName}</p></div>
+            <div><span className={infoLabelClass}>Order ID</span><p className={`${infoValueClass} break-all`}>{inspection.tracking || inspection._id || inspection.id || contractData.orderNumber || "N/A"}</p></div>
           </div>
 
           <header className={`grid grid-cols-[1.35fr_1fr_1.35fr] items-start gap-3 border-b-2 ${darkMode ? "border-[#f8b4b4]" : "border-[#5c1118]"} pb-4`}>
@@ -136,7 +146,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             </div>
             <div>
               <h2 className={sectionLabelClass}>Client</h2>
-              <p className="mt-2 font-bold text-white">{customerName}</p>
+              <p className="mt-2 font-bold text-slate-900">{customerName}</p>
               <p className={subtleTextDarkClass}>{customerEmail} | {customerPhone}</p>
               <p className={subtleTextClass}>{siteAddress}</p>
             </div>
@@ -192,7 +202,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             <p className={`mt-3 text-[10px] ${darkMode ? "text-slate-200" : ""}`}>{paymentTerms}</p>
             <div className="mt-2 grid grid-cols-2 gap-4 text-[10px]">
               <p><span className="font-bold">{paymentReceivedLabel}:</span> {formatCurrency(downPayment)}</p>
-              <p><span className="font-bold">{balanceLabel}:</span> {isFullPaymentMethod ? "Paid in Full" : formatCurrency(totalAmount - downPayment)}</p>
+              <p><span className="font-bold">{balanceLabel}:</span> {formatCurrency(Math.max(totalAmount - downPayment, 0))}</p>
             </div>
             {agreedPaymentDate && (
               <div className={`mt-3 rounded border px-3 py-2 text-[10px] ${darkMode ? "border-amber-500/40 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
@@ -216,7 +226,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
                 </>
               )}
             </div>
-            <div className="mt-3 rounded border border-yellow-300/60 bg-yellow-400/95 px-3 py-2 text-[10px] font-black text-slate-900 shadow-sm">⚠ 50% downpayment is required to start the project based on the stated policy.</div>
+            <div className="mt-3 rounded border border-yellow-300/60 bg-yellow-400/95 px-3 py-2 text-[10px] font-black text-slate-900 shadow-sm">⚠ {isFullPaymentMethod ? "Full payment" : `A downpayment of ${formatCurrency(downPayment)}`} is required to start the project based on the stated policy.</div>
           </section>
 
           <section className={`mt-6 border-t ${darkMode ? "border-slate-600" : "border-slate-300"} pt-4`}>

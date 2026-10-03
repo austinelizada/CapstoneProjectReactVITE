@@ -681,6 +681,10 @@ function Products() {
     const override = Number(product.estimated_price_override || 0);
     if (override > 0) return override;
 
+    if (product.pricing_method === "fixed") {
+      return Number(product.base_price || product.unit_price || product.estimated_price || 0);
+    }
+
     const savedEstimate = Number(product.estimated_price || 0);
     if (savedEstimate > 0) return savedEstimate;
 
@@ -1011,7 +1015,9 @@ function Products() {
     const bladePrice = parseFloat(newProduct.price_per_blade) || 0;
     const basePrice = parseFloat(newProduct.base_price) || 0;
 
-    const result = calculateEstimate({
+    const result = newProduct.pricing_method === "fixed"
+      ? { estimated_area: 0, estimated_price: basePrice }
+      : calculateEstimate({
       productName: newProduct.product_name || newProduct.name,
       categoryKey: newProduct.product_type || newProduct.category,
       variantName: newProduct.variant,
@@ -1024,7 +1030,7 @@ function Products() {
       overrideRate: sqftPrice > 0
         ? sqftPrice
         : (newProduct.pricing_method === 'blade' ? bladePrice : undefined),
-    });
+      });
 
     setNewProduct((prev) => {
       if (prev.estimated_area === result.estimated_area && prev.estimated_price === result.estimated_price) {

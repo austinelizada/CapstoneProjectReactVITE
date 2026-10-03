@@ -775,14 +775,14 @@ function ProgressMonitor() {
                       <th className="p-4 text-left">Site Inspection</th>
                       <th className="p-4 text-left">Est. Installation</th>
                       <th className="p-4 text-left">Progress</th>
-                      <th className="p-4 text-left">Status</th>
+                      {statusFilter === "All" && <th className="p-4 text-left">Status</th>}
                       <th className="p-4 text-center">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {projectLoading && (
                       <tr>
-                        <td className="p-6 text-center text-gray-500" colSpan={8}>
+                        <td className="p-6 text-center text-gray-500" colSpan={statusFilter === "All" ? 8 : 7}>
                           Loading projects...
                         </td>
                       </tr>
@@ -805,7 +805,7 @@ function ProgressMonitor() {
                           </div>
                           <span className="font-semibold text-sm">{project.progress}%</span>
                         </td>
-                        <td className="p-4"><span className="px-3 py-1 rounded-full bg-gray-100">{project.status}</span></td>
+                        {statusFilter === "All" && <td className="p-4"><span className="px-3 py-1 rounded-full bg-gray-100">{project.status}</span></td>}
                         <td className="p-4">
                           <div className="flex justify-center gap-2">
                             <button onClick={() => { setSelectedProject(project); setShowViewModal(true); }} className="bg-blue-100 text-blue-600 p-2 rounded-lg" aria-label={`View ${project.product} progress`}>

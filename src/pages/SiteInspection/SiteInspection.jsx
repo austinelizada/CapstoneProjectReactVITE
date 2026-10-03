@@ -18,7 +18,7 @@ import jsPDF from "jspdf";
 
 import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection, sendWalkInApprovalEmail } from "@/api/orders";
 import { buildContractSnapshot, hasContractSnapshotChanged } from "./contractState";
-import { getCustomerPaymentProof } from "@/pages/Transactions/paymentProofUtils";
+import { getCustomerPaymentProof, getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "@/api/products";
 import { searchCustomers } from "@/api/users";
 import { uploadFiles } from "@/api/uploads";
@@ -48,6 +48,7 @@ const getDefaultInspection = () => ({
   custom_warranty_days: 90,
   has_account_on_website: false,
   downpayment_received: false,
+  required_downpayment_amount: "",
   manual_override: "",
   items: [
     { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, unit_price: 0, area: 0, unit: "sqft", estimation_mode: "auto" },
@@ -147,13 +148,15 @@ const toApiDate = (value) => {
 
 const createContractPrintClone = (element) => {
   const clone = element.cloneNode(true);
-  clone.style.width = `${element.scrollWidth}px`;
+  clone.style.width = "794px";
+  clone.style.maxWidth = "794px";
+  clone.style.boxSizing = "border-box";
   clone.style.height = "auto";
   clone.style.overflow = "visible";
   clone.style.position = "relative";
   clone.style.maxHeight = "none";
-  clone.style.maxWidth = "none";
-
+  clone.style.backgroundColor = "#ffffff";
+  clone.style.color = "#1f2937";
   const wrapper = document.createElement("div");
   wrapper.style.position = "fixed";
   wrapper.style.left = "-9999px";
@@ -163,6 +166,12 @@ const createContractPrintClone = (element) => {
   wrapper.style.zIndex = "-1";
   wrapper.appendChild(clone);
   document.body.appendChild(wrapper);
+  clone.querySelectorAll("*").forEach((child) => {
+    const fontSize = Number.parseFloat(window.getComputedStyle(child).fontSize);
+    if (fontSize >= 8 && fontSize < 11) {
+      child.style.fontSize = "11px";
+    }
+  });
 
   return { wrapper, clone };
 };
@@ -372,6 +381,16 @@ function SiteInspection() {
   const paymentTermsWithAgreedDate = new Set(["full_payment", "installment_3_months", "installment_6_months", "custom_arrangement"]);
   const shouldShowAgreedPaymentDate = (value = "") => paymentTermsWithAgreedDate.has(String(value).trim());
   const isFullPaymentPlan = (value = "") => String(value).trim() === "full_payment";
+  const resolveRequiredPaymentAmount = (terms, total, configuredAmount) => {
+    const safeTotal = Math.max(Number(total) || 0, 0);
+    if (isFullPaymentPlan(terms)) return safeTotal;
+
+    const enteredAmount = Number(configuredAmount);
+    const amount = configuredAmount !== undefined && configuredAmount !== null && configuredAmount !== "" && Number.isFinite(enteredAmount)
+      ? enteredAmount
+      : safeTotal * 0.5;
+    return Math.min(safeTotal, Math.max(Math.round(amount * 100) / 100, 0));
+  };
   const getPaymentTermsLabel = (value = "") => {
     switch (String(value).trim()) {
       case "50%_down_payment":
@@ -729,6 +748,11 @@ function SiteInspection() {
 
   const buildInspectionPayload = async (payload) => {
     const computedTotal = Number(payload.manual_override) || computeTotals().totalEstimate;
+    const requiredDownpaymentAmount = resolveRequiredPaymentAmount(
+      payload.payment_terms,
+      computedTotal,
+      payload.required_downpayment_amount,
+    );
     const basePayload = {
       customer_id: payload.customerId || null,
       customer_email: payload.customerEmail || "",
@@ -761,6 +785,7 @@ function SiteInspection() {
       manual_override: payload.manual_override || "",
       total_amount: computedTotal,
       contract_amount: computedTotal,
+      required_downpayment_amount: requiredDownpaymentAmount,
       downpayment_received: Boolean(payload.downpayment_received),
     };
 
@@ -1197,11 +1222,16 @@ function SiteInspection() {
     const orderDate = order.createdAt ? formatDateToMMDDYYYY(order.createdAt) : "N/A";
     const siteInspectionDate = order.inspection_date ? formatDateToMMDDYYYY(order.inspection_date) : "TBD";
     const projectLocation = order.shipping_address || "N/A";
-    const paymentTerms = order.payment_terms || "Standard payment terms apply.";
+    const paymentTermsKey = String(order.payment_terms || "").trim();
     const agreedPaymentDate = order.agreed_payment_date ? formatDateToMMDDYYYY(order.agreed_payment_date) : null;
     const contractTerms = order.contract_terms || "The terms and conditions outlined by ACGC Glass & Aluminum Services apply to this agreement.";
     const totalProjectCost = Number(order.contract_amount || order.total_amount || 0);
-    const downPayment = Math.round((totalProjectCost * 0.5) * 100) / 100;
+    const downPayment = getPaymentSummary(order).requiredAmount;
+    const paymentTerms = isFullPaymentPlan(paymentTermsKey)
+      ? "Full payment is required before project commences."
+      : !paymentTermsKey || paymentTermsKey === "50%_down_payment"
+        ? `${formatCurrency(downPayment)} downpayment, balance upon completion`
+        : getPaymentTermsLabel(paymentTermsKey);
     const contractNumber = `ACGC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
     const trackingNumber = `TRK-${order.tracking || (order._id?.slice(-4).toUpperCase() || Math.random().toString(36).substring(2, 8).toUpperCase())}`;
     const contractDate = formatDateToMMDDYYYY(new Date());
@@ -1213,7 +1243,7 @@ function SiteInspection() {
       const width = Number(item.width) || 0;
       const height = Number(item.height) || 0;
       const area = Number(item.area) || Math.round(((width * height) / 144) * 100) / 100;
-      const amount = item.is_estimate && Number(item.estimated_price) ? Number(item.estimated_price) : quantity * unitPrice;
+      const amount = Number(item.line_total) || (item.is_estimate && Number(item.estimated_price) ? Number(item.estimated_price) : quantity * unitPrice);
       return {
         name: itemName,
         quantity,
@@ -1396,30 +1426,39 @@ function SiteInspection() {
     const { wrapper, clone } = createContractPrintClone(contractElement);
     try {
       await new Promise((resolve) => setTimeout(resolve, 100));
-      const contractImage = await toJpeg(clone, {
-        pixelRatio: 1.5,
-        quality: 0.9,
-        backgroundColor: "#ffffff",
-      });
+      const exportQualities = [
+        { pixelRatio: 2.25, quality: 0.9 },
+        { pixelRatio: 1.75, quality: 0.86 },
+        { pixelRatio: 1.35, quality: 0.8 },
+      ];
 
-      const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imageProperties = pdf.getImageProperties(contractImage);
-      const imageHeight = (imageProperties.height * pdfWidth) / imageProperties.width;
-      let heightLeft = imageHeight;
-      let position = 0;
+      for (const quality of exportQualities) {
+        const contractImage = await toJpeg(clone, {
+          ...quality,
+          backgroundColor: "#ffffff",
+        });
+        const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        const imageProperties = pdf.getImageProperties(contractImage);
+        const imageHeight = (imageProperties.height * pdfWidth) / imageProperties.width;
+        let heightLeft = imageHeight;
+        let position = 0;
 
-      pdf.addImage(contractImage, "JPEG", 0, position, pdfWidth, imageHeight);
-      heightLeft -= pdfHeight;
-      while (heightLeft > 0) {
-        position -= pdfHeight;
-        pdf.addPage();
         pdf.addImage(contractImage, "JPEG", 0, position, pdfWidth, imageHeight);
         heightLeft -= pdfHeight;
+        while (heightLeft > 0) {
+          position -= pdfHeight;
+          pdf.addPage();
+          pdf.addImage(contractImage, "JPEG", 0, position, pdfWidth, imageHeight);
+          heightLeft -= pdfHeight;
+        }
+
+        const pdfDataUrl = pdf.output("datauristring");
+        if (pdfDataUrl.length <= 12 * 1024 * 1024) return pdfDataUrl;
       }
 
-      return pdf.output("datauristring");
+      throw new Error("The contract PDF is too large to attach to an email.");
     } finally {
       wrapper.remove();
     }
@@ -1559,6 +1598,7 @@ function SiteInspection() {
         }) || isOnlineCustomer,
         isOnlineCustomer,
         downpayment_received: Boolean(inspection.downpayment_received),
+        required_downpayment_amount: inspection.required_downpayment_amount ?? inspection.downpayment_amount ?? "",
         manual_override: inspection.manual_override || "",
         inspection_notes: inspection.inspection_notes || "",
         issues_found: inspection.issues_found || "",
@@ -1876,6 +1916,11 @@ function SiteInspection() {
         inspection_status: editInspection.inspection_date ? "scheduled" : editInspection.inspection_status || undefined,
         estimated_installation_date: toApiDate(editInspection.estimated_installation_date),
         payment_terms: editInspection.payment_terms || undefined,
+        required_downpayment_amount: resolveRequiredPaymentAmount(
+          editInspection.payment_terms,
+          Number(editInspection.manual_override) || computeEditTotals().totalEstimate,
+          editInspection.required_downpayment_amount,
+        ),
         agreed_payment_date: toApiDate(editInspection.agreed_payment_date),
         ...buildWarrantyPayload(editInspection.warranty_period, editInspection.custom_warranty_days),
         downpayment_received: Boolean(editInspection.downpayment_received),
@@ -2899,7 +2944,7 @@ function SiteInspection() {
                     <h3 className={modalSectionTitleClass}>Payment Information</h3>
                     <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                       <span className="mr-2 text-base">💡</span>
-                      Business Policy: {isFullPaymentPlan(newInspection.payment_terms) ? "Full payment is required before project commences." : "A 50% downpayment is required before project commences."}
+                      Business Policy: {isFullPaymentPlan(newInspection.payment_terms) ? "Full payment is required before project commences." : `A downpayment of ${formatCurrency(resolveRequiredPaymentAmount(newInspection.payment_terms, Number(newInspection.manual_override) || computeTotals().totalEstimate, newInspection.required_downpayment_amount))} is required before project commences.`}
                     </div>
 
                     <div className="grid gap-5 md:grid-cols-2">
@@ -2931,12 +2976,19 @@ function SiteInspection() {
                         </span>
                       </div>
                       <div className={`mt-3 flex items-center justify-between gap-4 border-t pt-3 text-[14px] font-bold ${darkMode ? "border-slate-700 text-red-400" : "border-slate-200 text-red-600"}`}>
-                        <span>{isFullPaymentPlan(newInspection.payment_terms) ? "Full Payment Due" : "50% Downpayment Due"}</span>
-                        <span className={`text-[18px] font-black ${darkMode ? "text-red-400" : "text-red-600"}`}>
-                          {isFullPaymentPlan(newInspection.payment_terms)
-                            ? "Paid in Full"
-                            : formatCurrency((Number(newInspection.manual_override) || computeTotals().totalEstimate) * 0.5)}
-                        </span>
+                        <label htmlFor="required-downpayment-amount" className="shrink-0">Required Downpayment</label>
+                        <input
+                          id="required-downpayment-amount"
+                          type="number"
+                          min="0"
+                          max={Number(newInspection.manual_override) || computeTotals().totalEstimate}
+                          step="0.01"
+                          inputMode="decimal"
+                          value={resolveRequiredPaymentAmount(newInspection.payment_terms, Number(newInspection.manual_override) || computeTotals().totalEstimate, newInspection.required_downpayment_amount)}
+                          onChange={(event) => handleInspectionFieldChange("required_downpayment_amount", event.target.value)}
+                          disabled={isFullPaymentPlan(newInspection.payment_terms)}
+                          className={`w-full max-w-[220px] rounded-lg border px-3 py-2 text-right text-base font-black outline-none focus:border-red-500 disabled:opacity-70 ${darkMode ? "border-slate-600 bg-[#122d42] text-red-300" : "border-slate-200 bg-white text-red-600"}`}
+                        />
                       </div>
                     </div>
 
@@ -3052,8 +3104,9 @@ function SiteInspection() {
               inspectionItems.reduce((sum, item) => sum + getInspectionItemTotal(item), 0)
             );
             const isFullPaymentMethod = isFullPaymentPlan(viewInspection.payment_terms);
-            const paymentRequiredAmount = isFullPaymentMethod ? estimatedTotal : estimatedTotal * 0.5;
-            const balance = isFullPaymentMethod ? 0 : estimatedTotal - paymentRequiredAmount;
+            const paymentSummary = getPaymentSummary(viewInspection);
+            const paymentRequiredAmount = paymentSummary.requiredAmount;
+            const balance = paymentSummary.remainingAmount;
             const downPayment = paymentRequiredAmount;
             const paymentReceivedQuestion = getPaymentReceivedQuestion(viewInspection.payment_terms);
             const paymentStatusLabel = getPaymentStatusLabel(viewInspection.payment_terms);
@@ -3077,9 +3130,9 @@ function SiteInspection() {
                     ? "border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-200"
                     : "border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700",
                 };
-            const downpaymentStatus = viewInspection.downpayment_received
+            const downpaymentStatus = paymentSummary.status.key !== "pending"
               ? {
-                  label: "Paid",
+              label: paymentSummary.status.label,
                   className: darkMode
                     ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
                     : "border border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -3295,7 +3348,7 @@ function SiteInspection() {
                         <div className="relative h-10 overflow-hidden rounded-lg border border-rose-200 bg-rose-100">
                           <div className="absolute inset-y-0 left-0 w-1/2 bg-rose-200" />
                           <div className="relative flex h-full items-center justify-between px-3 text-sm font-semibold text-rose-700">
-                            <span>{isFullPaymentMethod ? "Full Payment" : "50% Downpayment"}</span>
+                            <span>{isFullPaymentMethod ? "Full Payment Required" : "Required Downpayment"}</span>
                             <span>{formatCurrency(downPayment)}</span>
                           </div>
                         </div>
@@ -3721,7 +3774,7 @@ function SiteInspection() {
 
                     <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                       <span className="mr-2 text-base">💡</span>
-                      Business Policy: {isFullPaymentPlan(editInspection.payment_terms || "") ? "Full payment is required before project commences." : "A 50% downpayment is required before project commences."}
+                      Business Policy: {isFullPaymentPlan(editInspection.payment_terms || "") ? "Full payment is required before project commences." : `A downpayment of ${formatCurrency(resolveRequiredPaymentAmount(editInspection.payment_terms, Number(editInspection.manual_override) || computeEditTotals().totalEstimate, editInspection.required_downpayment_amount))} is required before project commences.`}
                     </div>
 
                     {(() => {
@@ -3840,12 +3893,19 @@ function SiteInspection() {
                         </span>
                       </div>
                       <div className={`mt-3 flex items-center justify-between gap-4 border-t pt-3 text-[14px] font-bold ${darkMode ? "border-slate-700 text-red-400" : "border-slate-200 text-red-600"}`}>
-                        <span>{isFullPaymentPlan(editInspection.payment_terms || "") ? "Full Payment Due" : "50% Downpayment Due"}</span>
-                        <span className={`text-[18px] font-black ${darkMode ? "text-red-400" : "text-red-600"}`}>
-                          {formatCurrency(isFullPaymentPlan(editInspection.payment_terms || "")
-                            ? (Number(editInspection.manual_override) || computeEditTotals().totalEstimate)
-                            : ((Number(editInspection.manual_override) || computeEditTotals().totalEstimate) * 0.5))}
-                        </span>
+                        <label htmlFor="edit-required-downpayment-amount" className="shrink-0">Required Downpayment</label>
+                        <input
+                          id="edit-required-downpayment-amount"
+                          type="number"
+                          min="0"
+                          max={Number(editInspection.manual_override) || computeEditTotals().totalEstimate}
+                          step="0.01"
+                          inputMode="decimal"
+                          value={resolveRequiredPaymentAmount(editInspection.payment_terms, Number(editInspection.manual_override) || computeEditTotals().totalEstimate, editInspection.required_downpayment_amount)}
+                          onChange={(event) => handleEditChange("required_downpayment_amount", event.target.value)}
+                          disabled={isFullPaymentPlan(editInspection.payment_terms || "")}
+                          className={`w-full max-w-[220px] rounded-lg border px-3 py-2 text-right text-base font-black outline-none focus:border-red-500 disabled:opacity-70 ${darkMode ? "border-slate-600 bg-[#122d42] text-red-300" : "border-slate-200 bg-white text-red-600"}`}
+                        />
                       </div>
                     </div>
 

@@ -73,6 +73,8 @@ import { getCart, saveCart } from "@/api/cart";
 import { formatDateToMMMDDYYYY, formatDateTimeToMMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { buildDelayNotifications, sortCustomerNotificationsNewestFirst } from "@/lib/delayNotifications";
 import { getOrderStatusClasses, getOrderStatusLabel, normalizeOrderStatus, normalizeOrderStatusKey } from "./orderStatusUtils";
+import { getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
+import { buildProductPriceSnapshot, getProductLineTotal } from "@/lib/productPricing";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -197,6 +199,7 @@ function CustomerDashboard() {
     return API_HOST ? `${API_HOST}/${url}` : url;
   };
   const { user, loading, updateProfile, refreshUser, logout } = useAuth();
+  const orderOwnerId = user?.id || user?._id;
   const navigate = useNavigate();
   const location = useLocation();
   const [maintenanceMode, setMaintenanceMode] = useState(false);
@@ -1070,7 +1073,7 @@ function CustomerDashboard() {
   const paginatedProducts = paginateItems(products, productPage, productsPerPage);
 
   useEffect(() => {
-    if (!user) return;
+    if (!orderOwnerId) return;
     let active = true;
 
     const fetchOrders = async () => {
@@ -1092,7 +1095,7 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [orderOwnerId]);
 
   useEffect(() => {
     const orderId = new URLSearchParams(location.search).get("orderId");
@@ -1211,13 +1214,12 @@ function CustomerDashboard() {
       customized: Boolean(options.customized),
     });
 
-    return {
+    const orderItem = {
       ...product,
       _id: product?._id,
       product_id: product?._id,
       name: product?.name || product?.product_name || "Product",
       quantity,
-      unit_price: Number(product?.unit_price || product?.price_per_sqft || options.unit_price || 0),
       unit: product?.unit || "piece",
       category: product?.category || "",
       product_type: product?.product_type || "",
@@ -1231,6 +1233,10 @@ function CustomerDashboard() {
       notes: options.notes || "",
       estimated_price: Number(options.estimated_price) || 0,
       is_estimate: Boolean(options.is_estimate || dimensions.customized),
+    };
+    return {
+      ...orderItem,
+      ...buildProductPriceSnapshot(product || {}, orderItem),
     };
   };
 
@@ -1292,13 +1298,19 @@ function CustomerDashboard() {
       quantity: parsedQuantity,
       blade_count: product.blade_count || 0,
       base_price: product.base_price || undefined,
-      overrideRate: product.price_per_sqft || (product.unit_price ? Number(product.unit_price) / 144 : undefined),
+      overrideRate: getProductEstimateRate(product),
       customization: product.customization || false,
       customization_fee: product.customization_fee || 0,
     });
     
     const area = estimationResult.estimated_area || 0;
-    const estimated_price = estimationResult.estimated_price || 0;
+    const estimated_price = getProductLineTotal(product, {
+      width: parsedWidth,
+      height: parsedHeight,
+      measurement_unit: measurementUnit,
+      quantity: parsedQuantity,
+      customized: true,
+    }) || estimationResult.estimated_price || 0;
 
     setCartItems((prev) => [
       ...prev,
@@ -1542,11 +1554,18 @@ function CustomerDashboard() {
           quantity: parsedQuantity,
           blade_count: cartDecisionProduct.blade_count || 0,
           base_price: cartDecisionProduct.base_price || undefined,
-          overrideRate: cartDecisionProduct.price_per_sqft || (cartDecisionProduct.unit_price ? Number(cartDecisionProduct.unit_price) / 144 : undefined),
+          overrideRate: getProductEstimateRate(cartDecisionProduct),
           customization: cartDecisionProduct.customization || false,
           customization_fee: cartDecisionProduct.customization_fee || 0,
         });
 
+        const estimatedPrice = getProductLineTotal(cartDecisionProduct, {
+          width: parsedWidth,
+          height: parsedHeight,
+          measurement_unit: estimateForm.unit,
+          quantity: parsedQuantity,
+          customized: true,
+        }) || estimationResult.estimated_price || 0;
         const item = buildCustomerOrderItem(cartDecisionProduct, {
           quantity: parsedQuantity,
           width: parsedWidth,
@@ -1554,7 +1573,7 @@ function CustomerDashboard() {
           measurementUnit: estimateForm.unit,
           customized: true,
           area: estimationResult.estimated_area || 0,
-          estimated_price: estimationResult.estimated_price || 0,
+          estimated_price: estimatedPrice,
           notes: estimateForm.notes || "",
           is_estimate: true,
         });
@@ -1841,15 +1860,18 @@ function CustomerDashboard() {
     if (!orderNowProduct) return;
 
     const quantity = Math.max(1, Number(orderNowQuantity) || 1);
-    const unit_price = Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0);
+    const dimensions = getProductDefaultDimensions(orderNowProduct, quantity);
+    const lineTotal = getProductLineTotal(orderNowProduct, dimensions);
 
     const item = buildCustomerOrderItem(orderNowProduct, {
       quantity,
+      width: dimensions.width,
+      height: dimensions.height,
+      measurementUnit: dimensions.unit,
       area: 0,
-      estimated_price: 0,
+      estimated_price: lineTotal,
       notes: "",
       is_estimate: false,
-      unit_price,
     });
 
     if (!areOrderItemDimensionsValid(item.dimensions)) {
@@ -2135,11 +2157,13 @@ function CustomerDashboard() {
       return;
     }
 
-    const paymentBaseAmount = Number(order?.contract_amount || order?.total_amount || 0);
-    const requiredPaymentAmount = Number(order?.downpayment_amount || order?.downpayment)
-      || (order?.payment_terms === "full_payment" ? paymentBaseAmount : paymentBaseAmount * 0.5);
-    if (Math.round(normalizedAmount * 100) !== Math.round(requiredPaymentAmount * 100)) {
-      setPaymentProofError(`Please enter the exact required payment amount: ${formatRequiredPaymentAmount(requiredPaymentAmount)}.`);
+    const paymentSummary = getPaymentSummary(order);
+    if (Math.round(normalizedAmount * 100) > Math.round(paymentSummary.remainingAmount * 100)) {
+      setPaymentProofError(`Payment cannot exceed the remaining balance of ${formatRequiredPaymentAmount(paymentSummary.remainingAmount)}.`);
+      return;
+    }
+    if (order.payment_proof_submitted_at && !isPaymentProofConfirmed(order)) {
+      setPaymentProofError("Your previous payment is awaiting confirmation before another payment can be submitted.");
       return;
     }
 
@@ -2171,12 +2195,13 @@ function CustomerDashboard() {
 
       const savedOrder = response.order || {
         ...order,
-        payment_status: "paid",
+        payment_status: paymentSummary.status.key,
         payment_proof_amount: normalizedAmount,
         payment_proof_file_name: uploadedFileName,
         payment_proof_file_url: uploadedFileUrl,
         payment_method: "Cash",
       };
+      const savedPaymentStatus = savedOrder.payment_status || paymentSummary.status.key;
 
       setOrders((prev) =>
         prev.map((entry) => {
@@ -2185,7 +2210,7 @@ function CustomerDashboard() {
             return {
               ...entry,
               ...savedOrder,
-              payment_status: "paid",
+              payment_status: savedPaymentStatus,
               payment_proof_amount: normalizedAmount,
               payment_proof_file_name: uploadedFileName,
               payment_proof_file_url: uploadedFileUrl,
@@ -2202,7 +2227,7 @@ function CustomerDashboard() {
             ? {
                 ...prev,
                 ...savedOrder,
-                payment_status: "paid",
+                payment_status: savedPaymentStatus,
                 payment_proof_amount: normalizedAmount,
                 payment_proof_file_name: uploadedFileName,
                 payment_proof_file_url: uploadedFileUrl,
@@ -2293,7 +2318,24 @@ function CustomerDashboard() {
     }
   };
 
-  const getProductPrice = (product) => (product.unit_price != null ? `₱${Number(product.unit_price).toLocaleString()}` : "Contact us");
+  const getProductPrice = (product) => {
+    if (!product) return "Contact us";
+    const dimensions = getProductDefaultDimensions(product, 1);
+    const price = getProductLineTotal(product, dimensions);
+    return price > 0 ? formatCurrency(price) : "Contact us";
+  };
+
+  const getProductEstimateRate = (product) => {
+    const pricingMethod = String(product?.pricing_method || "").toLowerCase();
+    const legacyUnit = String(product?.unit || "").toLowerCase();
+    if (pricingMethod === "sqft" || (!pricingMethod && legacyUnit === "per_sqft")) {
+      return Number(product?.price_per_sqft) || undefined;
+    }
+    if (pricingMethod === "blade" || (!pricingMethod && legacyUnit === "per_blade")) {
+      return Number(product?.price_per_blade) || undefined;
+    }
+    return undefined;
+  };
 
   const getProductUnitRate = (product) => {
     const pricePerSqft = Number(product.price_per_sqft) || 0;
@@ -2443,6 +2485,13 @@ function CustomerDashboard() {
   function getItemPriceValue(item) {
     if (!item) return 0;
 
+    if (item.cartId) {
+      return getProductLineTotal(item, item);
+    }
+    if (Number(item.line_total) > 0) {
+      return Number(item.line_total);
+    }
+
     const quantity = Number(item.quantity || item.qty || 1) || 1;
     const normalizedArea = Number(item.area || 0) || 0;
     const itemHeight = Number(item.height ?? item.dimensions?.height ?? 0) || 0;
@@ -2472,7 +2521,7 @@ function CustomerDashboard() {
     }
 
     if (productRate > 0 && derivedArea > 0) {
-      return productRate * derivedArea;
+      return productRate * derivedArea * quantity;
     }
 
     if (productUnitPrice > 0) {
@@ -2488,6 +2537,9 @@ function CustomerDashboard() {
 
   function getOrderTotalValue(order) {
     if (!order) return 0;
+
+    const savedTotal = Number(order.contract_amount || order.total_amount || 0);
+    if (savedTotal > 0) return savedTotal;
 
     const orderItems = Array.isArray(order.items) ? order.items : [];
     if (orderItems.length > 0) {
@@ -2537,7 +2589,7 @@ function CustomerDashboard() {
       height: item.height || "—",
       area: item.area || 0,
       unitPrice: Number(item.unit_price || 0),
-      amount: Number(item.is_estimate ? item.estimated_price || 0 : (item.quantity || 0) * Number(item.unit_price || 0)),
+      amount: Number(item.line_total || (item.is_estimate ? item.estimated_price : 0) || (item.quantity || 0) * Number(item.unit_price || 0)),
     }));
 
     const contractStatusRaw = String(order.contract_status || "").trim();
@@ -2735,6 +2787,26 @@ function CustomerDashboard() {
   const pageStart = (safeOrderPage - 1) * ORDER_PAGE_SIZE;
   const pagedFilteredOrders = filteredOrders.slice(pageStart, pageStart + ORDER_PAGE_SIZE);
 
+  const openOrderDetailsFromNotification = (order) => {
+    const orderIdentifier = getOrderIdentifier(order);
+    const myOrders = orders.filter((entry) =>
+      !["installation", "completed", "cancelled"].includes(normalizeOrderStatus(entry?.status)),
+    );
+    const targetOrders = myOrders.some((entry) => getOrderIdentifier(entry) === orderIdentifier)
+      ? myOrders
+      : orders;
+    const orderIndex = targetOrders.findIndex(
+      (entry) => getOrderIdentifier(entry) === orderIdentifier,
+    );
+
+    setTrackingNumber("");
+    setOrderFilter(targetOrders === myOrders ? "order" : "all");
+    setOrderPage(orderIndex >= 0 ? Math.floor(orderIndex / ORDER_PAGE_SIZE) + 1 : 1);
+    setSelectedOrderForModal(null);
+    setExpandedOrderId(orderIdentifier);
+    setActiveTab("orders");
+  };
+
   const orderViewClass = orderViewMode === "view2"
     ? "grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
     : orderViewMode === "view3"
@@ -2757,7 +2829,7 @@ function CustomerDashboard() {
   const estimateTotalAreaSelectedUnit = estimateAreaSelectedUnit * estimateQuantity;
   
   // Use comprehensive calculateEstimate like admin does
-  const estimateResult = cartDecisionProduct ? calculateEstimate({
+  const rawEstimateResult = cartDecisionProduct ? calculateEstimate({
     productName: cartDecisionProduct.product_name || cartDecisionProduct.name,
     categoryKey: cartDecisionProduct.product_type || cartDecisionProduct.category,
     variantName: cartDecisionProduct.variant,
@@ -2767,14 +2839,26 @@ function CustomerDashboard() {
     quantity: estimateQuantity,
     blade_count: cartDecisionProduct.blade_count || 0,
     base_price: cartDecisionProduct.base_price || undefined,
-    overrideRate: cartDecisionProduct.price_per_sqft || (cartDecisionProduct.unit_price ? Number(cartDecisionProduct.unit_price) / 144 : undefined),
+    overrideRate: getProductEstimateRate(cartDecisionProduct),
     customization: cartDecisionProduct.customization || false,
     customization_fee: cartDecisionProduct.customization_fee || 0,
   }) : { estimated_area: 0, estimated_price: 0, rate: 0, areaDisplay: '—', rateNote: '' };
+  const estimateResult = cartDecisionProduct
+    ? {
+        ...rawEstimateResult,
+        estimated_price: getProductLineTotal(cartDecisionProduct, {
+          width: estimateWidth,
+          height: estimateHeight,
+          measurement_unit: estimateForm.unit,
+          quantity: estimateQuantity,
+          customized: true,
+        }),
+      }
+    : rawEstimateResult;
 
   const productEstimatorWidth = Number(productEstimatorForm.width) || 0;
   const productEstimatorHeight = Number(productEstimatorForm.height) || 0;
-  const productEstimatorResult = selectedProduct ? calculateEstimate({
+  const rawProductEstimatorResult = selectedProduct ? calculateEstimate({
     productName: selectedProduct.product_name || selectedProduct.name,
     categoryKey: selectedProduct.product_type || selectedProduct.category,
     variantName: selectedProduct.variant,
@@ -2784,10 +2868,22 @@ function CustomerDashboard() {
     quantity: 1,
     blade_count: selectedProduct.blade_count || 0,
     base_price: selectedProduct.base_price || undefined,
-    overrideRate: selectedProduct.price_per_sqft || (selectedProduct.unit_price ? Number(selectedProduct.unit_price) / 144 : undefined),
+    overrideRate: getProductEstimateRate(selectedProduct),
     customization: selectedProduct.customization || false,
     customization_fee: selectedProduct.customization_fee || 0,
   }) : null;
+  const productEstimatorResult = selectedProduct
+    ? {
+        ...rawProductEstimatorResult,
+        estimated_price: getProductLineTotal(selectedProduct, {
+          width: productEstimatorWidth,
+          height: productEstimatorHeight,
+          measurement_unit: productEstimatorForm.unit,
+          quantity: 1,
+          customized: true,
+        }),
+      }
+    : null;
 
   const estimateArea = estimateResult.estimated_area || 0;
   const estimateTotalArea = estimateArea;
@@ -2834,7 +2930,12 @@ function CustomerDashboard() {
   const estimateInstallationFee = Number(cartDecisionProduct?.installation_fee || 0);
   const estimateSubtotal = Math.max(0, estimateTotalCost - estimateCustomizationFee);
   const estimateGrandTotal = estimateTotalCost + estimateInstallationFee;
-  const orderNowSubtotal = orderNowProduct ? Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0) : 0;
+  const orderNowSubtotal = orderNowProduct
+    ? getProductLineTotal(orderNowProduct, {
+        ...getProductDefaultDimensions(orderNowProduct, Math.max(1, Number(orderNowQuantity) || 1)),
+        quantity: Math.max(1, Number(orderNowQuantity) || 1),
+      })
+    : 0;
   const orderNowAdditionalCharges = Number(orderNowProduct?.customization_fee || 0);
   const orderNowInstallationFee = Number(orderNowProduct?.installation_fee || 0);
   const orderNowGrandTotal = orderNowSubtotal + orderNowAdditionalCharges + orderNowInstallationFee;
@@ -3174,16 +3275,8 @@ function CustomerDashboard() {
                               key={order.notificationId}
                               onClick={() => {
                                 markCustomerNotificationRead(order.notificationId);
-                                if (isPaymentNotification) {
-                                  const orderId = order._id || order.id || order.tracking;
-                                  setOrderFilter("all");
-                                  setOrderPage(1);
-                                  setSelectedOrderForModal(null);
-                                  setExpandedOrderId(orderId);
-                                } else if (isContractNotification && canShowContractForOrder(order)) {
-                                  setContractHistoryTab("accepted");
-                                  setWarrantyHistoryTab(null);
-                                  setActiveTab("contracts");
+                                if (isPaymentNotification || isContractNotification) {
+                                  openOrderDetailsFromNotification(order);
                                 } else {
                                   setSelectedOrderForModal(order);
                                   setActiveTab("orders");
@@ -4603,8 +4696,8 @@ function CustomerDashboard() {
 
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div className="rounded-3xl bg-white p-4 border border-gray-200">
-                          <p className="text-xs uppercase tracking-[0.24em] text-gray-500">Unit Price</p>
-                          <p className="mt-2 text-lg font-semibold text-gray-900">{orderNowProduct ? `₱${Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Contact us"}</p>
+                          <p className="text-xs uppercase tracking-[0.24em] text-gray-500">Unit Rate</p>
+                          <p className="mt-2 text-lg font-semibold text-gray-900">{orderNowProduct ? getProductUnitRate(orderNowProduct) : "Contact us"}</p>
                         </div>
                         <div className="rounded-3xl bg-white p-4 border border-gray-200">
                           <p className="text-xs uppercase tracking-[0.24em] text-gray-500">Unit</p>
@@ -4652,17 +4745,17 @@ function CustomerDashboard() {
                     <div className="space-y-6 rounded-[32px] border border-gray-200 bg-white p-6 shadow-sm">
                       <div className="rounded-3xl bg-gradient-to-r from-red-600 to-red-700 p-5 text-white">
                         <p className="text-sm uppercase tracking-[0.24em] text-red-100">Order snapshot</p>
-                        <p className="mt-3 text-3xl font-bold">{orderNowProduct ? `₱${(Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00"}</p>
+                        <p className="mt-3 text-3xl font-bold">{formatCurrency(orderNowSubtotal)}</p>
                       </div>
 
                       <div className="grid gap-3">
                         <div className="rounded-3xl bg-gray-50 p-4 border border-gray-200">
                           <p className="text-xs uppercase tracking-[0.24em] text-gray-500">Estimated total</p>
-                          <p className="mt-2 text-lg font-semibold text-gray-900">{orderNowProduct ? `₱${(Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00"}</p>
+                          <p className="mt-2 text-lg font-semibold text-gray-900">{formatCurrency(orderNowSubtotal)}</p>
                         </div>
                         <div className="rounded-3xl bg-gray-50 p-4 border border-gray-200">
                           <p className="text-xs uppercase tracking-[0.24em] text-gray-500">Downpayment</p>
-                          <p className="mt-2 text-lg font-semibold text-gray-900">{orderNowProduct ? `₱${(Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0) * 0.5).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00"}</p>
+                          <p className="mt-2 text-lg font-semibold text-gray-900">{formatCurrency(orderNowSubtotal * 0.5)}</p>
                         </div>
                       </div>
 
@@ -5075,7 +5168,7 @@ function CustomerDashboard() {
                           <p className="shrink-0 text-base font-bold text-red-600">
                             {reviewOrderMode === "orderNow"
                               ? orderNowProduct
-                                ? `₱${(Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                ? formatCurrency(orderNowSubtotal)
                                 : "₱0.00"
                               : estimateTotalCost
                                 ? `₱${estimateTotalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -5093,7 +5186,7 @@ function CustomerDashboard() {
                           <span className="text-red-600">
                             {reviewOrderMode === "orderNow"
                               ? orderNowProduct
-                                ? `₱${(Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                ? formatCurrency(orderNowSubtotal)
                                 : "₱0.00"
                               : estimateTotalCost
                                 ? `₱${estimateTotalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -5105,7 +5198,7 @@ function CustomerDashboard() {
                           <span className="text-red-600">
                             {reviewOrderMode === "orderNow"
                               ? orderNowProduct
-                                ? `₱${(Math.max(1, Number(orderNowQuantity) || 1) * Number(orderNowProduct.unit_price || orderNowProduct.price_per_sqft || 0) * 0.5).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                ? formatCurrency(orderNowSubtotal * 0.5)
                                 : "₱0.00"
                               : estimateTotalCost
                                 ? `₱${(estimateTotalCost * 0.5).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -5293,22 +5386,22 @@ function CustomerDashboard() {
                   const orderItems = Array.isArray(order.items) ? order.items : [];
                   const isOrderExpanded = expandedOrderId === orderId;
                   const orderTotal = getOrderTotalValue(order);
-                  const recordedPaidAmount = Number(order.paid_amount || order.amount_paid || order.downpayment_amount || order.downpayment || 0) || 0;
-                  const downpaymentAmount = Math.max(recordedPaidAmount, Number(order.downpayment_amount || order.downpayment || 0) || orderTotal * 0.5);
-                  const paymentBaseAmount = Number(order.contract_amount || order.total_amount || orderTotal);
-                  const requiredPaymentAmount = Number(order.downpayment_amount || order.downpayment)
-                    || (order.payment_terms === "full_payment" ? paymentBaseAmount : paymentBaseAmount * 0.5);
-                  const balanceAmount = Math.max(0, orderTotal - downpaymentAmount);
-                  const isFullyPaid = orderTotal > 0 && downpaymentAmount >= orderTotal;
-                  const paymentStatus = (() => {
-                    if (isFullyPaid) {
-                      return { label: "FULLY PAID", className: darkMode ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border border-emerald-200 bg-emerald-50 text-emerald-700" };
-                    }
-                    if (downpaymentAmount > 0) {
-                      return { label: "Downpayment", className: darkMode ? "border border-violet-500/40 bg-violet-500/10 text-violet-200" : "border border-violet-200 bg-violet-50 text-violet-800" };
-                    }
-                    return { label: "PENDING PAYMENT", className: darkMode ? "border border-violet-300/40 bg-violet-200/15 text-violet-200" : "border border-violet-200 bg-violet-50 text-violet-800" };
-                  })();
+                  const paymentSummary = getPaymentSummary(order);
+                  const downpaymentAmount = paymentSummary.paidAmount;
+                  const requiredPaymentAmount = paymentSummary.requiredAmount;
+                  const balanceAmount = paymentSummary.remainingAmount;
+                  const isFullyPaid = paymentSummary.status.key === "paid";
+                  const paymentStatusClasses = {
+                    paid: darkMode ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border border-emerald-200 bg-emerald-50 text-emerald-700",
+                    pending: darkMode ? "border border-amber-500/40 bg-amber-500/10 text-amber-200" : "border border-amber-200 bg-amber-50 text-amber-800",
+                    partial_downpayment: darkMode ? "border border-amber-500/40 bg-amber-500/10 text-amber-200" : "border border-amber-200 bg-amber-50 text-amber-800",
+                    downpayment: darkMode ? "border border-violet-500/40 bg-violet-500/10 text-violet-200" : "border border-violet-200 bg-violet-50 text-violet-800",
+                    partial: darkMode ? "border border-sky-500/40 bg-sky-500/10 text-sky-200" : "border border-sky-200 bg-sky-50 text-sky-800",
+                  };
+                  const paymentStatus = {
+                    label: paymentSummary.status.label,
+                    className: paymentStatusClasses[paymentSummary.status.key],
+                  };
                   const isBatchOrder = orderItems.length > 1;
                   const orderDisplayName = isBatchOrder ? "Batch Order" : product.name || product.product_name || "Project item";
                   const orderDisplayQuantity = isBatchOrder ? `${orderItems.length} items` : product.quantity ? `Qty ${product.quantity}` : "Qty 1";
@@ -5516,8 +5609,9 @@ function CustomerDashboard() {
                               <span className="text-lg font-bold text-red-600">{formatCurrency(orderTotal)}</span>
                             </div>
                             <div className="flex flex-col gap-1">
-                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Downpayment paid</span>
+                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount paid</span>
                               <span className="text-lg font-bold text-emerald-600">{formatCurrency(downpaymentAmount)}</span>
+                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Required downpayment: {formatCurrency(requiredPaymentAmount)}</span>
                             </div>
                             <div className="flex flex-col gap-1">
                               <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Balance</span>
@@ -5551,7 +5645,7 @@ function CustomerDashboard() {
                                   </a>
                                 )}
                               </div>
-                            ) : paymentProofSubmission || lastPaymentProofUrl ? (
+                            ) : (paymentProofSubmission || lastPaymentProofUrl) && !isPaymentProofConfirmed(order) ? (
                               <div className={`rounded-xl border px-4 py-3 text-sm font-medium sm:col-span-2 ${darkMode ? "border-sky-800 bg-sky-950/50 text-sky-200" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
                                 <p>
                                   We've notified admin that you paid {formatCurrency(paymentProofSubmission?.amount ?? order.payment_proof_amount ?? 0)}. This is pending confirmation — we'll notify you here once it's verified.
@@ -5576,7 +5670,7 @@ function CustomerDashboard() {
                                       Amount paid <span className="text-red-500">(required)</span>
                                     </label>
                                     <p className={`mb-1.5 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                                      Enter exactly {formatRequiredPaymentAmount(requiredPaymentAmount)}.
+                                      Required downpayment: {formatRequiredPaymentAmount(requiredPaymentAmount)}. Enter any amount up to {formatRequiredPaymentAmount(balanceAmount)}.
                                     </p>
                                     <input
                                       id={`payment-amount-${orderId}`}
@@ -6475,16 +6569,8 @@ function CustomerDashboard() {
                               <button
                                 onClick={() => {
                                   markCustomerNotificationRead(order.notificationId);
-                                  if (isPaymentNotification) {
-                                    const orderId = order._id || order.id || order.tracking;
-                                    setOrderFilter("all");
-                                    setOrderPage(1);
-                                    setSelectedOrderForModal(null);
-                                    setExpandedOrderId(orderId);
-                                  } else if (isContractNotification && canShowContractForOrder(order)) {
-                                    setContractHistoryTab("accepted");
-                                    setWarrantyHistoryTab(null);
-                                    setActiveTab("contracts");
+                                  if (isPaymentNotification || isContractNotification) {
+                                    openOrderDetailsFromNotification(order);
                                   } else {
                                     setSelectedOrderForModal(order);
                                     setActiveTab("orders");
