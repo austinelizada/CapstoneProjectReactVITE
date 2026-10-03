@@ -14,6 +14,7 @@ import { uploadFiles } from "@/api/uploads";
 import ProgressViewModal from "../../components/ProgressViewModal";
 import ProgressEditModal from "../../components/ProgressEditModal";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -230,6 +231,7 @@ const isSameProjectRow = (currentProject, targetProject) => {
 };
 
 function ProgressMonitor() {
+  const isMobile = useIsMobile();
   const { user } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
@@ -296,8 +298,9 @@ function ProgressMonitor() {
   const firstIndex =
     lastIndex - rowsPerPage;
 
-  const currentProjects =
-    filteredProjects.slice(
+  const currentProjects = isMobile
+    ? filteredProjects
+    : filteredProjects.slice(
       firstIndex,
       lastIndex
     );
@@ -887,7 +890,7 @@ function ProgressMonitor() {
 
             {/* PAGINATION */}
 
-            <div className="flex justify-center items-center p-4 border-t bg-gray-50 gap-4">
+            <div className="hidden justify-center items-center p-4 border-t bg-gray-50 gap-4 md:flex">
 
               <span>
                 Page {currentPage} of {totalPages}

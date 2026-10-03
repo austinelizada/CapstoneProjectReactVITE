@@ -28,8 +28,10 @@ import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed } from "./paymentProofUtils";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 function Transactions() {
+  const isMobile = useIsMobile();
   const { user } = useAuth();
   const { darkMode } = useAdminTheme();
   const [isSidebarOpen, setIsSidebarOpen] =
@@ -129,6 +131,33 @@ function Transactions() {
     });
 
     return status === "completed" || progress >= 100 || allBatchItemsCompleted;
+  };
+
+  const getFeedbackEntries = (order) => {
+    const entries = [];
+    const hasOrderReview = order.review?.submittedAt || order.review?.rating;
+    if (hasOrderReview) {
+      entries.push({
+        ...order,
+        review: order.review,
+        reviewItemIndex: null,
+        reviewProductName: order.items?.length > 1
+          ? "Batch order"
+          : order.items?.[0]?.name || order.items?.[0]?.product_name || "Project",
+      });
+    }
+
+    (order.items || []).forEach((item, itemIndex) => {
+      if (!item?.review?.submittedAt && !item?.review?.rating) return;
+      entries.push({
+        ...order,
+        review: item.review,
+        reviewItemIndex: itemIndex,
+        reviewProductName: item.name || item.product_name || `Product ${itemIndex + 1}`,
+      });
+    });
+
+    return entries;
   };
 
   const hasAcceptedContract = (order) => {
@@ -345,13 +374,26 @@ function Transactions() {
 
     setFeedbackDeleting(true);
     try {
-      await deleteOrderReview(orderId);
+      const response = await deleteOrderReview(orderId, feedbackDeleteOrder.reviewItemIndex);
       setOrders((previous) => previous.map((order) =>
         order._id === orderId || order.id === orderId
-          ? { ...order, review: null }
+          ? response.order || (
+            Number.isInteger(feedbackDeleteOrder.reviewItemIndex)
+              ? {
+                  ...order,
+                  items: order.items.map((item, itemIndex) => itemIndex === feedbackDeleteOrder.reviewItemIndex
+                    ? { ...item, review: null }
+                    : item),
+                }
+              : { ...order, review: null }
+          )
           : order
       ));
-      recordActivity(user, `Deleted customer feedback for order ${feedbackDeleteOrder.tracking || orderId}.`, "Transactions");
+      recordActivity(
+        user,
+        `Deleted customer feedback for ${feedbackDeleteOrder.reviewProductName || "order"} ${feedbackDeleteOrder.tracking || orderId}.`,
+        "Transactions",
+      );
       setFeedbackPreviewOrder((previous) =>
         previous && (previous._id === orderId || previous.id === orderId) ? null : previous
       );
@@ -704,8 +746,7 @@ function Transactions() {
     return (
       hasVerifiedContractAcceptance(o) &&
       !blockedStatuses.includes(status) &&
-      !blockedStatuses.includes(orderStatus) &&
-      !isCompletedProject(o)
+      !blockedStatuses.includes(orderStatus)
     );
   });
 
@@ -726,7 +767,7 @@ function Transactions() {
 
   // Completed projects: orders that are completed by status or progress
   const completedProjects = transactionOrders.filter((o) => isCompletedProject(o));
-  const feedbackOrders = transactionOrders.filter((o) => o.review?.submittedAt || o.review?.rating);
+  const feedbackOrders = transactionOrders.flatMap(getFeedbackEntries);
   const financialTotals = financialOrders.reduce((totals, order) => {
     const total = getTransactionTotal(order);
     const collected = getConfirmedPayment(order);
@@ -753,7 +794,7 @@ function Transactions() {
     if (!tableSearch) return true;
     const query = tableSearch.toLowerCase();
     const customer = (order.customer_name || order.customer?.first_name || "").toString().toLowerCase();
-    const products = (order.items || []).map((item) => item.name || item.product_name || "").join(" ").toLowerCase();
+    const products = (order.reviewProductName || "").toLowerCase();
     const tracking = (order.tracking || "").toString().toLowerCase();
     const title = (order.review?.title || "").toLowerCase();
     const comment = (order.review?.comment || "").toLowerCase();
@@ -845,8 +886,17 @@ function Transactions() {
 
   const cancelledTotalPagesFiltered = Math.max(1, Math.ceil(filteredCancelled.length / rowsPerPage));
 
-  const currentData =
-    activeTable === "all"
+  const currentData = isMobile
+    ? activeTable === "all"
+      ? filteredAllOrders
+      : activeTable === "receipts"
+        ? filteredReceipts
+        : activeTable === "projects"
+          ? filteredCompleted
+          : activeTable === "feedback"
+            ? filteredFeedbackOrders
+            : filteredCancelled
+    : activeTable === "all"
       ? currentAll
       : activeTable === "receipts"
       ? currentReceipts
@@ -1334,17 +1384,14 @@ function Transactions() {
                       const showNeedsConfirmation = Boolean(order.payment_proof_submitted_at && !isPaymentProofConfirmed(order));
 
                       return (
-                        <tr key={order._id || index} className="border-t hover:bg-gray-50">
+                        <tr key={activeTable === "feedback" ? `${order._id || order.id || index}-${Number.isInteger(order.reviewItemIndex) ? `item-${order.reviewItemIndex}` : "order-review"}` : order._id || index} className="border-t hover:bg-gray-50">
                           {activeTable === "feedback" ? (
                             <>
                               <td className="p-4">{renderClientCell(order, customerName)}</td>
                               <td className="p-4">
                                 <div className="space-y-1">
-                                  {(order.items || []).map((item, itemIndex) => (
-                                    <div key={`${item.product_id || item.name || itemIndex}`} className="font-semibold text-slate-900">
-                                      {item.name || item.product_name || "Product"}
-                                    </div>
-                                  ))}
+                                  <div className="font-semibold text-slate-900">{order.reviewProductName || "Order feedback"}</div>
+                                  <div className="text-xs text-slate-500">{Number.isInteger(order.reviewItemIndex) ? "Product review" : "Order review"}</div>
                                   <div className="text-xs text-slate-500">Order ID: {order.tracking || order._id || order.id || "—"}</div>
                                 </div>
                               </td>
@@ -1371,10 +1418,10 @@ function Transactions() {
                               </td>
                               <td className="p-4 text-center">
                                 <div className="flex justify-center gap-2">
-                                  <button type="button" onClick={() => setFeedbackPreviewOrder(order)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${darkMode ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25" : "bg-blue-100 text-blue-600 hover:bg-blue-200"}`} aria-label={`View feedback from ${customerName}`} title="View feedback">
+                                  <button type="button" onClick={() => setFeedbackPreviewOrder(order)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${darkMode ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25" : "bg-blue-100 text-blue-600 hover:bg-blue-200"}`} aria-label={`View feedback for ${order.reviewProductName || "order"} from ${customerName}`} title="View feedback">
                                     <Eye size={17} aria-hidden="true" />
                                   </button>
-                                  <button type="button" onClick={() => setFeedbackDeleteOrder(order)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-100 text-red-600 hover:bg-red-200"}`} aria-label={`Delete feedback from ${customerName}`} title="Delete Customer Feedback">
+                                  <button type="button" onClick={() => setFeedbackDeleteOrder(order)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-100 text-red-600 hover:bg-red-200"}`} aria-label={`Delete feedback for ${order.reviewProductName || "order"} from ${customerName}`} title="Delete Customer Feedback">
                                     <Trash2 size={17} aria-hidden="true" />
                                   </button>
                                 </div>
@@ -1404,6 +1451,37 @@ function Transactions() {
             <div className="space-y-3 p-3 md:hidden">
               {currentData.map((order, index) => {
                 const customerName = order.customer_name || (order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : "N/A");
+                if (activeTable === "feedback") {
+                  const feedbackRowKey = `${order._id || order.id || index}-${Number.isInteger(order.reviewItemIndex) ? `item-${order.reviewItemIndex}` : "order-review"}`;
+                  return (
+                    <article key={feedbackRowKey} className={`rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{order.reviewProductName || "Order feedback"}</p>
+                          <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{customerName} · {order.tracking || order._id || order.id || "—"}</p>
+                        </div>
+                        <span className="shrink-0 text-xs font-semibold text-slate-500">{order.review?.submittedAt ? formatDateToMMMDDYYYY(order.review.submittedAt) : "—"}</span>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-1" aria-label={`${Number(order.review?.rating || 0)} out of 5 stars`}>
+                          {Array.from({ length: 5 }, (_, starIndex) => (
+                            <Star key={starIndex} size={14} className={starIndex < Number(order.review?.rating || 0) ? "fill-amber-400 text-amber-400" : "text-slate-300"} />
+                          ))}
+                          <span className="ml-1 text-xs font-semibold">{Number(order.review?.rating || 0)}/5</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => setFeedbackPreviewOrder(order)} aria-label={`View feedback for ${order.reviewProductName || "order"}`} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${darkMode ? "bg-blue-500/15 text-blue-300" : "bg-blue-100 text-blue-600"}`}>
+                            <Eye size={17} aria-hidden="true" />
+                          </button>
+                          <button type="button" onClick={() => setFeedbackDeleteOrder(order)} aria-label={`Delete feedback for ${order.reviewProductName || "order"}`} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg ${darkMode ? "bg-red-500/15 text-red-300" : "bg-red-100 text-red-600"}`}>
+                            <Trash2 size={17} aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                      {order.review?.comment && <p className={`mt-2 line-clamp-2 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{order.review.comment}</p>}
+                    </article>
+                  );
+                }
                 const productLabel = Array.isArray(order.items) && order.items.length > 0 ? (order.items.length > 1 ? "Batch Order" : (order.items[0].name || order.items[0].product_name || "Project")) : "N/A";
                 const paymentSummary = getPaymentSummary(order);
                 const amountVal = paymentSummary.totalAmount;
@@ -1451,7 +1529,7 @@ function Transactions() {
 
             {/* Pagination */}
 
-            <div className="flex justify-center items-center p-4 border-t bg-gray-50 gap-4">
+            <div className="hidden justify-center items-center p-4 border-t bg-gray-50 gap-4 md:flex">
 
               <span className="text-sm text-gray-600">
                 Page {" "}
@@ -1873,7 +1951,7 @@ function Transactions() {
                       <div className="flex items-start justify-between gap-4">
                         <dt className={`shrink-0 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Product / Project</dt>
                         <dd className="min-w-0 text-right font-medium">
-                          {(feedbackPreviewOrder.items || []).map((item) => item.name || item.product_name).filter(Boolean).join(", ") || "N/A"}
+                          {feedbackPreviewOrder.reviewProductName || (feedbackPreviewOrder.items || []).map((item) => item.name || item.product_name).filter(Boolean).join(", ") || "N/A"}
                         </dd>
                       </div>
                       <div className="flex items-center justify-between gap-4">
@@ -1962,9 +2040,11 @@ function Transactions() {
                 aria-describedby="delete-feedback-description"
                 className={`w-full max-w-md rounded-2xl border p-5 ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
               >
-                <h2 id="delete-feedback-title" className="text-lg font-semibold">Delete Customer Feedback?</h2>
+                <h2 id="delete-feedback-title" className="text-lg font-semibold">
+                  Delete {Number.isInteger(feedbackDeleteOrder.reviewItemIndex) ? "Product" : "Customer"} Feedback?
+                </h2>
                 <p id="delete-feedback-description" className={`mt-2 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                  This will permanently remove {feedbackDeleteOrder.customer_name || `${feedbackDeleteOrder.customer?.first_name || ""} ${feedbackDeleteOrder.customer?.last_name || ""}`.trim() || "Customer"}'s feedback. This action cannot be undone.
+                  This will permanently remove feedback from {feedbackDeleteOrder.customer_name || `${feedbackDeleteOrder.customer?.first_name || ""} ${feedbackDeleteOrder.customer?.last_name || ""}`.trim() || "Customer"} for {feedbackDeleteOrder.reviewProductName || "this order"}. This action cannot be undone.
                 </p>
                 <div className="mt-5 flex justify-end gap-2">
                   <button

@@ -23,6 +23,8 @@ import {
   Plus,
   Minus,
   FileText,
+  Eye,
+  Pencil,
   Bell,
   Check,
   CheckCheck,
@@ -68,6 +70,7 @@ import { calculateEstimate } from "@/lib/estimator";
 import { buildOrderTimelineStages, calculateStageProgressPercent } from "@/lib/orderTimeline";
 import { getProgressColor } from "@/lib/utils";
 import { paginateItems } from "@/lib/pagination";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { getSystemSettings, getSystemSettingsEventsUrl } from "@/api/users";
 import { getCart, saveCart } from "@/api/cart";
 import { formatDateToMMMDDYYYY, formatDateTimeToMMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
@@ -180,6 +183,7 @@ const renderRatingStars = (rating = 0, size = 18) => {
 };
 
 function CustomerDashboard() {
+  const isMobile = useIsMobile();
   const API_HOST = (function getApiHost() {
     try {
       return (API_BASE || "").replace(/\/api$/, "");
@@ -341,6 +345,7 @@ function CustomerDashboard() {
   const [paymentProofLoading, setPaymentProofLoading] = useState(false);
   const [paymentProofSuccessByOrder, setPaymentProofSuccessByOrder] = useState({});
   const [showCustomerReviewModal, setShowCustomerReviewModal] = useState(false);
+  const [reviewDetailsOrder, setReviewDetailsOrder] = useState(null);
   const [showProductReviewModal, setShowProductReviewModal] = useState(false);
   const [selectedReviewRatingTab, setSelectedReviewRatingTab] = useState(0);
   const [reviewOrderMode, setReviewOrderMode] = useState("estimate");
@@ -402,6 +407,7 @@ function CustomerDashboard() {
     (safeContractPage - 1) * CONTRACT_PAGE_SIZE,
     safeContractPage * CONTRACT_PAGE_SIZE
   );
+  const displayedContracts = isMobile ? contractsInTab : paginatedContracts;
 
   useEffect(() => {
     setContractPage(1);
@@ -829,6 +835,11 @@ function CustomerDashboard() {
     return Boolean(order?.review?.submittedAt);
   };
 
+  const hasAnyOrderReview = (order) => Boolean(
+    order?.review?.submittedAt ||
+    (Array.isArray(order?.items) && order.items.some((_, index) => getOrderItemReview(order, index)?.submittedAt))
+  );
+
   const openCustomerReviewModal = (order, itemIndex = null) => {
     if (!canUploadFeedback) {
       showPermissionNotice("Feedback access is disabled for your account.");
@@ -870,6 +881,25 @@ function CustomerDashboard() {
 
     setBatchReviewSession({ itemIndexes, currentPosition: 0 });
     openCustomerReviewModal(order, itemIndexes[0]);
+  };
+
+  const openOrderReviewDetails = (order, itemIndex = null) => {
+    const reviewItemIndex = Array.isArray(order?.items) && order.items.length > 1
+      ? itemIndex
+      : null;
+    const review = Number.isInteger(reviewItemIndex)
+      ? getOrderItemReview(order, reviewItemIndex)
+      : order?.review || order?.items?.[0]?.review;
+    if (!review?.submittedAt) return;
+
+    setReviewDetailsOrder({
+      ...order,
+      review,
+      reviewItemIndex,
+      reviewProductName: Number.isInteger(reviewItemIndex)
+        ? order.items[reviewItemIndex]?.name || order.items[reviewItemIndex]?.product_name || `Product ${reviewItemIndex + 1}`
+        : order.items?.[0]?.name || order.items?.[0]?.product_name || "Project",
+    });
   };
 
   const closeCustomerReviewModal = () => {
@@ -1166,6 +1196,7 @@ function CustomerDashboard() {
   }, [searchQuery, categoryFilter, canUploadFeedback]);
 
   const paginatedProducts = paginateItems(products, productPage, productsPerPage);
+  const displayedProducts = isMobile ? products : paginatedProducts.items;
 
   useEffect(() => {
     if (!orderOwnerId) return;
@@ -2871,6 +2902,7 @@ function CustomerDashboard() {
     if (orderFilter === "all") return true;
     if (orderFilter === "order") return !["installation", "completed", "cancelled"].includes(status);
     if (orderFilter === "review") return isOrderCompletedAndReviewable(order) && !hasOrderReview(order);
+    if (orderFilter === "reviewed") return hasAnyOrderReview(order);
     if (orderFilter === "completed") return status === "completed" && (hasOrderReview(order) || !isOrderCompletedAndReviewable(order));
     if (orderFilter === "cancel") return status === "cancelled";
     return true;
@@ -2881,6 +2913,7 @@ function CustomerDashboard() {
   const safeOrderPage = Math.min(Math.max(1, orderPage), orderPageCount);
   const pageStart = (safeOrderPage - 1) * ORDER_PAGE_SIZE;
   const pagedFilteredOrders = filteredOrders.slice(pageStart, pageStart + ORDER_PAGE_SIZE);
+  const displayedOrders = isMobile ? filteredOrders : pagedFilteredOrders;
 
   const openOrderDetailsFromNotification = (order) => {
     const orderIdentifier = getOrderIdentifier(order);
@@ -2912,6 +2945,7 @@ function CustomerDashboard() {
     { value: "order", label: "My Orders" },
     { value: "review", label: "To Review" },
     { value: "completed", label: "Completed" },
+    { value: "reviewed", label: "Reviewed Product" },
     { value: "cancel", label: "Cancelled" },
   ];
 
@@ -3746,7 +3780,7 @@ function CustomerDashboard() {
               ) : (
                 <>
                   <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-                    {paginatedProducts.items.map((product) => (
+                    {displayedProducts.map((product) => (
                       <div
                         key={product._id || product.name}
                         className={`group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition duration-300 ease-out hover:-translate-y-1 ${
@@ -3828,7 +3862,7 @@ function CustomerDashboard() {
                     ))}
                   </div>
 
-                  {products.length > 0 && (
+                  {products.length > 0 && !isMobile && (
                     <div className={`mt-8 grid gap-4 rounded-[20px] border p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)] md:grid-cols-[1fr_auto_1fr] md:items-center ${
                       darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"
                     }`}>
@@ -5475,7 +5509,7 @@ function CustomerDashboard() {
               </div>
             ) : (
               <div className="space-y-4">
-                {pagedFilteredOrders.map((order, index) => {
+                {displayedOrders.map((order, index) => {
                   const orderId = getOrderIdentifier(order, `order-${index}`);
                   const product = order.items?.[0] || {};
                   const orderItems = Array.isArray(order.items) ? order.items : [];
@@ -5633,16 +5667,13 @@ function CustomerDashboard() {
                             </div>
                             <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
                               {isOnlineContractAccepted && (
-                                <div className={`inline-flex max-w-full flex-wrap items-center justify-start gap-3 rounded-xl border px-4 py-3 text-sm font-bold ${darkMode ? "border-emerald-700/60 bg-emerald-950/20 text-emerald-300" : "border-emerald-200/70 bg-emerald-50/40 text-emerald-700"}`}>
-                                  <span>✓ Contract Accepted &amp; Signed</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => openContractModal(order)}
-                                    className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${darkMode ? "border-emerald-600 text-emerald-200 hover:bg-emerald-900/50" : "border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50"}`}
-                                  >
-                                    View Contract
-                                  </button>
-                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => openContractModal(order)}
+                                  className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+                                >
+                                  View Contract
+                                </button>
                               )}
                               <button
                                 type="button"
@@ -5702,27 +5733,56 @@ function CustomerDashboard() {
                                     <p className="text-sm font-bold text-red-600">
                                       {formatCurrency(getItemPriceValue(item))}
                                     </p>
-                                    {isBatchOrder && canUploadFeedback && isProjectFinished && isOrderCompletedAndReviewable(order) && (
-                                      getOrderItemReview(order, itemIndex)?.submittedAt
-                                        ? isOrderReviewEditable(order, itemIndex)
-                                          ? (
+                                    {canUploadFeedback && isProjectFinished && isOrderCompletedAndReviewable(order) && (
+                                      orderFilter === "reviewed"
+                                        ? getOrderItemReview(order, itemIndex)?.submittedAt && (
+                                          <div className="mt-1 flex justify-end gap-1.5 sm:gap-3">
                                             <button
                                               type="button"
-                                              onClick={() => openCustomerReviewModal(order, itemIndex)}
-                                              className={`mt-1 text-xs font-semibold underline underline-offset-2 ${darkMode ? "text-amber-300" : "text-amber-700"}`}
+                                              onClick={() => openOrderReviewDetails(order, itemIndex)}
+                                              aria-label={`View review for ${item.name || item.product_name || `Product ${itemIndex + 1}`}`}
+                                              title="View review"
+                                              className={`inline-flex size-8 items-center justify-center rounded-lg text-xs font-semibold sm:h-auto sm:w-auto sm:justify-start sm:rounded-none sm:p-0 sm:underline sm:underline-offset-2 ${darkMode ? "text-sky-300 hover:bg-slate-700 sm:hover:bg-transparent" : "text-sky-700 hover:bg-sky-50 sm:hover:bg-transparent"}`}
                                             >
-                                              Edit review
+                                              <Eye size={13} aria-hidden="true" />
+                                              <span className="hidden sm:inline">View review</span>
                                             </button>
-                                          )
-                                          : <span className={`mt-1 block text-xs font-semibold ${darkMode ? "text-emerald-300" : "text-emerald-700"}`}>Reviewed</span>
-                                        : (
-                                          <button
-                                            type="button"
-                                            onClick={() => openCustomerReviewModal(order, itemIndex)}
-                                            className={`mt-1 text-xs font-semibold underline underline-offset-2 ${darkMode ? "text-amber-300" : "text-amber-700"}`}
-                                          >
-                                            Review product
-                                          </button>
+                                            {isOrderReviewEditable(order, itemIndex) && (
+                                              <button
+                                                type="button"
+                                                onClick={() => openCustomerReviewModal(order, itemIndex)}
+                                                aria-label={`Edit review for ${item.name || item.product_name || `Product ${itemIndex + 1}`}`}
+                                                title="Edit review"
+                                                className={`inline-flex size-8 items-center justify-center rounded-lg text-xs font-semibold sm:h-auto sm:w-auto sm:justify-start sm:rounded-none sm:p-0 sm:underline sm:underline-offset-2 ${darkMode ? "text-amber-300 hover:bg-slate-700 sm:hover:bg-transparent" : "text-amber-700 hover:bg-amber-50 sm:hover:bg-transparent"}`}
+                                              >
+                                                <Pencil size={12} aria-hidden="true" />
+                                                <span className="hidden sm:inline">Edit review</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        )
+                                        : isBatchOrder && (
+                                          getOrderItemReview(order, itemIndex)?.submittedAt
+                                            ? isOrderReviewEditable(order, itemIndex)
+                                              ? (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => openCustomerReviewModal(order, itemIndex)}
+                                                  className={`mt-1 text-xs font-semibold underline underline-offset-2 ${darkMode ? "text-amber-300" : "text-amber-700"}`}
+                                                >
+                                                  Edit review
+                                                </button>
+                                              )
+                                              : <span className={`mt-1 block text-xs font-semibold ${darkMode ? "text-emerald-300" : "text-emerald-700"}`}>Reviewed</span>
+                                            : (
+                                              <button
+                                                type="button"
+                                                onClick={() => openCustomerReviewModal(order, itemIndex)}
+                                                className={`mt-1 text-xs font-semibold underline underline-offset-2 ${darkMode ? "text-amber-300" : "text-amber-700"}`}
+                                              >
+                                                Review product
+                                              </button>
+                                            )
                                         )
                                     )}
                                   </div>
@@ -5890,7 +5950,7 @@ function CustomerDashboard() {
               </div>
             )}
 
-            {!ordersLoading && (
+            {!ordersLoading && !isMobile && (
               <div className={`mt-auto flex flex-wrap items-center justify-center gap-3 rounded-xl border px-3 py-2.5 ${darkMode ? "border-slate-700 bg-slate-800/90" : "border-slate-200 bg-white"}`}>
                 <p className={`text-xs font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                   Showing {filteredOrders.length ? pageStart + 1 : 0}-{Math.min(pageStart + ORDER_PAGE_SIZE, filteredOrders.length)} of {filteredOrders.length} orders
@@ -5976,6 +6036,96 @@ function CustomerDashboard() {
             getItemDimension={getConfirmationItemDimensionText}
             fallbackImage={PRODUCT_IMAGE_PLACEHOLDER}
           />
+        )}
+
+        {reviewDetailsOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="customer-review-details-title"
+              className={`flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+            >
+              <header className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                <div className="min-w-0">
+                  <h2 id="customer-review-details-title" className="text-lg font-bold">Your product review</h2>
+                  <p className={`mt-1 truncate text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                    {reviewDetailsOrder.reviewProductName} · {reviewDetailsOrder.tracking || reviewDetailsOrder._id || reviewDetailsOrder.id || "Order"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewDetailsOrder(null)}
+                  aria-label="Close review details"
+                  className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                >
+                  <X size={17} aria-hidden="true" />
+                </button>
+              </header>
+
+              <div className="flex-1 space-y-4 overflow-y-auto p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-1" aria-label={`${Number(reviewDetailsOrder.review?.rating || 0)} out of 5 stars`}>
+                    {renderRatingStars(reviewDetailsOrder.review?.rating, 20)}
+                    <span className={`ml-1 text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                      {Number(reviewDetailsOrder.review?.rating || 0)}/5
+                    </span>
+                  </div>
+                  <span className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                    {reviewDetailsOrder.review?.submittedAt ? formatDateToMMMDDYYYY(reviewDetailsOrder.review.submittedAt) : "—"}
+                  </span>
+                </div>
+                {reviewDetailsOrder.review?.title && <h3 className="text-base font-semibold">{reviewDetailsOrder.review.title}</h3>}
+                <p className={`whitespace-pre-line break-words text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                  {reviewDetailsOrder.review?.comment || "No written feedback."}
+                </p>
+                <section>
+                  <h3 className={`mb-2 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>Photos</h3>
+                  {(reviewDetailsOrder.review?.photos || []).length > 0 ? (
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      {reviewDetailsOrder.review.photos.map((photo, index) => (
+                        <a
+                          key={`${photo}-${index}`}
+                          href={ensureAbsoluteUrl(photo)}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Open review photo ${index + 1}`}
+                          className={`aspect-square overflow-hidden rounded-lg border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}
+                        >
+                          <img src={ensureAbsoluteUrl(photo)} alt={`Review photo ${index + 1}`} className="h-full w-full object-cover" />
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className={`text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No photos submitted.</p>
+                  )}
+                </section>
+              </div>
+
+              <footer className={`flex justify-end gap-2 border-t px-5 py-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
+                <button
+                  type="button"
+                  onClick={() => setReviewDetailsOrder(null)}
+                  className={`rounded-lg border px-4 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+                >
+                  Close
+                </button>
+                {canUploadFeedback && isOrderReviewEditable(reviewDetailsOrder, reviewDetailsOrder.reviewItemIndex) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const order = reviewDetailsOrder;
+                      setReviewDetailsOrder(null);
+                      openCustomerReviewModal(order, order.reviewItemIndex);
+                    }}
+                    className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800"
+                  >
+                    Edit Review
+                  </button>
+                )}
+              </footer>
+            </section>
+          </div>
         )}
 
         {showCustomerReviewModal && canUploadFeedback && selectedReviewOrder && (
@@ -7293,7 +7443,7 @@ function CustomerDashboard() {
             ) : (
               <>
                 <div className={`space-y-3 rounded-[28px] border p-3 shadow-[0_18px_45px_rgba(127,29,29,0.08)] sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-red-200 bg-slate-50"}`}>
-                {paginatedContracts.map((order) => {
+                {displayedContracts.map((order) => {
                   const product = order.items?.[0] || {};
                   const statusLabel = getContractStatusLabel(order);
                   const statusClass = normalizeOrderStatusKey(order?.contract_status) === "accepted" || normalizeOrderStatusKey(order?.status) === "contract_accepted"
@@ -7347,7 +7497,7 @@ function CustomerDashboard() {
                 })}
                 </div>
 
-                {contractPageCount > 1 && (
+                {contractPageCount > 1 && !isMobile && (
                   <div className={`mt-4 flex flex-wrap items-center justify-center gap-2 rounded-2xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                     <button
                       type="button"
@@ -7382,7 +7532,8 @@ function CustomerDashboard() {
           </>
         )}
 
-        <footer className={`relative left-1/2 -mb-6 ${activeTab === "orders" ? "mt-0" : "mt-8"} w-screen -translate-x-1/2 overflow-hidden bg-[#232b3d] text-white`}>
+        {!isMobile && (
+          <footer className={`relative left-1/2 -mb-6 ${activeTab === "orders" ? "mt-0" : "mt-8"} w-screen -translate-x-1/2 overflow-hidden bg-[#232b3d] text-white`}>
           <div className="mx-auto max-w-7xl px-8 pt-8 pb-5">
             <div className="grid grid-cols-1 gap-8 sm:grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
               <div className="min-w-0">
@@ -7419,7 +7570,8 @@ function CustomerDashboard() {
               © 2026 ACGC Aluminum Services — All Rights Reserved.
             </div>
           </div>
-        </footer>
+          </footer>
+        )}
 
         <ContractModal
           isOpen={showContractModal}

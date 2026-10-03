@@ -406,20 +406,16 @@ function Settings() {
                       );
                     })}
                   </RadioGroup.Root>
+                </div>
+                <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={handleCreateBackup}
+                    onClick={handleBackupNow}
                     disabled={loadingBackupSettings || creatingBackup}
-                    className={`flex min-h-[84px] items-center gap-3 rounded-2xl border p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none ${darkMode ? "border-red-700/70 bg-red-950/35 hover:border-red-500 hover:bg-red-950/55" : "border-brand/50 bg-brand/[0.08] hover:border-brand hover:bg-brand/15"}`}
+                    className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-red-800 hover:bg-red-700" : "bg-brand hover:bg-red-900"}`}
                   >
-                    <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl text-white ${darkMode ? "bg-red-800" : "bg-brand"}`}>
-                      {creatingBackup ? <Loader2 aria-hidden="true" className="size-5 animate-spin" /> : <Database aria-hidden="true" className="size-5" />}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className={`block text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>Full System</span>
-                      <span className={`mt-1 block text-[13px] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Complete system snapshot</span>
-                    </span>
-                    <span className={`text-xs font-semibold ${darkMode ? "text-red-300" : "text-brand"}`}>{creatingBackup ? "Creating..." : "Create"}</span>
+                    {creatingBackup ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Database aria-hidden="true" className="size-4" />}
+                    {creatingBackup ? "Creating backup..." : "Back Up Now"}
                   </button>
                 </div>
               </section>
@@ -821,19 +817,25 @@ function Settings() {
     }
   };
 
-  const handleCreateBackup = async () => {
-    const backupType = "Full System";
+  const handleBackupNow = async () => {
+    if (creatingBackup || loadingBackupSettings) return;
+    const backupType = backupOptions.find((option) => option.id === backupState.selectedSchedule)?.label;
+    if (!backupType) return;
+
     setCreatingBackup(true);
     try {
       const response = await createSystemBackup(backupType);
-      setBackupState({
-        selectedSchedule: response.backup_schedule || backupState.selectedSchedule,
+      setBackupState((current) => ({
+        ...current,
+        selectedSchedule: response.backup_schedule || current.selectedSchedule,
         status: response.backup_status || "Success",
         lastBackupAt: response.last_backup_at || response.backup?.date || null,
-        backups: Array.isArray(response.backup_history) ? response.backup_history : [response.backup, ...(backupState.backups || [])],
-      });
-      recordActivity(user, "Created a full system backup.", "Settings");
-      toast.success("Backup created successfully.");
+        backups: Array.isArray(response.backup_history)
+          ? response.backup_history
+          : [response.backup, ...(current.backups || [])].filter(Boolean),
+      }));
+      recordActivity(user, `Created an immediate ${backupType.toLowerCase()} backup.`, "Settings");
+      toast.success(`${backupType} backup created successfully.`);
     } catch (error) {
       toast.error(error?.data?.message || error?.message || "Unable to create backup.");
     } finally {

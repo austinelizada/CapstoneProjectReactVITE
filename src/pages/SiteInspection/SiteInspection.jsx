@@ -31,6 +31,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 const getDefaultInspection = () => ({
   customerId: null,
@@ -282,6 +283,7 @@ export const isSiteInspectionVisible = (order) => {
 };
 
 function SiteInspection() {
+  const isMobile = useIsMobile();
   const { user } = useAuth();
   const { darkMode } = useAdminTheme();
   const navigate = useNavigate();
@@ -2002,6 +2004,7 @@ function SiteInspection() {
   const totalPages = Math.max(1, Math.ceil(filteredList.length / pageSize));
   const currentPageIndex = Math.min(Math.max(currentPage, 1), totalPages);
   const paginatedList = filteredList.slice((currentPageIndex - 1) * pageSize, currentPageIndex * pageSize);
+  const visibleInspections = isMobile ? filteredList : paginatedList;
   const visibleRecordStart = filteredList.length === 0 ? 0 : (currentPageIndex - 1) * pageSize + 1;
   const visibleRecordEnd = Math.min(currentPageIndex * pageSize, filteredList.length);
 
@@ -2374,7 +2377,7 @@ function SiteInspection() {
                     ) : !filteredList.length ? (
                       <tr><td colSpan={11} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No records in this tab.</td></tr>
                     ) : (
-                      paginatedList.map((inspection, index) => {
+                      visibleInspections.map((inspection, index) => {
                         const clientName = inspection.customer ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim() || inspection.customer.email || inspection.customer_name || "Customer" : inspection.customer_name || inspection.customer_email || "Customer";
                         const trackingId = inspection.tracking || inspection.order_number || inspection.orderId || `SI-${String((inspection._id || inspection.id || "")).slice(-8).toUpperCase()}`;
                         const phone = inspection.customer?.phone || inspection.customer_phone || "—";
@@ -2417,7 +2420,7 @@ function SiteInspection() {
                 <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">Loading inspections...</div>
               ) : !filteredList.length ? (
                 <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">No records in this tab.</div>
-              ) : paginatedList.map((inspection, index) => {
+              ) : visibleInspections.map((inspection, index) => {
                 const clientName = inspection.customer ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim() || inspection.customer.email || inspection.customer_name || "Customer" : inspection.customer_name || inspection.customer_email || "Customer";
                 const trackingId = inspection.tracking || inspection.order_number || inspection.orderId || `SI-${String((inspection._id || inspection.id || "")).slice(-8).toUpperCase()}`;
                 const inspectionDate = formatDateToMMMDDYYYY(inspection.inspection_date) || "—";
@@ -2456,7 +2459,7 @@ function SiteInspection() {
               })}
             </div>
 
-            <div className={`flex flex-col gap-3 justify-center items-center border-t p-4 sm:flex-row ${darkMode ? "border-slate-700 bg-[#0b2338]" : "border-slate-200 bg-gray-50"}`}>
+            <div className={`hidden flex-col gap-3 justify-center items-center border-t p-4 md:flex md:flex-row ${darkMode ? "border-slate-700 bg-[#0b2338]" : "border-slate-200 bg-gray-50"}`}>
               <div className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                 Showing {visibleRecordStart} - {visibleRecordEnd} of {filteredList.length} records
               </div>

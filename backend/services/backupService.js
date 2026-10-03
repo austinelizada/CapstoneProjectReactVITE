@@ -394,7 +394,6 @@ const getScheduledBackupKey = (schedule, date) => {
 };
 
 const isScheduledBackupDue = (schedule, date) => {
-  if (date.getHours() !== 0) return false;
   if (schedule === "weekly") return date.getDay() === 0;
   if (schedule === "monthly") return date.getDate() === 1;
   if (schedule === "yearly") return date.getMonth() === 11 && date.getDate() === 31;

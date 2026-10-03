@@ -27,6 +27,7 @@ import {
   deleteProduct as deleteProductApi,
 } from "@/api/products";
 import { recordActivity } from "@/lib/activityLog";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -585,6 +586,7 @@ function ProductFormModal({
 }
 
 function Products() {
+  const isMobile = useIsMobile();
   const { darkMode } = useAdminTheme();
   const API_HOST = (function getApiHost() {
     try {
@@ -1108,8 +1110,9 @@ function Products() {
   const firstIndex =
     lastIndex - rowsPerPage;
 
-  const currentProducts =
-    filteredProducts.slice(
+  const currentProducts = isMobile
+    ? filteredProducts
+    : filteredProducts.slice(
       firstIndex,
       lastIndex
     );
@@ -1700,7 +1703,7 @@ function Products() {
               </div>
 
               {/* PAGINATION */}
-              <div className={`mt-6 flex flex-col items-center justify-center gap-3 border-t p-4 sm:flex-row ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-gray-50"}`}>
+              <div className={`${isMobile ? "hidden" : "mt-6 flex flex-col items-center justify-center gap-3 border-t p-4 sm:flex-row"} ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-gray-50"}`}>
                 <span className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                   Showing {firstShown}-{lastShown} of {filteredProducts.length} products
                 </span>

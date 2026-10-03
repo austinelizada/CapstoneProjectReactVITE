@@ -851,31 +851,21 @@ export const submitOrderReview = async (req, res) => {
     const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
     const customerEmail = req.user.email || order.customer_email || "";
 
-    const sendReviewNotifications = async () => {
-      try {
-        await sendMail({
-          to: adminEmail,
-          subject: `New customer review received for ${productName || order.tracking}`,
-          text: reviewMessage,
-        });
-      } catch (mailError) {
-        console.error("Review notification email failed:", mailError);
-      }
-
-      if (!customerEmail) return;
-      try {
-        await sendMail({
-          to: customerEmail,
-          subject: "Thank you for your review",
-          text: `Thank you for your feedback on order ${order.tracking || order._id}. Your review has been submitted successfully.\nOrder ID: ${order.tracking || order._id}`,
-        });
-      } catch (mailError) {
-        console.error("Customer review confirmation email failed:", mailError);
-      }
-    };
-
-    void sendReviewNotifications();
     res.json({ success: true, order });
+
+    void sendMail({
+      to: adminEmail,
+      subject: `New customer review received for ${productName || order.tracking}`,
+      text: reviewMessage,
+    }).catch((mailError) => console.error("Review notification email failed:", mailError));
+
+    if (customerEmail) {
+      void sendMail({
+        to: customerEmail,
+        subject: "Thank you for your review",
+        text: `Thank you for your feedback on order ${order.tracking || order._id}. Your review has been submitted successfully.\nOrder ID: ${order.tracking || order._id}`,
+      }).catch((mailError) => console.error("Customer review confirmation email failed:", mailError));
+    }
   } catch (error) {
     console.error("Submit order review error:", error);
     res.status(500).json({ success: false, message: "Unable to submit review.", error: error.message });

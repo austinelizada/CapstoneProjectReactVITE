@@ -21,8 +21,10 @@ import { formatDateTimeToMMMDDYYYY } from "@/lib/dateUtils";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 function AdminProfile() {
+  const isMobile = useIsMobile();
   const activityPageSize = 5;
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -242,10 +244,12 @@ function AdminProfile() {
     Math.ceil(filteredActivityLog.length / activityPageSize),
   );
   const currentActivityPage = Math.min(activityPage, activityPageCount);
-  const visibleActivity = filteredActivityLog.slice(
-    (currentActivityPage - 1) * activityPageSize,
-    currentActivityPage * activityPageSize,
-  );
+  const visibleActivity = isMobile
+    ? filteredActivityLog
+    : filteredActivityLog.slice(
+      (currentActivityPage - 1) * activityPageSize,
+      currentActivityPage * activityPageSize,
+    );
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -787,7 +791,7 @@ function AdminProfile() {
                         </div>
                       )}
 
-                      {filteredActivityLog.length > 0 && (
+                      {filteredActivityLog.length > 0 && !isMobile && (
                         <div className="flex items-center justify-end gap-4 pt-2">
                           <span className="text-sm text-gray-500">
                             Page {currentActivityPage} of {activityPageCount}
