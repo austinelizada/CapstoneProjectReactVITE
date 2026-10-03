@@ -44,9 +44,19 @@ function Sidebar({ isOpen, onToggle }) {
     window.location.assign("/dashboard");
   };
 
+  const mobileNavItems = [
+    canViewStaffModule("dashboard") && { to: "/dashboard", label: "Dashboard", icon: <Gauge size={20} />, active: location.pathname === "/dashboard" },
+    canViewStaffModule("site_inspection") && { to: "/site-inspection", label: "Inspection", icon: <ClipboardCheck size={20} />, active: location.pathname === "/site-inspection" },
+    canViewStaffModule("transactions") && { to: "/transactions", label: "Transactions", icon: <ReceiptText size={20} />, active: location.pathname === "/transactions" },
+    canViewStaffModule("progress_monitoring") && { to: "/progress-monitor", label: "Monitor", icon: <ChartNoAxesCombined size={20} />, active: location.pathname === "/progress-monitor" },
+    canViewStaffModule("product_management") && { to: "/product", label: "Products", icon: <Package size={20} />, active: location.pathname === "/product" },
+    canViewStaffModule("profile") && { to: "/profile", label: user?.role === "skilled_worker" ? "Profile" : "Profile", icon: <UserCog size={20} />, active: location.pathname === "/profile" },
+    canViewStaffModule("settings") && { to: "/settings", label: "Settings", icon: <Settings size={20} />, active: location.pathname === "/settings" },
+  ].filter(Boolean);
+
   return (
     <>
-      <div className={`relative shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none ${isOpen ? "w-52" : "w-20"}`}>
+      <div className={`relative hidden shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:block ${isOpen ? "w-52" : "w-20"}`}>
         <aside
           className={`admin-sidebar relative h-full min-h-screen w-full border-r shadow-sm overflow-hidden ${darkMode ? "border-red-950/70 bg-gradient-to-b from-[#050817] via-[#10162d] to-[#3b0b1b] text-slate-100" : "border-slate-300 bg-gradient-to-b from-slate-100 via-white to-slate-200 text-slate-900"}`}
         >
@@ -173,6 +183,25 @@ function Sidebar({ isOpen, onToggle }) {
           {isOpen ? <ChevronLeft size={18} aria-hidden="true" /> : <ChevronRight size={18} aria-hidden="true" />}
         </button>
       </div>
+
+      <nav
+        aria-label="Admin navigation"
+        className={`admin-mobile-navigation fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[60] flex items-center justify-around rounded-[22px] border px-2 py-2 shadow-lg backdrop-blur-xl lg:hidden ${darkMode ? "border-slate-700 bg-slate-900/95 shadow-black/30" : "border-slate-200 bg-white/95 shadow-slate-900/15"}`}
+      >
+        {mobileNavItems.map(({ to, label, icon, active }) => (
+          <Link
+            key={to}
+            to={to}
+            aria-label={label}
+            aria-current={active ? "page" : undefined}
+            title={label}
+            className={`flex h-14 min-w-0 flex-1 flex-col items-center justify-center rounded-xl px-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${active ? darkMode ? "text-red-300" : "text-red-700" : darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}
+          >
+            <span className="inline-flex" aria-hidden="true">{icon}</span>
+            <span className={`mt-1 h-0.5 w-4 rounded-full ${active ? "bg-current" : "bg-transparent"}`} aria-hidden="true" />
+          </Link>
+        ))}
+      </nav>
 
       {/* LOGOUT MODAL */}
       {showLogoutModal && createPortal(

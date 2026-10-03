@@ -8,6 +8,7 @@ import {
   createAdmin as createAdminApi,
   updateProfile as updateProfileApi,
 } from "@/api/auth";
+import { getSystemSettingsEventsUrl } from "@/api/users";
 import { normalizeUserProfile } from "@/lib/userProfile";
 import { recordActivity } from "@/lib/activityLog";
 
@@ -46,19 +47,44 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const clearAuth = () => {
-    setToken(null);
-    setUserAndPersist(null);
+  const clearAuth = useCallback(() => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setUser(null);
     setAdminExists(null);
     setAdminError("");
     setAuthError("");
-  };
+  }, []);
 
   useEffect(() => {
-    const handleSessionRevoked = () => clearAuth();
+    const handleSessionRevoked = () => {
+      clearAuth();
+      setLogoutLoading(true);
+      window.history.replaceState(null, "", "/login");
+      window.setTimeout(() => setLogoutLoading(false), 3000);
+    };
     window.addEventListener("auth:session-revoked", handleSessionRevoked);
     return () => window.removeEventListener("auth:session-revoked", handleSessionRevoked);
-  }, []);
+  }, [clearAuth]);
+
+  const accountId = user?._id || user?.id;
+  useEffect(() => {
+    if (!accountId || !localStorage.getItem("token")) return undefined;
+
+    const events = new EventSource(getSystemSettingsEventsUrl());
+    events.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.session_invalidated === true) {
+          window.dispatchEvent(new Event("auth:session-revoked"));
+        }
+      } catch (error) {
+        console.error("Unable to read system session event:", error);
+      }
+    };
+
+    return () => events.close();
+  }, [accountId]);
 
   const normalizeAndPersistUser = (userData) => {
     const normalized = normalizeUserProfile(userData);

@@ -1358,6 +1358,69 @@ body::-webkit-scrollbar,
   border-color: #2b4056 !important;
 }
 
+@media (max-width: 767px) {
+  .settings-user-access > .overflow-x-auto {
+    display: none;
+  }
+}
+
+@media (max-width: 1023px) {
+  .admin-mobile-navigation ~ div > main {
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom)) !important;
+  }
+
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0 {
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left)) !important;
+  }
+
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0.z-40,
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0.z-50 {
+    z-index: 70 !important;
+  }
+
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0 > :not(.absolute) {
+    max-width: calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
+    max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+    min-height: 0;
+  }
+
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0 > :not(.absolute):not([class*="overflow-hidden"]) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  body:has(.admin-mobile-navigation) .fixed.inset-0 {
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left)) !important;
+  }
+
+  body:has(.admin-mobile-navigation) .fixed.inset-0 > :not(.absolute) {
+    max-width: calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
+    max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+    min-height: 0;
+  }
+
+  body:has(.admin-mobile-navigation) .fixed.inset-0 > :not(.absolute):not([class*="overflow-hidden"]) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.admin-theme-dark .settings-premium table.backup-history-table tbody td {
+  background-color: #0f1b2d !important;
+}
+
+.admin-theme-dark .settings-premium table.backup-history-table tbody tr:hover td {
+  background-color: #17283c !important;
+}
+
 .admin-theme-dark .settings-premium table tbody td:first-child,
 .admin-theme-dark .settings-premium table tbody td:first-child + td {
   background-color: #0f1b2d !important;

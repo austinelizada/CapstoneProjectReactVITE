@@ -406,6 +406,24 @@ const OrderSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    contract_email_status: {
+      type: String,
+      enum: ["not_sent", "queued", "sent", "failed"],
+      default: "not_sent",
+    },
+    contract_email_queued_at: {
+      type: Date,
+      default: null,
+    },
+    contract_email_sent_at: {
+      type: Date,
+      default: null,
+    },
+    contract_email_error: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     contractDeclineReason: {
       type: String,
       trim: true,

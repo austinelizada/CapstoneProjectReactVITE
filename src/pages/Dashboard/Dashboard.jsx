@@ -663,65 +663,125 @@ function Dashboard() {
             </div>
 
             <div className="mt-5 overflow-hidden rounded-2xl border border-gray-200">
-              <table className="min-w-full border-collapse">
-                <thead className="bg-gray-50 text-left text-xs font-bold uppercase tracking-wide text-gray-500">
-                  <tr>
-                    <th className="px-5 py-4">Client</th>
-                    <th className="px-5 py-4">Project</th>
-                    <th className="px-5 py-4">Date</th>
-                    <th className="px-5 py-4">Amount</th>
-                    <th className="px-5 py-4 text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 bg-white text-sm text-gray-700">
-                  {recentTransactions.length > 0 ? recentTransactions
-                    .slice(
-                      (currentRecentTransactionsPage - 1) * recentTransactionsPerPage,
-                      currentRecentTransactionsPage * recentTransactionsPerPage,
-                    )
-                    .map((order) => {
-                      const customerName = order.customer
-                        ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
-                        : order.customer_name || "Customer";
-                      const orderItems = Array.isArray(order.items) ? order.items.filter(Boolean) : [];
-                      const productName = orderItems.length > 1
-                        ? "Batch Order"
-                        : orderItems[0]?.name || orderItems[0]?.product_id?.name || order.product_name || order.project_name || "Project";
-                      const date = order.created_at || order.createdAt || order.date || "";
-                      const formattedDate = date ? new Date(date).toISOString().split("T")[0] : "—";
-                      const statusValue = String(order.status || "pending");
-                      const statusText = titleCase(statusValue);
-                      const badgeClasses =
-                        statusValue.toLowerCase() === "cancelled"
-                          ? "bg-red-100 text-red-700"
-                          : statusValue.toLowerCase() === "completed"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : statusValue.toLowerCase() === "site_inspection" || statusValue.toLowerCase() === "pending"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-rose-100 text-rose-700";
-
-                      return (
-                        <tr key={order._id || order.id} className="hover:bg-gray-50">
-                          <td className="px-5 py-4"><ProfileAvatar name={customerName} email={order.customer?.email || order.customer_email || ""} compact /></td>
-                          <td className="px-5 py-4 font-bold text-gray-900">{productName}</td>
-                          <td className="px-5 py-4 text-gray-700">{formattedDate}</td>
-                          <td className="px-5 py-4 font-semibold text-gray-900">{formatCurrency(order.total_amount || order.totalAmount || 0)}</td>
-                          <td className="px-5 py-4 text-right">
-                            <span className={`inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold ${badgeClasses}`}>
-                              {statusText}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    }) : (
+              <div className="hidden md:block">
+                <table className="min-w-full border-collapse">
+                  <thead className="bg-gray-50 text-left text-xs font-bold uppercase tracking-wide text-gray-500">
                     <tr>
-                      <td colSpan="5" className="px-5 py-8 text-center text-sm text-gray-400">
-                        No recent transactions.
-                      </td>
+                      <th className="px-5 py-4">Client</th>
+                      <th className="px-5 py-4">Project</th>
+                      <th className="px-5 py-4">Date</th>
+                      <th className="px-5 py-4">Amount</th>
+                      <th className="px-5 py-4 text-right">Status</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 bg-white text-sm text-gray-700">
+                    {recentTransactions.length > 0 ? recentTransactions
+                      .slice(
+                        (currentRecentTransactionsPage - 1) * recentTransactionsPerPage,
+                        currentRecentTransactionsPage * recentTransactionsPerPage,
+                      )
+                      .map((order) => {
+                        const customerName = order.customer
+                          ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
+                          : order.customer_name || "Customer";
+                        const orderItems = Array.isArray(order.items) ? order.items.filter(Boolean) : [];
+                        const productName = orderItems.length > 1
+                          ? "Batch Order"
+                          : orderItems[0]?.name || orderItems[0]?.product_id?.name || order.product_name || order.project_name || "Project";
+                        const date = order.created_at || order.createdAt || order.date || "";
+                        const formattedDate = date ? new Date(date).toISOString().split("T")[0] : "—";
+                        const statusValue = String(order.status || "pending");
+                        const statusText = titleCase(statusValue);
+                        const badgeClasses =
+                          statusValue.toLowerCase() === "cancelled"
+                            ? "bg-red-100 text-red-700"
+                            : statusValue.toLowerCase() === "completed"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : statusValue.toLowerCase() === "site_inspection" || statusValue.toLowerCase() === "pending"
+                                ? "bg-amber-100 text-amber-700"
+                                : "bg-rose-100 text-rose-700";
+
+                        return (
+                          <tr key={order._id || order.id} className="hover:bg-gray-50">
+                            <td className="px-5 py-4"><ProfileAvatar name={customerName} email={order.customer?.email || order.customer_email || ""} compact /></td>
+                            <td className="px-5 py-4 font-bold text-gray-900">{productName}</td>
+                            <td className="px-5 py-4 text-gray-700">{formattedDate}</td>
+                            <td className="px-5 py-4 font-semibold text-gray-900">{formatCurrency(order.total_amount || order.totalAmount || 0)}</td>
+                            <td className="px-5 py-4 text-right">
+                              <span className={`inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold ${badgeClasses}`}>
+                                {statusText}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      }) : (
+                      <tr>
+                        <td colSpan="5" className="px-5 py-8 text-center text-sm text-gray-400">
+                          No recent transactions.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="space-y-3 p-3 md:hidden">
+                {recentTransactions.length > 0 ? recentTransactions
+                  .slice(
+                    (currentRecentTransactionsPage - 1) * recentTransactionsPerPage,
+                    currentRecentTransactionsPage * recentTransactionsPerPage,
+                  )
+                  .map((order) => {
+                    const customerName = order.customer
+                      ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
+                      : order.customer_name || "Customer";
+                    const orderItems = Array.isArray(order.items) ? order.items.filter(Boolean) : [];
+                    const productName = orderItems.length > 1
+                      ? "Batch Order"
+                      : orderItems[0]?.name || orderItems[0]?.product_id?.name || order.product_name || order.project_name || "Project";
+                    const date = order.created_at || order.createdAt || order.date || "";
+                    const formattedDate = date ? new Date(date).toISOString().split("T")[0] : "—";
+                    const statusValue = String(order.status || "pending");
+                    const statusText = titleCase(statusValue);
+                    const badgeClasses =
+                      statusValue.toLowerCase() === "cancelled"
+                        ? "bg-red-100 text-red-700"
+                        : statusValue.toLowerCase() === "completed"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : statusValue.toLowerCase() === "site_inspection" || statusValue.toLowerCase() === "pending"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-rose-100 text-rose-700";
+
+                    return (
+                      <div key={order._id || order.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold text-gray-900">{productName}</p>
+                            <p className="mt-1 text-xs text-gray-500">{customerName}</p>
+                          </div>
+                          <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-[10px] font-semibold ${badgeClasses}`}>
+                            {statusText}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-gray-400">Date</p>
+                            <p className="mt-1 font-medium text-gray-700">{formattedDate}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-gray-400">Amount</p>
+                            <p className="mt-1 font-semibold text-gray-900">{formatCurrency(order.total_amount || order.totalAmount || 0)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400">
+                      No recent transactions.
+                    </div>
+                )}
+              </div>
+
               <div className="flex flex-col items-center justify-center gap-3 border-t border-gray-200 bg-gray-50 p-4 sm:flex-row">
                 <div className="flex flex-wrap items-center justify-center gap-2" role="navigation" aria-label="Recent transactions pagination">
                   <button

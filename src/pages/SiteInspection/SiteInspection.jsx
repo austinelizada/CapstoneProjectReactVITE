@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import toast, { Toaster } from 'react-hot-toast';
-import { toPng } from "html-to-image";
+import { toJpeg } from "html-to-image";
 import jsPDF from "jspdf";
 
 import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection, sendWalkInApprovalEmail } from "@/api/orders";
@@ -1396,9 +1396,9 @@ function SiteInspection() {
     const { wrapper, clone } = createContractPrintClone(contractElement);
     try {
       await new Promise((resolve) => setTimeout(resolve, 100));
-      const contractImage = await toPng(clone, {
-        cacheBust: true,
-        pixelRatio: 2,
+      const contractImage = await toJpeg(clone, {
+        pixelRatio: 1.5,
+        quality: 0.9,
         backgroundColor: "#ffffff",
       });
 
@@ -1410,12 +1410,12 @@ function SiteInspection() {
       let heightLeft = imageHeight;
       let position = 0;
 
-      pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
+      pdf.addImage(contractImage, "JPEG", 0, position, pdfWidth, imageHeight);
       heightLeft -= pdfHeight;
       while (heightLeft > 0) {
         position -= pdfHeight;
         pdf.addPage();
-        pdf.addImage(contractImage, "PNG", 0, position, pdfWidth, imageHeight);
+        pdf.addImage(contractImage, "JPEG", 0, position, pdfWidth, imageHeight);
         heightLeft -= pdfHeight;
       }
 
@@ -1459,7 +1459,7 @@ function SiteInspection() {
       setSendingCustomerEmail(true);
       const contractAttachment = await createContractPdfDataUrl();
 
-      await sendWalkInApprovalEmail(orderId, {
+      const emailResponse = await sendWalkInApprovalEmail(orderId, {
         customerName,
         customerEmail,
         contractUrl: contractInspection?.signed_contract_url || "",
@@ -1471,6 +1471,7 @@ function SiteInspection() {
         status: "site_inspection",
         contract_status: "sent",
         contractStatus: "Sent",
+        contract_email_status: emailResponse.email_status || "queued",
       };
 
       setContractInspection(updatedOrder);
@@ -1478,7 +1479,7 @@ function SiteInspection() {
       setInspections((prev) => prev.map((inspection) => ((inspection._id || inspection.id) === orderId ? { ...inspection, status: "site_inspection", contract_status: "sent", contractStatus: "Sent" } : inspection)));
 
       recordActivity(user, `Sent contract to customer for order ${orderId}.`, "Site Inspection");
-      toast.success("Contract sent to customer");
+      toast.success(emailResponse.message || "Contract saved to the customer account; email queued.");
     } catch (emailError) {
       console.error("Contract send failed:", emailError);
       toast.error(emailError?.data?.message || "The contract could not be sent to the customer.");
@@ -1976,6 +1977,106 @@ function SiteInspection() {
     return `${firstName} + ${extraCount} more item${extraCount > 1 ? "s" : ""}`;
   };
 
+  const getInspectionStatusDisplay = (inspection) => {
+    if (activeTab === "cancelled") return "Cancelled";
+    return hasValidInspectionDate(inspection) ? "Scheduled" : "Needs to be Called";
+  };
+
+  const getInspectionStatusTone = (status) => {
+    if (status === "Cancelled") {
+      return darkMode
+        ? "border border-rose-300/40 bg-rose-500/20 text-rose-100"
+        : "border border-rose-200 bg-rose-50 text-rose-700";
+    }
+    if (status === "Scheduled") {
+      return darkMode
+        ? "border border-emerald-300/40 bg-emerald-500/20 text-emerald-100"
+        : "border border-emerald-200 bg-emerald-50 text-emerald-700";
+    }
+    return darkMode
+      ? "border border-amber-300/40 bg-amber-500/20 text-amber-100"
+      : "border border-amber-200 bg-amber-50 text-amber-700";
+  };
+
+  const getInspectionActionButtons = (inspection) => {
+    const inspectionId = inspection._id || inspection.id;
+    const isCancelledTab = activeTab === "cancelled";
+    const isWalkIn = inspection.order_type === "walk_in_customer"
+      || ["walk-in", "Walk-in Customer", "walk_in_customer"].includes(inspection.customerType);
+
+    return (
+      <>
+        <button
+          type="button"
+          className={`${actionButtonClass} ${darkMode ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25" : "bg-blue-100 text-blue-600 hover:bg-blue-200"}`}
+          onClick={() => handleView(inspection)}
+          title="View inspection"
+          aria-label="View inspection"
+        >
+          <Eye size={18} strokeWidth={2.2} />
+        </button>
+        {!isCancelledTab && (
+          <>
+            <button
+              type="button"
+              className={`${actionButtonClass} ${darkMode ? "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}
+              onClick={() => handleEdit(inspectionId)}
+              title="Edit inspection"
+              aria-label="Edit inspection"
+            >
+              <Pencil size={18} strokeWidth={2.2} />
+            </button>
+            {hasValidInspectionDate(inspection) && (
+              <button
+                type="button"
+                title="Generate or view contract"
+                aria-label="Generate or view contract"
+                className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
+                onClick={() => openContractButtonHandler(inspection)}
+                disabled={generatingId === inspectionId}
+              >
+                {generatingId === inspectionId ? <span className="text-[10px] font-bold">…</span> : <FileText size={18} strokeWidth={2.2} />}
+              </button>
+            )}
+            {isWalkIn && (
+              <button
+                type="button"
+                title="Manual approval"
+                aria-label="Manual approval"
+                className={`${actionButtonClass} ${darkMode ? "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}
+                onClick={() => openManualApprovalModal(inspection)}
+              >
+                <ShieldCheck size={18} strokeWidth={2.2} />
+              </button>
+            )}
+            <button
+              type="button"
+              className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
+              onClick={() => requestCancel(inspectionId)}
+              title="Cancel inspection"
+              aria-label="Cancel inspection"
+              disabled={cancellingId === inspectionId}
+            >
+              {cancellingId === inspectionId ? <span className="text-[10px] font-bold">…</span> : <Ban size={18} strokeWidth={2.2} />}
+            </button>
+          </>
+        )}
+        {isCancelledTab && (
+          <button
+            type="button"
+            title="Restore inspection"
+            aria-label="Restore inspection"
+            className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
+            onClick={() => requestRestore(inspectionId)}
+            disabled={restoringId === inspectionId}
+          >
+            {restoringId === inspectionId ? <span className="text-[10px] font-bold">…</span> : <RotateCcw size={18} strokeWidth={2.2} />}
+          </button>
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
@@ -2178,256 +2279,136 @@ function SiteInspection() {
           {/* TABLE */}
 
           <div className={`mt-6 overflow-hidden rounded-3xl border shadow-sm ${darkMode ? "border-slate-700 bg-[#071f2f] shadow-[0_18px_48px_rgba(15,23,42,0.42)]" : "border-slate-200 bg-white"}`}>
-
             <div className={`border-b px-6 py-5 ${darkMode ? "border-slate-700 bg-[#0b2338]" : "border-slate-200 bg-slate-50"}`}>
-
               <h2 className={`text-xl font-bold tracking-[-0.02em] ${darkMode ? "text-white" : "text-slate-900"}`}>
                 Site Inspection Records
               </h2>
-
             </div>
 
-            {/* Tabs */}
             <div className={`flex items-center gap-3 border-b p-4 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-white"}`}>
-              <button
-                className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'site' ? 'bg-red-600 text-white shadow-sm' : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                onClick={() => setActiveTab('site')}
-              >
+              <button className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'site' ? 'bg-red-600 text-white shadow-sm' : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setActiveTab('site')}>
                 Site Inspections
               </button>
-              <button
-                className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'cancelled' ? 'bg-red-600 text-white shadow-sm' : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                onClick={() => setActiveTab('cancelled')}
-              >
+              <button className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'cancelled' ? 'bg-red-600 text-white shadow-sm' : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setActiveTab('cancelled')}>
                 Cancelled
               </button>
             </div>
 
-            <div className="overflow-x-auto">
-
-              <table className="w-full min-w-[1280px] table-fixed">
-                <colgroup>
-                  <col className="w-[145px]" />
-                  <col className="w-[120px]" />
-                  <col className="w-[110px]" />
-                  <col className="w-[145px]" />
-                  <col className="w-[100px]" />
-                  <col className="w-[105px]" />
-                  <col className="w-[110px]" />
-                  <col className="w-[125px]" />
-                  <col className="w-[115px]" />
-                  <col className="w-[205px]" />
-                </colgroup>
-
-                <thead className={darkMode ? "bg-[#0d2033] shadow-inner" : "bg-gradient-to-r from-slate-100 via-slate-50 to-white shadow-inner"}>
-                  <tr>
-                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Client</th>
-                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Tracking ID</th>
-                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Customer Type</th>
-                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Site Address</th>
-                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Created</th>
-                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Inspection Date</th>
-                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Est. Install Date</th>
-                    <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Status</th>
-                    <th className={`px-2 py-3 text-right text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Est. Total</th>
-                    <th className={`px-4 py-3 text-center text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Actions</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {inspectionsLoading ? (
+            <div className="hidden md:block">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1280px] table-fixed">
+                  <colgroup>
+                    <col className="w-[145px]" />
+                    <col className="w-[120px]" />
+                    <col className="w-[110px]" />
+                    <col className="w-[145px]" />
+                    <col className="w-[100px]" />
+                    <col className="w-[105px]" />
+                    <col className="w-[110px]" />
+                    <col className="w-[125px]" />
+                    <col className="w-[115px]" />
+                    <col className="w-[205px]" />
+                  </colgroup>
+                  <thead className={darkMode ? "bg-[#0d2033] shadow-inner" : "bg-gradient-to-r from-slate-100 via-slate-50 to-white shadow-inner"}>
                     <tr>
-                      <td colSpan={11} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                        Loading inspections...
-                      </td>
+                      <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Client</th>
+                      <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Tracking ID</th>
+                      <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Customer Type</th>
+                      <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Site Address</th>
+                      <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Created</th>
+                      <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Inspection Date</th>
+                      <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Est. Install Date</th>
+                      <th className={`px-2 py-3 text-left text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Status</th>
+                      <th className={`px-2 py-3 text-right text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Est. Total</th>
+                      <th className={`px-4 py-3 text-center text-[10px] font-black uppercase leading-tight tracking-[0.1em] ${darkMode ? "text-slate-300" : "text-black"}`}>Actions</th>
                     </tr>
-                  ) : !filteredList.length ? (
-                    <tr>
-                      <td colSpan={11} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                        No records in this tab.
-                      </td>
-                    </tr>
-                  ) : (
-                    paginatedList.map((inspection, index) => {
-                      const clientName = inspection.customer
-                        ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim() || inspection.customer.email || inspection.customer_name || "Customer"
-                        : inspection.customer_name || inspection.customer_email || "Customer";
-                      const trackingId = inspection.tracking || inspection.order_number || inspection.orderId || `SI-${String((inspection._id || inspection.id || "")).slice(-8).toUpperCase()}`;
-                      const phone = inspection.customer?.phone || inspection.customer_phone || "—";
-                      const customerTypeLabel = getCustomerTypeLabel(inspection);
-                      const siteAddress = inspection.shipping_address || inspection.siteAddress || inspection.customer?.street_address || "—";
-                      const createdDate = formatDateToMMMDDYYYY(inspection.createdAt) || "—";
-                      const createdTime = inspection.createdAt ? new Date(inspection.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
-                      const inspectionDate = formatDateToMMMDDYYYY(inspection.inspection_date) || "—";
-                      const installDateValue = getEstimatedInstallationDate(inspection);
-                      const installDate = formatDateToMMMDDYYYY(installDateValue) || "—";
-                      const total = Number(inspection.total_amount || inspection.contract_amount || 0) || (Array.isArray(inspection.items)
-                        ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0)
-                        : 0);
-                      const isScheduled = hasValidInspectionDate(inspection);
-                      const isCancelledTab = activeTab === "cancelled";
-                      const statusConfig = isCancelledTab
-                        ? {
-                            label: "Cancelled",
-                            className: darkMode
-                              ? "border border-rose-300/40 bg-gradient-to-r from-rose-500/25 via-red-500/20 to-slate-800 text-rose-50 shadow-[0_10px_24px_rgba(244,63,94,0.26)] ring-1 ring-rose-200/10"
-                              : "border border-rose-200 bg-gradient-to-r from-rose-50 via-red-50 to-slate-100 text-rose-700 shadow-[0_10px_24px_rgba(244,63,94,0.12)]",
-                          }
-                        : isScheduled
-                          ? {
-                              label: "Scheduled",
-                              className: darkMode
-                                ? "border border-emerald-300/40 bg-gradient-to-r from-emerald-500/30 via-teal-500/25 to-emerald-400/20 text-emerald-50 shadow-[0_10px_24px_rgba(16,185,129,0.28)] ring-1 ring-emerald-200/10"
-                                : "border border-emerald-200 bg-gradient-to-r from-emerald-50 via-teal-50 to-lime-50 text-emerald-700 shadow-[0_10px_24px_rgba(16,185,129,0.12)]",
-                            }
-                          : {
-                              label: "Needs to be Called",
-                              className: darkMode
-                                ? "border border-amber-300/40 bg-gradient-to-r from-amber-500/30 via-orange-500/18 to-yellow-500/14 text-amber-50 shadow-[0_10px_24px_rgba(245,158,11,0.24)] ring-1 ring-amber-200/10"
-                                : "border border-amber-200 bg-gradient-to-r from-amber-50 via-orange-50 to-yellow-50 text-amber-700 shadow-[0_10px_24px_rgba(245,158,11,0.12)]",
-                            };
+                  </thead>
+                  <tbody>
+                    {inspectionsLoading ? (
+                      <tr><td colSpan={11} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Loading inspections...</td></tr>
+                    ) : !filteredList.length ? (
+                      <tr><td colSpan={11} className={`p-8 text-center ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No records in this tab.</td></tr>
+                    ) : (
+                      paginatedList.map((inspection, index) => {
+                        const clientName = inspection.customer ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim() || inspection.customer.email || inspection.customer_name || "Customer" : inspection.customer_name || inspection.customer_email || "Customer";
+                        const trackingId = inspection.tracking || inspection.order_number || inspection.orderId || `SI-${String((inspection._id || inspection.id || "")).slice(-8).toUpperCase()}`;
+                        const phone = inspection.customer?.phone || inspection.customer_phone || "—";
+                        const customerTypeLabel = getCustomerTypeLabel(inspection);
+                        const siteAddress = inspection.shipping_address || inspection.siteAddress || inspection.customer?.street_address || "—";
+                        const createdDate = formatDateToMMMDDYYYY(inspection.createdAt) || "—";
+                        const createdTime = inspection.createdAt ? new Date(inspection.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+                        const inspectionDate = formatDateToMMMDDYYYY(inspection.inspection_date) || "—";
+                        const installDateValue = getEstimatedInstallationDate(inspection);
+                        const installDate = formatDateToMMMDDYYYY(installDateValue) || "—";
+                        const total = Number(inspection.total_amount || inspection.contract_amount || 0) || (Array.isArray(inspection.items)
+                          ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0)
+                          : 0);
+                        const statusDisplay = getInspectionStatusDisplay(inspection);
+                        const progressColor = getInspectionStatusTone(statusDisplay);
+                        const rowActions = getInspectionActionButtons(inspection);
+                        return (
+                          <tr key={inspection._id || inspection.id || index} className={darkMode ? "border-t border-slate-700 bg-slate-900/20 hover:bg-slate-800/50" : "border-t border-slate-200 bg-white hover:bg-slate-50"}>
+                            <td className="px-2 py-3"><div className="min-w-0"><div className="truncate text-[12px] font-bold text-slate-800 dark:text-slate-100">{clientName}</div><div className="mt-1 text-[10px] text-slate-500">{phone}</div></div></td>
+                            <td className="px-2 py-3 text-[12px] text-slate-700">{trackingId}</td>
+                            <td className="px-2 py-3 text-[12px] text-slate-700">{customerTypeLabel}</td>
+                            <td className="px-2 py-3 text-[12px] text-slate-700"><span className="line-clamp-2 break-words">{siteAddress}</span></td>
+                            <td className="px-2 py-3 text-[12px] text-slate-700">{createdDate}<div className="text-[10px] text-slate-500">{createdTime}</div></td>
+                            <td className="px-2 py-3 text-[12px] text-slate-700">{inspectionDate}</td>
+                            <td className="px-2 py-3 text-[12px] text-slate-700">{installDate}</td>
+                            <td className="px-2 py-3"><span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold ${progressColor}`}>{statusDisplay}</span></td>
+                            <td className="px-2 py-3 text-right text-[12px] font-bold text-slate-900">₱{Number(total || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                            <td className="px-4 py-3 text-center"><div className="flex justify-center gap-2">{rowActions}</div></td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
-                      return (
-                        <tr
-                          key={inspection._id || inspection.id}
-                          className={isCancelledTab
-                            ? darkMode
-                              ? "border-t border-slate-700 bg-slate-900/40 opacity-85 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800/70 hover:shadow-[0_8px_18px_rgba(15,23,42,0.22)]"
-                              : "border-t border-slate-200 bg-slate-50/80 opacity-85 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-100 hover:shadow-[0_8px_18px_rgba(15,23,42,0.04)]"
-                            : darkMode
-                              ? "border-t border-slate-700 bg-[#0b2338] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#102d46] hover:shadow-[0_8px_18px_rgba(15,23,42,0.2)]"
-                              : "border-t border-slate-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-50 hover:shadow-[0_8px_18px_rgba(15,23,42,0.04)]"}
-                        >
-                          <td className="px-2 py-4 align-top">
-                            <ProfileAvatar
-                              name={clientName}
-                              email={phone}
-                              compact
-                            />
-                          </td>
-                          <td className="px-2 py-4 align-top">
-                            <div className={`break-words text-xs font-bold leading-5 ${darkMode ? "text-slate-100" : "text-slate-900"}`} title={trackingId}>{trackingId}</div>
-                          </td>
-                          <td className="px-2 py-4 align-top">
-                            <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-bold ${customerTypeLabel === "Online Customer"
-                              ? darkMode
-                                ? "border-sky-500/30 bg-sky-500/10 text-sky-200"
-                                : "border-sky-200 bg-sky-50 text-sky-700"
-                              : darkMode
-                                ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
-                                : "border-amber-200 bg-amber-50 text-amber-700"}`}>
-                              {customerTypeLabel}
-                            </span>
-                          </td>
-                          <td className={`px-2 py-4 align-top ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
-                            <div className="line-clamp-2 break-words text-sm leading-5" title={siteAddress}>
-                              {siteAddress}
-                            </div>
-                          </td>
-                          <td className={`px-2 py-4 align-top text-xs ${darkMode ? "text-slate-300" : isCancelledTab ? "text-slate-600" : "text-slate-700"}`}>
-                            <div>{createdDate}</div>
-                            {createdTime && <div className={`mt-1 text-xs font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{createdTime}</div>}
-                          </td>
-                          <td className={`whitespace-nowrap px-2 py-4 align-top text-xs ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{inspectionDate}</td>
-                          <td className={`whitespace-nowrap px-2 py-4 align-top text-xs ${darkMode ? "text-slate-400" : isCancelledTab ? "text-slate-500" : "text-slate-700"}`}>{installDate}</td>
-                          <td className="px-2 py-4 align-top">
-                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1.5 text-xs font-bold ${statusConfig.className}`}>
-                              <span
-                                className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] shadow-inner ${darkMode ? "border-white/15 bg-slate-950/70 text-white" : "border-white/70 bg-white/80 text-slate-700"}`}
-                                aria-hidden="true"
-                              >
-                                {isCancelledTab ? "⛔" : isScheduled ? "✓" : "📞"}
-                              </span>
-                              {statusConfig.label}
-                            </span>
-                          </td>
-                          <td className={`whitespace-nowrap px-2 py-4 align-top text-right text-sm font-black ${darkMode ? "text-slate-100" : isCancelledTab ? "text-slate-600" : "text-slate-900"}`}>
-                            {Number.isFinite(total) && total > 0 ? `₱${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00"}
-                          </td>
-                          <td className="px-4 py-4 align-top">
-                            <div className="flex flex-wrap items-center justify-end gap-1">
-                              <button
-                                className={`${actionButtonClass} focus-visible:ring-blue-500 ${darkMode ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25" : "bg-blue-100 text-blue-600 hover:bg-blue-200"}`}
-                                onClick={() => handleView(inspection)}
-                                title="View inspection"
-                                aria-label="View inspection"
-                              >
-                                <Eye size={18} strokeWidth={2.2} />
-                              </button>
-                              {activeTab !== "cancelled" && (
-                                <button
-                                  className={`${actionButtonClass} focus-visible:ring-amber-500 ${darkMode ? "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}
-                                  onClick={() => handleEdit(inspection._id || inspection.id)}
-                                  title="Edit inspection"
-                                  aria-label="Edit inspection"
-                                >
-                                  <Pencil size={18} strokeWidth={2.2} />
-                                </button>
-                              )}
-                              {activeTab !== "cancelled" && hasValidInspectionDate(inspection) && (
-                                <button
-                                  title="Generate Contract"
-                                  aria-label="Generate contract"
-                                  className={`${actionButtonClass} focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
-                                  onClick={() => openContractButtonHandler(inspection)}
-                                  disabled={generatingId === (inspection._id || inspection.id)}
-                                >
-                                  {generatingId === (inspection._id || inspection.id) ? (
-                                    <span className="text-[10px] font-bold">…</span>
-                                  ) : (
-                                    <FileText size={18} strokeWidth={2.2} />
-                                  )}
-                                </button>
-                              )}
-                              {activeTab !== "cancelled" && (inspection.order_type === "walk_in_customer" || inspection.customerType === "walk-in" || inspection.customerType === "Walk-in Customer" || inspection.customerType === "walk_in_customer") && (
-                                <button
-                                  title="Manual approval"
-                                  aria-label="Manual approval"
-                                  className={`${actionButtonClass} focus-visible:ring-amber-500 ${darkMode ? "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}
-                                  onClick={() => openManualApprovalModal(inspection)}
-                                >
-                                  <ShieldCheck size={18} strokeWidth={2.2} />
-                                </button>
-                              )}
-                              {activeTab !== "cancelled" ? (
-                                <button
-                                  className={`${actionButtonClass} focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
-                                  onClick={() => requestCancel(inspection._id || inspection.id)}
-                                  title="Cancel inspection"
-                                  aria-label="Cancel inspection"
-                                  disabled={cancellingId === (inspection._id || inspection.id)}
-                                >
-                                  {cancellingId === (inspection._id || inspection.id) ? (
-                                    <span className="text-[10px] font-bold">…</span>
-                                  ) : (
-                                    <Ban size={18} strokeWidth={2.2} />
-                                  )}
-                                </button>
-                              ) : (
-                                <button
-                                  title="Restore inspection"
-                                  aria-label="Restore inspection"
-                                  className={`${actionButtonClass} focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
-                                  onClick={() => requestRestore(inspection._id || inspection.id)}
-                                  disabled={restoringId === (inspection._id || inspection.id)}
-                                >
-                                  {restoringId === (inspection._id || inspection.id) ? (
-                                    <span className="text-[10px] font-bold">…</span>
-                                  ) : (
-                                    <RotateCcw size={18} strokeWidth={2.2} />
-                                  )}
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-
-              </table>
-
+            <div className="space-y-3 p-3 md:hidden">
+              {inspectionsLoading ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">Loading inspections...</div>
+              ) : !filteredList.length ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">No records in this tab.</div>
+              ) : paginatedList.map((inspection, index) => {
+                const clientName = inspection.customer ? `${inspection.customer.first_name || ""} ${inspection.customer.last_name || ""}`.trim() || inspection.customer.email || inspection.customer_name || "Customer" : inspection.customer_name || inspection.customer_email || "Customer";
+                const trackingId = inspection.tracking || inspection.order_number || inspection.orderId || `SI-${String((inspection._id || inspection.id || "")).slice(-8).toUpperCase()}`;
+                const inspectionDate = formatDateToMMMDDYYYY(inspection.inspection_date) || "—";
+                const installDateValue = getEstimatedInstallationDate(inspection);
+                const installDate = formatDateToMMMDDYYYY(installDateValue) || "—";
+                const statusDisplay = getInspectionStatusDisplay(inspection);
+                const total = Number(inspection.total_amount || inspection.contract_amount || 0) || (Array.isArray(inspection.items) ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0) : 0);
+                return (
+                  <div key={inspection._id || inspection.id || index} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-gray-900">{clientName}</p>
+                        <p className="mt-1 text-xs text-gray-500">{trackingId}</p>
+                      </div>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold ${getInspectionStatusTone(statusDisplay)}`}>{statusDisplay}</span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-gray-400">Inspection</p>
+                        <p className="mt-1 font-medium text-gray-700">{inspectionDate}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-gray-400">Install</p>
+                        <p className="mt-1 font-medium text-gray-700">{installDate}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-[10px] uppercase tracking-wide text-gray-400">Estimated Total</p>
+                        <p className="mt-1 font-semibold text-gray-900">₱{Number(total || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex justify-end gap-2">
+                      {getInspectionActionButtons(inspection)}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className={`flex flex-col gap-3 justify-center items-center border-t p-4 sm:flex-row ${darkMode ? "border-slate-700 bg-[#0b2338]" : "border-slate-200 bg-gray-50"}`}>
@@ -2774,11 +2755,11 @@ function SiteInspection() {
                     />
                   </section>
 
-                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                  <section className={`rounded-2xl p-3 sm:p-5 ${modalSectionClass}`}>
                     <h3 className={modalSectionTitleClass}>Measurements</h3>
                     <p className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Add or edit measurement rows. Totals update in real time.</p>
 
-                    <div className={`mt-4 overflow-x-auto rounded-xl border ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
+                    <div className={`mt-4 hidden overflow-x-auto rounded-xl border md:block ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
                       <div className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[10px] font-bold uppercase tracking-[0.1em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
                         <div>Product / Description</div>
                         <div>Width</div>
@@ -2841,17 +2822,80 @@ function SiteInspection() {
                       })}
                     </div>
 
-                    <div className="mt-4 flex items-center justify-between">
+                    <div className="mt-4 space-y-3 md:hidden">
+                      {(newInspection.items || []).map((item, index) => {
+                        const rowSubtotal = calculateRowSubtotal(item);
+                        const inputClasses = darkMode
+                          ? "min-w-0 w-full rounded-lg border border-slate-600 bg-[#122d42] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-red-500"
+                          : "min-w-0 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-red-500";
+                        const labelClasses = `mb-1.5 block text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`;
+
+                        return (
+                          <div key={item.id} className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-slate-50"}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className={`text-xs font-bold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Measurement {index + 1}</p>
+                              <button type="button" onClick={() => removeItemRow(item.id)} className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-500/10" aria-label={`Remove measurement ${index + 1}`} title="Remove measurement">
+                                <X size={16} aria-hidden="true" />
+                              </button>
+                            </div>
+                            <div className="mt-2">
+                              <label className={labelClasses} htmlFor={`new-measurement-product-${index}`}>Product / Description</label>
+                              <select
+                                id={`new-measurement-product-${index}`}
+                                value={item.product_id || ""}
+                                onChange={(event) => handleItemProductChange(item.id, event.target.value)}
+                                className={inputClasses}
+                              >
+                                <option value="">-- Select Active Product --</option>
+                                {products.map((product) => (
+                                  <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-3">
+                              <label className="min-w-0">
+                                <span className={labelClasses}>Width</span>
+                                <input type="number" min="0" inputMode="decimal" aria-label={`Width for measurement ${index + 1}`} value={item.width || 0} onChange={(event) => handleItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
+                              </label>
+                              <label className="min-w-0">
+                                <span className={labelClasses}>Height</span>
+                                <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={item.height || 0} onChange={(event) => handleItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
+                              </label>
+                              <div className="min-w-0">
+                                <span className={labelClasses}>Area Unit</span>
+                                <div className={`flex min-h-10 items-center rounded-lg border px-3 py-2.5 text-sm font-medium ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>{item.unit || "sqft"}</div>
+                              </div>
+                              <label className="min-w-0">
+                                <span className={labelClasses}>Quantity</span>
+                                <input type="number" min="1" inputMode="numeric" aria-label={`Quantity for measurement ${index + 1}`} value={item.qty || 1} onChange={(event) => handleItemFieldChange(item.id, "qty", event.target.value)} className={inputClasses} />
+                              </label>
+                            </div>
+                            <div className={`mt-3 grid grid-cols-2 gap-3 border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                              <div className="min-w-0">
+                                <span className={labelClasses}>Price / Sqft</span>
+                                <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{formatCurrency(Number(item.unit_price) || 0)}</p>
+                              </div>
+                              <div className="min-w-0 text-right">
+                                <span className={labelClasses}>Row Total</span>
+                                <p className={`truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(rowSubtotal)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <button type="button" onClick={addItemRow} className={`rounded-[12px] border px-4 py-2 text-sm font-bold transition ${darkMode ? "border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20" : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"}`}>
                         + Add Row
                       </button>
-                      <div className={`text-lg font-black ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                      <div className={`text-right text-lg font-black ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
                         Total: <span className="text-red-400">{formatCurrency(computeTotals().totalEstimate)}</span>
                       </div>
                     </div>
                   </section>
 
-                  <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
+                  <section className={`rounded-2xl p-3 sm:p-5 ${modalSectionClass}`}>
                     <h3 className={modalSectionTitleClass}>Payment Information</h3>
                     <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                       <span className="mr-2 text-base">💡</span>
@@ -3046,24 +3090,44 @@ function SiteInspection() {
                     ? "border border-amber-500/30 bg-amber-500/10 text-amber-200"
                     : "border border-amber-200 bg-amber-50 text-amber-700",
                 };
+            const measurementRows = inspectionItems.map((item, index) => {
+              const itemName = item.name || item.product_id?.name || `Item ${index + 1}`;
+              const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
+              const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
+              const explicitLineTotal = Number(item.estimated_price ?? item.total_price ?? 0);
+
+              return {
+                key: `${itemName}-${index}`,
+                itemName,
+                width: Number(item.width || 0),
+                height: Number(item.height || 0),
+                unit: item.unit || "in",
+                qty,
+                unitPrice,
+                lineTotal: Number.isFinite(explicitLineTotal) && explicitLineTotal > 0
+                  ? explicitLineTotal
+                  : qty * unitPrice,
+              };
+            });
+            const measurementLabelClass = `text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`;
 
             return (
               <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 pt-6">
                 <div className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border ${modalShellClass}`}>
-                  <div className={`flex items-center justify-between px-5 py-4 ${darkMode ? "border-b border-slate-700 bg-[#0b2338]" : "border-b border-slate-200 bg-white"}`}>
-                    <div className="flex items-center gap-4">
-                      <h2 className={`text-[28px] font-black tracking-[-0.04em] ${darkMode ? "text-white" : "text-slate-900"}`}>Inspection Details</h2>
-                      <span className={`text-xs font-semibold uppercase tracking-[0.18em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
+                  <div className={`flex shrink-0 flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4 ${darkMode ? "border-b border-slate-700 bg-[#0b2338]" : "border-b border-slate-200 bg-white"}`}>
+                    <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
+                      <h2 className={`text-xl font-black leading-tight sm:text-[28px] ${darkMode ? "text-white" : "text-slate-900"}`}>Inspection Details</h2>
+                      <span className={`break-all text-[10px] font-semibold uppercase tracking-[0.12em] sm:text-xs sm:tracking-[0.18em] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
                         {orderReference}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex w-full items-center gap-2 sm:w-auto sm:gap-3">
                       <button
                         type="button"
                         onClick={() => handleGenerateContract(orderId)}
                         disabled={!orderId || generatingId === orderId || readinessIssues.length > 0}
-                        className={`inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-600/90 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60`}
+                        className="inline-flex min-h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-600/90 px-3 py-2 text-center text-xs font-bold uppercase tracking-[0.12em] leading-tight text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:px-4"
                       >
                         <span>✓</span>
                         {generatingId === orderId ? "Generating..." : "Generate Contract"}
@@ -3073,7 +3137,7 @@ function SiteInspection() {
                         type="button"
                         onClick={() => setViewInspection(null)}
                         aria-label="Close inspection details"
-                        className={`flex h-9 w-9 items-center justify-center rounded-lg border text-lg font-semibold transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"}`}
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border text-lg font-semibold transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"}`}
                       >
                         ×
                       </button>
@@ -3136,7 +3200,7 @@ function SiteInspection() {
                         Measurements
                       </div>
 
-                      <div className="overflow-x-auto">
+                      <div className="hidden overflow-x-auto md:block">
                         <table className="min-w-full text-left">
                           <thead className={darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}>
                             <tr>
@@ -3150,30 +3214,17 @@ function SiteInspection() {
                             </tr>
                           </thead>
                           <tbody>
-                            {inspectionItems.length ? inspectionItems.map((item, index) => {
-                              const itemName = item.name || item.product_id?.name || `Item ${index + 1}`;
-                              const width = Number(item.width || 0);
-                              const height = Number(item.height || 0);
-                              const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
-                              const unit = item.unit || "in";
-                              const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
-                              const explicitLineTotal = Number(item.estimated_price ?? item.total_price ?? 0);
-                              const lineTotal = Number.isFinite(explicitLineTotal) && explicitLineTotal > 0
-                                ? explicitLineTotal
-                                : qty * unitPrice;
-
-                              return (
-                                <tr key={`${itemName}-${index}`} className={darkMode ? "border-t border-slate-700 text-slate-200" : "border-t border-slate-200 text-slate-700"}>
-                                  <td className="px-4 py-3 font-medium">{itemName}</td>
-                                  <td className="px-4 py-3">{width || "—"}</td>
-                                  <td className="px-4 py-3">{height || "—"}</td>
-                                  <td className="px-4 py-3">{unit}</td>
-                                  <td className="px-4 py-3">{qty}</td>
-                                  <td className="px-4 py-3">{unitPrice ? formatCurrency(unitPrice) : "—"}</td>
-                                  <td className="px-4 py-3 text-right font-semibold">{formatCurrency(lineTotal)}</td>
-                                </tr>
-                              );
-                            }) : (
+                            {measurementRows.length ? measurementRows.map((measurement) => (
+                              <tr key={measurement.key} className={darkMode ? "border-t border-slate-700 text-slate-200" : "border-t border-slate-200 text-slate-700"}>
+                                <td className="px-4 py-3 font-medium">{measurement.itemName}</td>
+                                <td className="px-4 py-3">{measurement.width || "—"}</td>
+                                <td className="px-4 py-3">{measurement.height || "—"}</td>
+                                <td className="px-4 py-3">{measurement.unit}</td>
+                                <td className="px-4 py-3">{measurement.qty}</td>
+                                <td className="px-4 py-3">{measurement.unitPrice ? formatCurrency(measurement.unitPrice) : "—"}</td>
+                                <td className="px-4 py-3 text-right font-semibold">{formatCurrency(measurement.lineTotal)}</td>
+                              </tr>
+                            )) : (
                               <tr>
                                 <td colSpan={7} className={`px-4 py-6 text-center text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                                   No measurement rows available.
@@ -3182,6 +3233,48 @@ function SiteInspection() {
                             )}
                           </tbody>
                         </table>
+                      </div>
+
+                      <div className="space-y-3 p-3 md:hidden">
+                        {measurementRows.length ? measurementRows.map((measurement, index) => (
+                          <article key={measurement.key} className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-slate-50"}`}>
+                            <h4 className={`break-words text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                              {measurement.itemName || `Item ${index + 1}`}
+                            </h4>
+                            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3">
+                              <div className="min-w-0">
+                                <dt className={measurementLabelClass}>Width</dt>
+                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.width || "—"}</dd>
+                              </div>
+                              <div className="min-w-0">
+                                <dt className={measurementLabelClass}>Height</dt>
+                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.height || "—"}</dd>
+                              </div>
+                              <div className="min-w-0">
+                                <dt className={measurementLabelClass}>Unit</dt>
+                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.unit}</dd>
+                              </div>
+                              <div className="min-w-0">
+                                <dt className={measurementLabelClass}>Quantity</dt>
+                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.qty}</dd>
+                              </div>
+                            </dl>
+                            <div className={`mt-3 grid grid-cols-2 gap-3 border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                              <div className="min-w-0">
+                                <p className={measurementLabelClass}>Price / Sqft</p>
+                                <p className={`mt-1 truncate text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.unitPrice ? formatCurrency(measurement.unitPrice) : "—"}</p>
+                              </div>
+                              <div className="min-w-0 text-right">
+                                <p className={measurementLabelClass}>Estimated Total</p>
+                                <p className={`mt-1 truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(measurement.lineTotal)}</p>
+                              </div>
+                            </div>
+                          </article>
+                        )) : (
+                          <p className={`p-4 text-center text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                            No measurement rows available.
+                          </p>
+                        )}
                       </div>
 
                       <div className={`flex justify-end px-4 py-3 text-sm font-semibold ${darkMode ? "bg-[#0d2033] text-slate-200" : "bg-slate-50 text-slate-700"}`}>
@@ -3475,7 +3568,7 @@ function SiteInspection() {
                       Measurements
                     </h3>
 
-                    <div className={`mt-4 overflow-hidden rounded-xl border ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
+                    <div className={`mt-4 hidden overflow-hidden rounded-xl border md:block ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
                       <div className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[11px] font-black uppercase tracking-[0.12em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
                         <div>Product / Description</div>
                         <div>Width</div>
@@ -3548,11 +3641,74 @@ function SiteInspection() {
                       })}
                     </div>
 
-                    <div className="mt-4 flex items-center justify-between">
+                    <div className="mt-4 space-y-3 md:hidden">
+                      {(editInspection.items || []).map((item, index) => {
+                        const rowSubtotal = calculateRowSubtotal(item);
+                        const inputClasses = darkMode
+                          ? "min-w-0 w-full rounded-lg border border-slate-600 bg-[#122d42] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-red-500"
+                          : "min-w-0 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-red-500";
+                        const labelClasses = `mb-1.5 block text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`;
+
+                        return (
+                          <div key={item.id || `${item.product_id || "row"}-${index}`} className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-slate-50"}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className={`text-xs font-bold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Measurement {index + 1}</p>
+                              <button type="button" onClick={() => removeEditItemRow(item.id)} className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-500/10" aria-label={`Remove measurement ${index + 1}`} title="Remove measurement">
+                                <X size={16} aria-hidden="true" />
+                              </button>
+                            </div>
+                            <div className="mt-2">
+                              <label className={labelClasses} htmlFor={`edit-measurement-product-${index}`}>Product / Description</label>
+                              <select
+                                id={`edit-measurement-product-${index}`}
+                                value={item.product_id || ""}
+                                onChange={(event) => handleEditItemProductChange(item.id, event.target.value)}
+                                className={inputClasses}
+                              >
+                                <option value="">-- Select Product --</option>
+                                {products.map((product) => (
+                                  <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-3">
+                              <label className="min-w-0">
+                                <span className={labelClasses}>Width</span>
+                                <input type="number" min="0" inputMode="decimal" aria-label={`Width for measurement ${index + 1}`} value={item.width || 0} onChange={(event) => handleEditItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
+                              </label>
+                              <label className="min-w-0">
+                                <span className={labelClasses}>Height</span>
+                                <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={item.height || 0} onChange={(event) => handleEditItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
+                              </label>
+                              <div className="min-w-0">
+                                <span className={labelClasses}>Area Unit</span>
+                                <div className={`flex min-h-10 items-center rounded-lg border px-3 py-2.5 text-sm font-medium ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>{item.unit || "sqft"}</div>
+                              </div>
+                              <label className="min-w-0">
+                                <span className={labelClasses}>Quantity</span>
+                                <input type="number" min="1" inputMode="numeric" aria-label={`Quantity for measurement ${index + 1}`} value={item.qty || item.quantity || 1} onChange={(event) => handleEditItemFieldChange(item.id, "qty", event.target.value)} className={inputClasses} />
+                              </label>
+                            </div>
+                            <div className={`mt-3 grid grid-cols-2 gap-3 border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                              <div className="min-w-0">
+                                <span className={labelClasses}>Price / Sqft</span>
+                                <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{formatCurrency(Number(item.unit_price) || 0)}</p>
+                              </div>
+                              <div className="min-w-0 text-right">
+                                <span className={labelClasses}>Row Total</span>
+                                <p className={`truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(rowSubtotal)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <button type="button" onClick={addEditItemRow} className={`rounded-[12px] border px-4 py-2 text-sm font-bold transition ${darkMode ? "border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20" : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"}`}>
                         + Add Row
                       </button>
-                      <div className={`text-lg font-black ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                      <div className={`text-right text-lg font-black ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
                         Total: <span className="text-red-400">{formatCurrency(computeEditTotals().totalEstimate)}</span>
                       </div>
                     </div>

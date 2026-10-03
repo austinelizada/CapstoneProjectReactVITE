@@ -72,7 +72,6 @@ export const sendMail = async (mailOptions) => {
   const transport = await createTransporter();
 
   try {
-    await transport.verify();
     const result = await transport.sendMail(mailOptions);
 
     if (isTestAccount) {
@@ -103,7 +102,6 @@ export const sendMail = async (mailOptions) => {
       });
       isTestAccount = true;
 
-      await transporter.verify();
       const result = await transporter.sendMail(mailOptions);
       const previewUrl = nodemailer.getTestMessageUrl(result);
       if (previewUrl) {

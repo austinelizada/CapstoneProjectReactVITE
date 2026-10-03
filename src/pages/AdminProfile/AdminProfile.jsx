@@ -364,14 +364,14 @@ function AdminProfile() {
       <div className="flex-1 min-h-0 flex flex-col">
         <Navbar />
 
-        <main className="flex-1 min-h-0 overflow-y-auto p-6">
+        <main className="flex-1 min-h-0 overflow-y-auto px-4 pb-24 pt-4 sm:p-6">
           <AdminPageHeader
             title={`${profileType} Profile`}
             description={`Manage your ${profileType.toLowerCase()} account settings and security.`}
           />
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
-            <div className="bg-white rounded-3xl shadow p-8">
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:mt-6 sm:gap-6 xl:grid-cols-3">
+            <div className="min-w-0 rounded-3xl bg-white p-5 shadow sm:p-8">
               <div className="flex flex-col items-center">
                 <div className="relative">
                   <img
@@ -384,7 +384,7 @@ function AdminProfile() {
                   </button>
                 </div>
 
-                <h2 className="text-2xl font-bold mt-5">
+                <h2 className="mt-5 break-words text-center text-xl font-bold sm:text-2xl">
                   {profile.first_name} {profile.last_name}
                 </h2>
                 <p className="text-gray-500 capitalize">{profile.role}</p>
@@ -394,7 +394,7 @@ function AdminProfile() {
                     <Mail className="text-red-600" />
                     <div>
                       <p className="text-sm text-gray-500">Email</p>
-                      <p className="font-medium">{profile.email}</p>
+                      <p className="break-all font-medium">{profile.email}</p>
                     </div>
                   </div>
 
@@ -417,7 +417,7 @@ function AdminProfile() {
               </div>
             </div>
 
-            <div className="xl:col-span-2 bg-white rounded-3xl shadow p-8">
+            <div className="min-w-0 rounded-3xl bg-white p-4 shadow sm:p-8 xl:col-span-2">
               <h2 className="text-2xl font-bold mb-6">Profile Settings</h2>
 
               {error && (
@@ -434,11 +434,11 @@ function AdminProfile() {
 
               <div className="mt-8">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="rounded-3xl bg-gray-100 border border-gray-200 p-2 flex overflow-hidden">
+                  <div className="grid w-full grid-cols-3 rounded-2xl border border-gray-200 bg-gray-100 p-1 sm:w-auto sm:rounded-3xl sm:p-2">
                     <button
                       type="button"
                       onClick={() => setActiveTab("profile")}
-                      className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
+                      className={`rounded-xl px-2 py-3 text-xs font-semibold transition sm:rounded-2xl sm:px-5 sm:text-sm ${
                         activeTab === "profile"
                           ? "bg-white text-red-600 shadow-sm"
                           : "text-gray-600 hover:text-red-600"
@@ -449,7 +449,7 @@ function AdminProfile() {
                     <button
                       type="button"
                       onClick={() => setActiveTab("security")}
-                      className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
+                      className={`rounded-xl px-2 py-3 text-xs font-semibold transition sm:rounded-2xl sm:px-5 sm:text-sm ${
                         activeTab === "security"
                           ? "bg-white text-red-600 shadow-sm"
                           : "text-gray-600 hover:text-red-600"
@@ -460,7 +460,7 @@ function AdminProfile() {
                     <button
                       type="button"
                       onClick={() => setActiveTab("activity")}
-                      className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
+                      className={`rounded-xl px-2 py-3 text-xs font-semibold transition sm:rounded-2xl sm:px-5 sm:text-sm ${
                         activeTab === "activity"
                           ? "bg-white text-red-600 shadow-sm"
                           : "text-gray-600 hover:text-red-600"

@@ -184,6 +184,17 @@ const broadcastSystemSettings = (maintenanceMode) => {
   });
 };
 
+const broadcastSessionInvalidated = () => {
+  const payload = `data: ${JSON.stringify({ session_invalidated: true })}\n\n`;
+  systemSettingClients.forEach((client) => {
+    try {
+      client.write(payload);
+    } catch {
+      systemSettingClients.delete(client);
+    }
+  });
+};
+
 router.get("/system-settings", authMiddleware, async (req, res) => {
   try {
     const settings = await SystemSetting.findOne({ key: "global" }).lean();
@@ -306,6 +317,7 @@ router.get("/system-settings/backups/:backupId/download", authMiddleware, roleMi
 router.post("/system-settings/backups/:backupId/restore", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
     const result = await restoreSystemBackup(req.params.backupId);
+    if (result.logout_required) res.once("finish", broadcastSessionInvalidated);
     res.json({ success: true, ...result });
   } catch (error) {
     console.error("Restore system backup error:", error);
@@ -811,7 +823,7 @@ router.post("/create-admin", async (req, res) => {
     await admin.save();
 
     const token = jwt.sign(
-      { id: admin._id, email: admin.email, role: "admin" },
+      { id: admin._id, email: admin.email, role: "admin", auth_source: "admin", session_version: admin.session_version || 0 },
       process.env.JWT_SECRET || "your-secret-key",
       { expiresIn: "7d" }
     );
@@ -908,7 +920,7 @@ router.post("/login", async (req, res) => {
 
     const role = source === "admin" ? "admin" : user.role;
     const token = jwt.sign(
-      { id: user._id, email: user.email, role, ...(source === "user" ? { session_version: user.session_version || 0 } : {}) },
+      { id: user._id, email: user.email, role, auth_source: source, session_version: user.session_version || 0 },
       process.env.JWT_SECRET || "your-secret-key",
       { expiresIn: "7d" }
     );

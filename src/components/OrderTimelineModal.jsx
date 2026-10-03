@@ -236,7 +236,7 @@ export default function OrderTimelineModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/45 p-0 sm:items-center sm:p-4"
       role="presentation"
       onClick={(event) => event.target === event.currentTarget && onClose()}
     >
@@ -248,11 +248,11 @@ export default function OrderTimelineModal({
         onKeyDown={handleDialogKeyDown}
         className={`flex max-h-[92dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-t-2xl border shadow-2xl sm:max-h-[90vh] sm:rounded-2xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
       >
-        <header className={`flex shrink-0 items-start justify-between gap-4 border-b px-4 py-3.5 sm:px-5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+        <header className={`grid shrink-0 grid-cols-[minmax(0,1fr)_2.25rem] items-start gap-x-3 gap-y-2 border-b px-4 py-3.5 sm:px-5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
           <div className="min-w-0">
             <h2 id="order-timeline-title" className="text-base font-semibold">Order timeline</h2>
             <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
-              <span className={`font-mono ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{trackingId}</span>
+              <span className={`min-w-0 break-all font-mono ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{trackingId}</span>
               <button
                 type="button"
                 onClick={handleCopy}
@@ -263,7 +263,7 @@ export default function OrderTimelineModal({
                 {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
                 {copied && <span>Copied</span>}
               </button>
-              <span className={darkMode ? "text-slate-500" : "text-slate-400"}>· Placed {dateLabel}</span>
+              <span className={`break-words ${darkMode ? "text-slate-500" : "text-slate-400"}`}>· Placed {dateLabel}</span>
             </div>
           </div>
           <button
@@ -279,12 +279,12 @@ export default function OrderTimelineModal({
 
         <div className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3.5 sm:max-h-[70vh] sm:px-5 ${darkMode ? "bg-slate-950/40" : "bg-slate-50/70"}`}>
           {items.length > 1 && !loading && !isEmpty && (
-            <div className={`mb-3 flex flex-wrap items-center justify-between gap-3 border-b pb-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+            <div className={`mb-3 flex flex-col gap-3 border-b pb-3 sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
               <div className="min-w-0">
                 <p className="text-sm font-semibold">{items.length} items</p>
-                <p className={`mt-0.5 truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{formatStageSummary(rows)}</p>
+                <p className={`mt-0.5 break-words text-xs sm:truncate ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{formatStageSummary(rows)}</p>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="grid w-full gap-2 sm:flex sm:w-auto sm:shrink-0 sm:items-center">
                 {items.length >= 10 && (
                   <label className="sr-only" htmlFor="timeline-stage-filter">Filter items by stage</label>
                 )}
@@ -293,7 +293,7 @@ export default function OrderTimelineModal({
                     id="timeline-stage-filter"
                     value={stageFilter}
                     onChange={(event) => setStageFilter(event.target.value)}
-                    className={`max-w-32 rounded-lg border px-2 py-1.5 text-xs ${darkMode ? "border-slate-700 bg-slate-900 text-slate-200" : "border-slate-300 bg-white text-slate-700"}`}
+                    className={`w-full rounded-lg border px-2 py-2 text-xs sm:w-32 sm:py-1.5 ${darkMode ? "border-slate-700 bg-slate-900 text-slate-200" : "border-slate-300 bg-white text-slate-700"}`}
                   >
                     <option value="all">All stages</option>
                     {stageOptions.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
@@ -302,7 +302,7 @@ export default function OrderTimelineModal({
                 <button
                   type="button"
                   onClick={allExpanded ? collapseAll : expandAll}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${darkMode ? "border-slate-700 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-white"}`}
+                  className={`w-full rounded-lg border px-3 py-2 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:w-auto sm:py-1.5 ${darkMode ? "border-slate-700 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-white"}`}
                 >
                   {allExpanded ? "Collapse all" : "Expand all"}
                 </button>
@@ -367,7 +367,7 @@ export default function OrderTimelineModal({
 
         {photoGallery && (
           <div
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4"
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 p-4"
             role="dialog"
             aria-modal="true"
             aria-label={`${photoGallery.title} photos`}

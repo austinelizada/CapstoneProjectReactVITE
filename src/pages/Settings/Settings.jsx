@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Calendar,
   CalendarClock,
@@ -104,7 +104,7 @@ const normalizeStaffAccess = (staffAccess = {}) => {
 };
 
 function Settings() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { darkMode } = useAdminTheme();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const canManageAccess = isAdmin || (user?.role === "skilled_worker" && user.staff_access?.modules?.settings?.enabled === true && user.staff_access.modules.settings.actions?.manage_access === true);
@@ -132,6 +132,15 @@ function Settings() {
   const [savingMaintenance, setSavingMaintenance] = useState(false);
   const [loadingBackupSettings, setLoadingBackupSettings] = useState(true);
   const [creatingBackup, setCreatingBackup] = useState(false);
+  const [downloadingBackupId, setDownloadingBackupId] = useState(null);
+  const [restoreConfirmation, setRestoreConfirmation] = useState(null);
+  const [restoringBackup, setRestoringBackup] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState(null);
+  const [deletingBackup, setDeletingBackup] = useState(false);
+  const restoreDialogRef = useRef(null);
+  const restoreDialogTriggerRef = useRef(null);
+  const deleteDialogRef = useRef(null);
+  const deleteDialogTriggerRef = useRef(null);
   const [activeSettingsTab, setActiveSettingsTab] = useState("user-management");
   const backupOptions = [
     { id: "weekly", label: "Weekly", description: "Every Sunday at midnight" },
@@ -149,6 +158,8 @@ function Settings() {
   };
 
   const [backupState, setBackupState] = useState(getDefaultBackupState);
+  const backupPageSize = 5;
+  const [backupPage, setBackupPage] = useState(1);
   const settingsTabs = [
     { key: "user-management", label: "User Management" },
     { key: "backup-recovery", label: "Backup & Recovery" },
@@ -180,6 +191,34 @@ function Settings() {
       .finally(() => setLoadingBackupSettings(false));
   }, []);
 
+  useEffect(() => {
+    if (!restoreConfirmation) {
+      restoreDialogTriggerRef.current?.focus();
+      return undefined;
+    }
+
+    if (!restoringBackup) restoreDialogRef.current?.focus();
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !restoringBackup) setRestoreConfirmation(null);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [restoreConfirmation, restoringBackup]);
+
+  useEffect(() => {
+    if (!deleteConfirmation) {
+      deleteDialogTriggerRef.current?.focus();
+      return undefined;
+    }
+
+    if (!deletingBackup) deleteDialogRef.current?.focus();
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !deletingBackup) setDeleteConfirmation(null);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [deleteConfirmation, deletingBackup]);
+
   const loadUsers = async () => {
     setLoading(true);
     try {
@@ -206,6 +245,14 @@ function Settings() {
     skilled_worker: users.filter((account) => account.role === "skilled_worker").length,
     active: users.length,
   }), [users]);
+
+  const userCategoryTabs = [
+    { key: "all", label: "All Users", count: counts.all },
+    { key: "customer", label: "Customers", count: counts.customer },
+    { key: "staff", label: "Staff", count: counts.staff },
+    { key: "helper", label: "Helpers", count: counts.helper },
+    { key: "skilled_worker", label: "Skilled Workers", count: counts.skilled_worker },
+  ];
 
   const displayUsers = useMemo(() => {
     const authAdmin = user && (user.role === "admin" || user.role === "super_admin")
@@ -267,53 +314,53 @@ function Settings() {
           {activeSettingsTab === "backup-recovery" && (
             <div className="mt-7 min-w-0 space-y-6">
               <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
-                <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-background p-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand/[0.08] text-brand dark:bg-brand-dark-fill/20 dark:text-brand-dark-text">
+                <div className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-red-950/60 text-red-300" : "bg-brand/[0.08] text-brand"}`}>
                     <Calendar aria-hidden="true" className="size-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Last backup</div>
-                    <div className="mt-1 text-base font-medium text-foreground">{metrics.lastBackupAt ? formatBackupDateShort(metrics.lastBackupAt) : "No backup"}</div>
+                    <div className={`text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Last backup</div>
+                    <div className={`mt-1 text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>{metrics.lastBackupAt ? formatBackupDateShort(metrics.lastBackupAt) : "No backup"}</div>
                   </div>
                 </div>
 
-                <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-background p-4">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${metrics.status === "Success" ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-muted text-muted-foreground"}`}>
+                <div className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? metrics.status === "Success" ? "bg-green-950/60 text-green-300" : "bg-slate-800 text-slate-400" : metrics.status === "Success" ? "bg-green-500/10 text-green-700" : "bg-muted text-muted-foreground"}`}>
                     <History aria-hidden="true" className="size-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Backup status</div>
-                    <div className={`mt-1 inline-flex items-center gap-2 text-base font-medium ${metrics.status === "Success" ? "text-green-700 dark:text-green-400" : "text-muted-foreground"}`}>
-                      <span className={`size-2 rounded-full ${metrics.status === "Success" ? "bg-green-600" : "bg-muted-foreground"}`} />
+                    <div className={`text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Backup status</div>
+                    <div className={`mt-1 inline-flex items-center gap-2 text-base font-medium ${metrics.status === "Success" ? darkMode ? "text-green-300" : "text-green-700" : darkMode ? "text-slate-300" : "text-muted-foreground"}`}>
+                      <span className={`size-2 rounded-full ${metrics.status === "Success" ? "bg-green-500" : darkMode ? "bg-slate-500" : "bg-muted-foreground"}`} />
                       {metrics.status}
                     </div>
                   </div>
                 </div>
 
-                <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-background p-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-700 dark:text-blue-400">
+                <div className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-blue-950/70 text-blue-300" : "bg-blue-500/10 text-blue-700"}`}>
                     <Database aria-hidden="true" className="size-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Backup snapshots</div>
-                    <div className="mt-1 text-base font-medium text-foreground">{metrics.totalBackups} backups</div>
+                    <div className={`text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Backup snapshots</div>
+                    <div className={`mt-1 text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>{metrics.totalBackups} backups</div>
                   </div>
                 </div>
 
-                <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-background p-4">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-500/10 text-green-700 dark:text-green-400">
+                <div className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-green-950/60 text-green-300" : "bg-green-500/10 text-green-700"}`}>
                     <CircleCheck aria-hidden="true" className="size-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Success rate</div>
-                    <div className="mt-1 text-base font-medium text-foreground">{metrics.successRate}%</div>
+                    <div className={`text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Success rate</div>
+                    <div className={`mt-1 text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>{metrics.successRate}%</div>
                   </div>
                 </div>
               </div>
 
               <section className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 id="backup-schedule-heading" className="text-[17px] font-medium text-foreground">Backup Schedule</h3>
+                  <h3 id="backup-schedule-heading" className={`text-[17px] font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>Backup Schedule</h3>
                 </div>
 
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3">
@@ -336,20 +383,20 @@ function Settings() {
                         <label
                           key={option.id}
                           htmlFor={`backup-schedule-${option.id}`}
-                          className="has-[[data-state=checked]]:border-[1.5px] has-[[data-state=checked]]:border-brand has-[[data-state=checked]]:bg-brand/[0.08] flex min-h-[84px] cursor-pointer items-center gap-3 rounded-2xl border border-border bg-background p-4 transition-colors motion-reduce:transition-none dark:has-[[data-state=checked]]:border-brand-dark-text dark:has-[[data-state=checked]]:bg-brand-dark-fill/15"
+                          className={`flex min-h-[84px] cursor-pointer items-center gap-3 rounded-2xl border p-4 transition-colors motion-reduce:transition-none ${darkMode ? isSelected ? "border-red-700 bg-red-950/45" : "border-slate-700 bg-slate-900 hover:bg-slate-800" : isSelected ? "border-brand bg-brand/[0.08]" : "border-border bg-background hover:bg-muted/50"}`}
                         >
-                          <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${isSelected ? "bg-brand text-white dark:bg-brand-dark-fill" : "bg-muted text-muted-foreground"}`}>
+                          <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${isSelected ? darkMode ? "bg-red-800 text-white" : "bg-brand text-white" : darkMode ? "bg-slate-800 text-slate-300" : "bg-muted text-muted-foreground"}`}>
                             <ScheduleIcon aria-hidden="true" className="size-5" />
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block text-base font-medium text-foreground">{option.label}</span>
-                            <span className="mt-1 block text-[13px] text-muted-foreground">{option.description}</span>
+                            <span className={`block text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>{option.label}</span>
+                            <span className={`mt-1 block text-[13px] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>{option.description}</span>
                           </span>
                           <RadioGroup.Item
                             id={`backup-schedule-${option.id}`}
                             value={option.id}
                             aria-label={option.label}
-                            className="flex size-5 shrink-0 items-center justify-center rounded-full border border-muted-foreground/50 text-brand outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=checked]:border-brand motion-reduce:transition-none dark:text-brand-dark-text dark:data-[state=checked]:border-brand-dark-text"
+                            className={`flex size-5 shrink-0 items-center justify-center rounded-full border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 motion-reduce:transition-none ${darkMode ? "border-slate-500 text-red-300 focus-visible:ring-offset-slate-900 data-[state=checked]:border-red-400" : "border-muted-foreground/50 text-brand focus-visible:ring-offset-background data-[state=checked]:border-brand"}`}
                           >
                             <RadioGroup.Indicator className="flex items-center justify-center">
                               <span className="size-2.5 rounded-full bg-current" />
@@ -363,29 +410,30 @@ function Settings() {
                     type="button"
                     onClick={handleCreateBackup}
                     disabled={loadingBackupSettings || creatingBackup}
-                    className="flex min-h-[84px] items-center gap-3 rounded-2xl border border-brand/50 bg-brand/[0.08] p-4 text-left transition-colors hover:border-brand hover:bg-brand/15 disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none dark:border-brand-dark-text/50 dark:bg-brand-dark-fill/15 dark:hover:bg-brand-dark-fill/25"
+                    className={`flex min-h-[84px] items-center gap-3 rounded-2xl border p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none ${darkMode ? "border-red-700/70 bg-red-950/35 hover:border-red-500 hover:bg-red-950/55" : "border-brand/50 bg-brand/[0.08] hover:border-brand hover:bg-brand/15"}`}
                   >
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white dark:bg-brand-dark-fill">
+                    <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl text-white ${darkMode ? "bg-red-800" : "bg-brand"}`}>
                       {creatingBackup ? <Loader2 aria-hidden="true" className="size-5 animate-spin" /> : <Database aria-hidden="true" className="size-5" />}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-base font-medium text-foreground">Full System</span>
-                      <span className="mt-1 block text-[13px] text-muted-foreground">Complete system snapshot</span>
+                      <span className={`block text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>Full System</span>
+                      <span className={`mt-1 block text-[13px] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Complete system snapshot</span>
                     </span>
-                    <span className="text-xs font-semibold text-brand dark:text-brand-dark-text">{creatingBackup ? "Creating..." : "Create"}</span>
+                    <span className={`text-xs font-semibold ${darkMode ? "text-red-300" : "text-brand"}`}>{creatingBackup ? "Creating..." : "Create"}</span>
                   </button>
                 </div>
               </section>
 
               <section className="space-y-3">
-                <h3 className="text-[17px] font-medium text-foreground">Backup History</h3>
-                <div className="overflow-hidden rounded-2xl border border-border bg-background">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-[680px] w-full border-collapse text-left">
+                <h3 className={`text-[17px] font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>Backup History</h3>
+                <div className={`overflow-hidden rounded-2xl border ${darkMode ? "border-slate-700 bg-[#0b1420]" : "border-border bg-background"}`}>
+                  <div className="hidden overflow-x-auto md:block">
+                    <table className="backup-history-table min-w-[760px] w-full border-collapse text-left">
                       <thead className="bg-muted/50">
                         <tr className="border-b border-border">
                           <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Backup Name</th>
                           <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Date</th>
+                          <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Time</th>
                           <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Type</th>
                           <th className="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Size</th>
                           <th className="px-4 py-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Status</th>
@@ -393,29 +441,30 @@ function Settings() {
                         </tr>
                       </thead>
                       <tbody>
-                        {(backupState.backups || []).map((backup) => (
+                        {paginatedBackups.map((backup) => (
                           <tr key={backup.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50 motion-reduce:transition-none">
-                            <td className="px-4 py-3 font-mono text-[13px] text-foreground">{backup.name}</td>
-                            <td className="px-4 py-3 text-sm text-muted-foreground">{formatBackupDateShort(backup.date)}</td>
+                            <td className={`px-4 py-3 font-mono text-[13px] ${darkMode ? "text-slate-200" : "text-slate-900"}`}>{backup.name}</td>
+                            <td className={`px-4 py-3 text-sm ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupDateShort(backup.date)}</td>
+                            <td className={`px-4 py-3 text-sm tabular-nums ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupTime(backup.date)}</td>
                             <td className="px-4 py-3">
-                              <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${backup.type === "Full System" ? "border-brand/50 bg-brand/[0.08] text-brand dark:border-brand-dark-text/50 dark:bg-brand-dark-fill/15 dark:text-brand-dark-text" : "border-border bg-muted text-muted-foreground"}`}>{backup.type}</span>
+                              <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${backup.type === "Full System" ? darkMode ? "border-red-400/60 bg-red-950/70 text-red-200" : "border-brand/50 bg-brand/[0.08] text-brand" : darkMode ? "border-slate-700 bg-slate-800 text-slate-300" : "border-border bg-muted text-muted-foreground"}`}>{backup.type}</span>
                             </td>
-                            <td className="px-4 py-3 text-right text-sm tabular-nums text-foreground">{formatBackupSize(backup.size)}</td>
+                            <td className={`px-4 py-3 text-right text-sm tabular-nums ${darkMode ? "text-slate-200" : "text-slate-900"}`}>{formatBackupSize(backup.size)}</td>
                             <td className="px-4 py-3">
-                              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-1 text-xs font-medium text-green-700 dark:text-green-400">
+                              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${darkMode ? "bg-green-950/50 text-green-300" : "bg-green-500/10 text-green-700"}`}>
                                 <span className="size-1.5 rounded-full bg-green-500" />
                                 {backup.status}
                               </span>
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex justify-end gap-2">
-                                <button type="button" onClick={() => handleDownloadBackup(backup)} className="inline-flex size-9 items-center justify-center rounded-[10px] bg-blue-500/10 text-blue-700 transition-colors hover:bg-blue-600 hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none dark:text-blue-400 dark:hover:text-white" aria-label="Download backup">
-                                  <Download aria-hidden="true" className="size-5" />
+                                <button type="button" onClick={() => handleDownloadBackup(backup)} disabled={downloadingBackupId !== null} title="Download the complete snapshot, including database records and uploaded files" className={`inline-flex size-9 items-center justify-center rounded-[10px] transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none ${darkMode ? "bg-blue-950/70 text-blue-300 hover:bg-blue-700 hover:text-white" : "bg-blue-500/10 text-blue-700 hover:bg-blue-600 hover:text-white"}`} aria-label={`Download complete backup ${backup.name}`}>
+                                  {downloadingBackupId === backup.id ? <Loader2 aria-hidden="true" className="size-5 animate-spin" /> : <Download aria-hidden="true" className="size-5" />}
                                 </button>
-                                <button type="button" onClick={() => handleRestoreBackup(backup.id)} className="inline-flex size-9 items-center justify-center rounded-[10px] bg-brand/[0.08] text-brand transition-colors hover:bg-brand hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none dark:bg-brand-dark-fill/15 dark:text-brand-dark-text dark:hover:bg-brand-dark-fill dark:hover:text-white" aria-label="Restore backup">
+                                <button type="button" onClick={() => handleRestoreBackup(backup.id)} className={`inline-flex size-9 items-center justify-center rounded-[10px] transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none ${darkMode ? "bg-amber-950/70 text-amber-300 hover:bg-amber-700 hover:text-white" : "bg-brand/[0.08] text-brand hover:bg-brand hover:text-white"}`} aria-label="Restore backup">
                                   <RotateCcw aria-hidden="true" className="size-5" />
                                 </button>
-                                <button type="button" onClick={() => handleDeleteBackup(backup.id)} className="inline-flex size-9 items-center justify-center rounded-[10px] bg-red-500/10 text-red-700 transition-colors hover:bg-red-600 hover:text-white active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none dark:text-red-400 dark:hover:text-white" aria-label="Delete backup">
+                                <button type="button" onClick={() => handleDeleteBackup(backup.id)} className={`inline-flex size-9 items-center justify-center rounded-[10px] transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none ${darkMode ? "bg-red-950/70 text-red-300 hover:bg-red-700 hover:text-white" : "bg-red-500/10 text-red-700 hover:bg-red-600 hover:text-white"}`} aria-label="Delete backup">
                                   <Trash2 aria-hidden="true" className="size-5" />
                                 </button>
                               </div>
@@ -425,7 +474,7 @@ function Settings() {
 
                         {(backupState.backups || []).length === 0 && (
                           <tr>
-                            <td colSpan="6" className="px-4 py-6 text-center text-sm text-muted-foreground">
+                            <td colSpan="7" className={`px-4 py-6 text-center text-sm ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>
                               {loadingBackupSettings ? "Loading backup history..." : "No backup snapshots yet. Create your first backup to get started."}
                             </td>
                           </tr>
@@ -433,6 +482,80 @@ function Settings() {
                       </tbody>
                     </table>
                   </div>
+                  <div className="space-y-3 p-3 md:hidden">
+                    {backupRecords.length > 0 ? paginatedBackups.map((backup) => (
+                      <article key={backup.id} className={`rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className={`break-all font-mono text-xs font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{backup.name}</p>
+                            <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupDateShort(backup.date)} · {formatBackupTime(backup.date)}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${darkMode ? "bg-green-950/50 text-green-300" : "bg-green-500/10 text-green-700"}`}>{backup.status}</span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${backup.type === "Full System" ? darkMode ? "border-red-400/60 bg-red-950/70 text-red-200" : "border-brand/50 bg-brand/[0.08] text-brand" : darkMode ? "border-slate-700 bg-slate-800 text-slate-300" : "border-border bg-muted text-muted-foreground"}`}>{backup.type}</span>
+                            <span className={`text-xs tabular-nums ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{formatBackupSize(backup.size)}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => handleDownloadBackup(backup)} disabled={downloadingBackupId !== null} title="Download complete backup" aria-label={`Download complete backup ${backup.name}`} className={`inline-flex size-9 items-center justify-center rounded-[10px] disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "bg-blue-950/70 text-blue-300 hover:bg-blue-700 hover:text-white" : "bg-blue-500/10 text-blue-700 hover:bg-blue-600 hover:text-white"}`}>
+                              {downloadingBackupId === backup.id ? <Loader2 aria-hidden="true" className="size-5 animate-spin" /> : <Download aria-hidden="true" className="size-5" />}
+                            </button>
+                            <button type="button" onClick={() => handleRestoreBackup(backup.id)} aria-label={`Restore backup ${backup.name}`} className={`inline-flex size-9 items-center justify-center rounded-[10px] ${darkMode ? "bg-amber-950/70 text-amber-300 hover:bg-amber-700 hover:text-white" : "bg-brand/[0.08] text-brand hover:bg-brand hover:text-white"}`}>
+                              <RotateCcw aria-hidden="true" className="size-5" />
+                            </button>
+                            <button type="button" onClick={() => handleDeleteBackup(backup.id)} aria-label={`Delete backup ${backup.name}`} className={`inline-flex size-9 items-center justify-center rounded-[10px] ${darkMode ? "bg-red-950/70 text-red-300 hover:bg-red-700 hover:text-white" : "bg-red-500/10 text-red-700 hover:bg-red-600 hover:text-white"}`}>
+                              <Trash2 aria-hidden="true" className="size-5" />
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    )) : (
+                      <div className={`p-6 text-center text-sm ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>
+                        {loadingBackupSettings ? "Loading backup history..." : "No backup snapshots yet. Create your first backup to get started."}
+                      </div>
+                    )}
+                  </div>
+                  {backupRecords.length > backupPageSize && (
+                    <div className={`flex flex-col items-center justify-between gap-3 border-t px-3 py-3 sm:flex-row ${darkMode ? "border-slate-700 bg-[#0b1420]" : "border-border bg-muted/30"}`}>
+                      <span className={`text-xs ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>
+                        Showing {backupRangeStart}–{backupRangeEnd} of {backupRecords.length} backups
+                      </span>
+                      <div className="flex flex-wrap items-center justify-center gap-2" role="navigation" aria-label="Backup history pagination">
+                        <button
+                          type="button"
+                          onClick={() => setBackupPage((page) => Math.max(page - 1, 1))}
+                          disabled={activeBackupPage === 1}
+                          className={`rounded-lg border px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-border bg-background text-slate-700 hover:bg-muted"}`}
+                        >
+                          Previous
+                        </button>
+                        {Array.from({ length: Math.min(5, totalBackupPages) }, (_, index) => {
+                          const firstPage = Math.max(1, Math.min(activeBackupPage - 2, totalBackupPages - 4));
+                          const pageNumber = firstPage + index;
+                          return (
+                            <button
+                              key={pageNumber}
+                              type="button"
+                              onClick={() => setBackupPage(pageNumber)}
+                              aria-current={pageNumber === activeBackupPage ? "page" : undefined}
+                              className={`size-9 rounded-lg text-xs font-semibold ${pageNumber === activeBackupPage ? "bg-red-700 text-white" : darkMode ? "border border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border border-border bg-background text-slate-700 hover:bg-muted"}`}
+                            >
+                              {pageNumber}
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => setBackupPage((page) => Math.min(page + 1, totalBackupPages))}
+                          disabled={activeBackupPage === totalBackupPages}
+                          className={`rounded-lg border px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-border bg-background text-slate-700 hover:bg-muted"}`}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </section>
             </div>
@@ -469,7 +592,7 @@ function Settings() {
     setSavingId(accountId);
     try {
       const response = await updateAdminUserAccess(accountId, { role: "skilled_worker" });
-      setUsers((current) => current.map((item) => (item._id || item.id) === accountId ? response.user : item));
+      setUsers((current) => current.map((item) => (item._id || item.id) === accountId ? { ...response.user, is_active: true } : item));
       recordActivity(user, `Upgraded ${permissionAccount.first_name} ${permissionAccount.last_name} to staff.`, "Settings");
       toast.success("Customer upgraded to staff.");
       setPermissionAccount(null);
@@ -635,6 +758,14 @@ function Settings() {
     year: "numeric",
   });
 
+  const formatBackupTime = (value) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "-" : date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
   const formatBackupSize = (sizeInMB) => `${Number(sizeInMB || 0).toFixed(1)} MB`;
 
   const backupMetrics = useMemo(() => {
@@ -647,6 +778,16 @@ function Settings() {
       successRate: backups.length ? Math.round((successfulBackups / backups.length) * 100) : 0,
     };
   }, [backupState, loadingBackupSettings]);
+
+  const backupRecords = backupState.backups || [];
+  const totalBackupPages = Math.max(1, Math.ceil(backupRecords.length / backupPageSize));
+  const activeBackupPage = Math.min(backupPage, totalBackupPages);
+  const paginatedBackups = backupRecords.slice(
+    (activeBackupPage - 1) * backupPageSize,
+    activeBackupPage * backupPageSize,
+  );
+  const backupRangeStart = backupRecords.length === 0 ? 0 : (activeBackupPage - 1) * backupPageSize + 1;
+  const backupRangeEnd = Math.min(activeBackupPage * backupPageSize, backupRecords.length);
 
   const persistBackupState = async (nextState) => {
     const payload = {
@@ -701,28 +842,41 @@ function Settings() {
   };
 
   const handleDownloadBackup = async (backup) => {
+    if (downloadingBackupId !== null) return;
+    setDownloadingBackupId(backup.id);
+    let downloadUrl;
+    let link;
     try {
       const { blob, filename } = await downloadSystemBackup(backup.id);
-      const downloadUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
+      downloadUrl = URL.createObjectURL(blob);
+      link = document.createElement("a");
       link.href = downloadUrl;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      toast.success(`Downloading ${backup.name}.`);
     } catch (error) {
       toast.error(error?.data?.message || error?.message || "Unable to download backup.");
+    } finally {
+      link?.remove();
+      if (downloadUrl) window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      setDownloadingBackupId(null);
     }
   };
 
   const handleRestoreBackup = async (backupId) => {
     const backup = (backupState.backups || []).find((item) => item.id === backupId);
     if (!backup) return;
-    if (!window.confirm(`Restore ${backup.name}? Current database records and uploaded files will be replaced.`)) return;
+    restoreDialogTriggerRef.current = document.activeElement;
+    setRestoreConfirmation(backup);
+  };
 
+  const confirmRestoreBackup = async () => {
+    if (!restoreConfirmation || restoringBackup) return;
+    const backup = restoreConfirmation;
+    setRestoringBackup(true);
     try {
-      const response = await restoreSystemBackup(backupId);
+      const response = await restoreSystemBackup(backup.id);
       setBackupState({
         selectedSchedule: response.backup_schedule || backupState.selectedSchedule,
         status: response.backup_status || "Restored",
@@ -730,18 +884,29 @@ function Settings() {
         backups: Array.isArray(response.backup_history) ? response.backup_history : backupState.backups,
       });
       recordActivity(user, `Restored backup ${backup.name}.`, "Settings");
-      toast.success(`${backup.name} restored successfully.`);
+      toast.success(`${backup.name} restored. All users have been signed out.`);
+      logout();
     } catch (error) {
       toast.error(error?.data?.message || error?.message || "Unable to restore backup.");
+    } finally {
+      setRestoringBackup(false);
+      setRestoreConfirmation(null);
     }
   };
 
   const handleDeleteBackup = async (backupId) => {
     const backup = (backupState.backups || []).find((item) => item.id === backupId);
-    if (!backup || !window.confirm(`Delete ${backup.name}? This backup file will be permanently removed.`)) return;
+    if (!backup) return;
+    deleteDialogTriggerRef.current = document.activeElement;
+    setDeleteConfirmation(backup);
+  };
 
+  const confirmDeleteBackup = async () => {
+    if (!deleteConfirmation || deletingBackup) return;
+    const backup = deleteConfirmation;
+    setDeletingBackup(true);
     try {
-      const response = await deleteSystemBackup(backupId);
+      const response = await deleteSystemBackup(backup.id);
       setBackupState({
         selectedSchedule: response.backup_schedule || backupState.selectedSchedule,
         status: response.backup_status || "Success",
@@ -751,6 +916,9 @@ function Settings() {
       toast.success("Backup deleted.");
     } catch (error) {
       toast.error(error?.data?.message || error?.message || "Unable to delete backup.");
+    } finally {
+      setDeletingBackup(false);
+      setDeleteConfirmation(null);
     }
   };
 
@@ -808,14 +976,20 @@ function Settings() {
           </section>}
 
           <section className={`mt-4 rounded-2xl border p-2 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
-            <div className="flex flex-wrap gap-1">
-              {[
-                { key: "all", label: "All Users", count: counts.all },
-                { key: "customer", label: "Customers", count: counts.customer },
-                { key: "staff", label: "Staff", count: counts.staff },
-                { key: "helper", label: "Helpers", count: counts.helper },
-                { key: "skilled_worker", label: "Skilled Workers", count: counts.skilled_worker },
-              ].map((tab) => (
+            <div className="lg:hidden">
+              <select
+                aria-label="User category"
+                value={activeTab}
+                onChange={(event) => setActiveTab(event.target.value)}
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-red-100 ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100 focus:border-red-500" : "border-slate-200 bg-white text-slate-700 focus:border-red-500"}`}
+              >
+                {userCategoryTabs.map((tab) => (
+                  <option key={tab.key} value={tab.key}>{tab.label} ({tab.count})</option>
+                ))}
+              </select>
+            </div>
+            <div className="hidden flex-wrap gap-1 lg:flex">
+              {userCategoryTabs.map((tab) => (
                 <button
                   key={tab.key}
                   type="button"
@@ -839,9 +1013,68 @@ function Settings() {
             <span className={`text-xs font-semibold ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{loading ? "Loading users..." : `${displayUsers.length} users found`}</span>
           </div>
 
-          <section className={`mt-4 overflow-hidden rounded-[22px] border shadow-[0_18px_45px_-28px_rgba(15,23,42,0.55)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+          <section className={`settings-user-access mt-4 overflow-hidden rounded-[22px] border shadow-[0_18px_45px_-28px_rgba(15,23,42,0.55)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
             {loading ? <div className={`flex items-center justify-center gap-2 p-16 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}><Loader2 size={18} className="animate-spin" /> Loading user access...</div> : displayUsers.length === 0 ? <div className="p-16 text-center"><ShieldCheck size={30} className="mx-auto text-slate-300" /><p className={`mt-3 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-600"}`}>No users found</p><p className="mt-1 text-xs text-slate-400">Try another search or permission group.</p></div> : <div className="overflow-x-auto"><table className="min-w-[1180px] w-full border-collapse text-left"><thead className={darkMode ? "bg-slate-800/80" : "bg-slate-50"}><tr className={`border-b ${darkMode ? "border-slate-700" : "border-slate-200"}`}><th className={`sticky left-0 z-10 w-[280px] px-5 py-4 text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "bg-slate-800 text-slate-400" : "bg-slate-50 text-slate-500"}`}>User</th><th className={`w-[200px] px-3 py-4 text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Role</th><th className={`w-[240px] px-3 py-4 text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Module Access</th><th className={`w-[190px] px-3 py-4 text-[10px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Actions</th></tr></thead><tbody className={`divide-y ${darkMode ? "divide-slate-800" : "divide-slate-100"}`}>{displayUsers.map((account) => { const accountId = account._id || account.id; const permissions = getPermissions(account); const accountActive = account.is_active !== false; const accountIsAdmin = account.role === "admin" || account.role === "super_admin"; const isStaff = account.role === "skilled_worker"; const staffAccess = isStaff ? normalizeStaffAccess(account.staff_access) : null; const effectivePermissions = accountIsAdmin ? Object.fromEntries(PERMISSIONS.map(({ key }) => [key, true])) : permissions; const enabledStaffModules = isStaff ? STAFF_MODULES.filter(({ key }) => staffAccess.modules[key].enabled).length : 0; const moduleCount = isStaff || accountIsAdmin ? STAFF_MODULES.length : 6; const enabledModuleCount = accountIsAdmin ? moduleCount : isStaff ? enabledStaffModules : Math.min(5, Object.values(effectivePermissions).filter(Boolean).length); const moduleAccessLabel = accountIsAdmin ? "Full Module Access" : isStaff ? `${enabledStaffModules} of ${STAFF_MODULES.length} staff modules` : getModuleAccessLabel(effectivePermissions); const actionClasses = accountIsAdmin ? (darkMode ? "border-emerald-800 bg-emerald-950/70 text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700") : (darkMode ? "border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"); const avatarLetters = `${(account.first_name || account.email || "U").charAt(0)}${(account.last_name || account.email || "U").charAt(0)}`.toUpperCase(); const name = `${account.first_name || ""} ${account.last_name || ""}`.trim() || "User"; return <tr key={accountId} className={`transition ${darkMode ? "hover:bg-slate-800/50" : "hover:bg-slate-50"}`}><td className={`sticky left-0 z-10 px-5 py-4 ${darkMode ? "bg-slate-900" : "bg-white"}`}><div className="flex min-w-[245px] items-center gap-3"><span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-red-700 to-amber-600 text-[10px] font-black text-white shadow-sm ${darkMode ? "ring-1 ring-white/10" : ""}`}>{avatarLetters}</span><div className="min-w-0"><div className="truncate text-[15px] font-semibold text-slate-900 dark:text-slate-200">{name}</div><div className="truncate text-xs text-slate-500">{account.email}</div></div></div></td><td className="px-3 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.08em] ${getRoleBadgeClasses(account.role)}`}>{accountActive ? roleLabel(account.role) : "Disabled"}</span></td><td className="px-3 py-4"><div className="flex items-center gap-2"><span className="inline-flex items-center gap-1">{Array.from({ length: moduleCount }).map((_, dotIndex) => (<span key={dotIndex} className={`h-2.5 w-2.5 rounded-full ${dotIndex < enabledModuleCount ? "bg-red-700" : darkMode ? "bg-slate-600" : "bg-slate-300"}`} />))}</span><span className={`text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{moduleAccessLabel}</span></div></td><td className="px-3 py-4"><div className="flex items-center justify-end">{accountIsAdmin ? <span className={`inline-flex min-w-[120px] items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold ${actionClasses}`}>✓ Full Access</span> : isStaff ? <button type="button" onClick={() => openStaffAccess(account)} className={`inline-flex min-w-[120px] items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition ${actionClasses}`} aria-label={`Manage access for ${name}`}>Manage Access</button> : canManageAccess ? <button type="button" onClick={() => openPermissionMatrix(account)} className={`inline-flex min-w-[120px] items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition ${actionClasses}`} aria-label={`View permissions for ${name}`}>View Permissions</button> : <span className="px-3 py-2 text-xs text-slate-400">Read Only</span>}</div></td></tr>; })}</tbody></table></div>}
           </section>
+          {!loading && displayUsers.length > 0 && (
+            <div className="mt-3 space-y-3 md:hidden">
+              {displayUsers.map((account) => {
+                const accountIsAdmin = account.role === "admin" || account.role === "super_admin";
+                const isStaff = account.role === "skilled_worker";
+                const permissions = getPermissions(account);
+                const staffAccess = isStaff ? normalizeStaffAccess(account.staff_access) : null;
+                const enabledStaffModules = isStaff ? STAFF_MODULES.filter(({ key }) => staffAccess.modules[key].enabled).length : 0;
+                const moduleAccessLabel = accountIsAdmin
+                  ? "Full Module Access"
+                  : isStaff
+                    ? `${enabledStaffModules} of ${STAFF_MODULES.length} staff modules`
+                    : getModuleAccessLabel(permissions);
+                const accountActive = account.is_active !== false;
+                const name = `${account.first_name || ""} ${account.last_name || ""}`.trim() || "User";
+                const actionClasses = accountIsAdmin
+                  ? (darkMode ? "border-emerald-800 bg-emerald-950/70 text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700")
+                  : (darkMode ? "border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100");
+
+                return (
+                  <article key={account._id || account.id} className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-red-700 to-amber-600 text-xs font-black text-white">
+                          {`${(account.first_name || account.email || "U").charAt(0)}${(account.last_name || account.email || "U").charAt(0)}`.toUpperCase()}
+                        </span>
+                        <div className="min-w-0">
+                          <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{name}</p>
+                          <p className="break-all text-xs text-slate-500">{account.email}</p>
+                        </div>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${getRoleBadgeClasses(account.role)}`}>
+                        {accountActive ? roleLabel(account.role) : "Disabled"}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex items-center gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+                      <span className="flex shrink-0 items-center gap-1" aria-label={moduleAccessLabel}>
+                        {Array.from({ length: isStaff || accountIsAdmin ? STAFF_MODULES.length : 6 }).map((_, dotIndex) => (
+                          <span key={dotIndex} className={`size-2 rounded-full ${dotIndex < (accountIsAdmin ? STAFF_MODULES.length : isStaff ? enabledStaffModules : Math.min(5, Object.values(permissions).filter(Boolean).length)) ? "bg-red-700" : darkMode ? "bg-slate-600" : "bg-slate-300"}`} />
+                        ))}
+                      </span>
+                      <span className={`min-w-0 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{moduleAccessLabel}</span>
+                    </div>
+                    <div className="mt-3 flex justify-end">
+                      {accountIsAdmin ? (
+                        <span className={`inline-flex items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold ${actionClasses}`}>Full Access</span>
+                      ) : isStaff ? (
+                        <button type="button" onClick={() => openStaffAccess(account)} className={`inline-flex items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition ${actionClasses}`} aria-label={`Manage access for ${name}`}>Manage Access</button>
+                      ) : canManageAccess ? (
+                        <button type="button" onClick={() => openPermissionMatrix(account)} className={`inline-flex items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition ${actionClasses}`} aria-label={`View permissions for ${name}`}>View Permissions</button>
+                      ) : (
+                        <span className="px-3 py-2 text-xs text-slate-400">Read Only</span>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
             </>
           )}
 
@@ -927,6 +1160,102 @@ function Settings() {
                 <button type="button" onClick={() => setShowUpgradeConfirm(false)} disabled={savingId === (permissionAccount._id || permissionAccount.id)} className={`rounded-md border px-4 py-2.5 text-sm font-medium ${darkMode ? "border-slate-700 text-slate-200 hover:bg-slate-800" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>Cancel</button>
                 <button type="button" onClick={() => { setShowUpgradeConfirm(false); upgradeCustomerToStaff(); }} disabled={savingId === (permissionAccount._id || permissionAccount.id)} className="rounded-md bg-red-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-900 disabled:cursor-not-allowed disabled:opacity-60">{savingId === (permissionAccount._id || permissionAccount.id) ? "Upgrading..." : "Confirm Upgrade"}</button>
               </div>
+            </section>
+          </div>}
+          {restoreConfirmation && <div
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
+            onMouseDown={(event) => {
+              if (!restoringBackup && event.target === event.currentTarget) setRestoreConfirmation(null);
+            }}
+          >
+            <section
+              ref={restoreDialogRef}
+              role="alertdialog"
+              aria-modal="true"
+              tabIndex={-1}
+              aria-labelledby="restore-confirm-title"
+              aria-describedby="restore-confirm-description"
+              className={`w-full max-w-md rounded-xl border p-6 shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}
+            >
+              <div className="flex items-start gap-3">
+                <span className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${darkMode ? "bg-amber-950/60 text-amber-300" : "bg-amber-100 text-amber-800"}`}>
+                  <RotateCcw aria-hidden="true" className="size-5" />
+                </span>
+                <div className="min-w-0">
+                  <h2 id="restore-confirm-title" className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Restore backup?</h2>
+                  <p className={`mt-1 break-words text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{restoreConfirmation.name}</p>
+                </div>
+              </div>
+              <p id="restore-confirm-description" className={`mt-4 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                This will replace the current database records and uploaded files with the contents of this backup. This action cannot be undone from the system after it completes.
+              </p>
+              <footer className={`mt-6 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
+                <button
+                  type="button"
+                  onClick={() => setRestoreConfirmation(null)}
+                  disabled={restoringBackup}
+                  className={`rounded-md border px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-slate-700 text-slate-200 hover:bg-slate-800" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmRestoreBackup}
+                  disabled={restoringBackup}
+                  className="inline-flex items-center justify-center gap-2 rounded-md bg-red-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {restoringBackup && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
+                  {restoringBackup ? "Restoring..." : "Restore Backup"}
+                </button>
+              </footer>
+            </section>
+          </div>}
+          {deleteConfirmation && <div
+            className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
+            onMouseDown={(event) => {
+              if (!deletingBackup && event.target === event.currentTarget) setDeleteConfirmation(null);
+            }}
+          >
+            <section
+              ref={deleteDialogRef}
+              role="alertdialog"
+              aria-modal="true"
+              tabIndex={-1}
+              aria-labelledby="delete-backup-title"
+              aria-describedby="delete-backup-description"
+              className={`w-full max-w-md rounded-xl border p-6 shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}
+            >
+              <div className="flex items-start gap-3">
+                <span className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${darkMode ? "bg-red-950/60 text-red-300" : "bg-red-100 text-red-800"}`}>
+                  <Trash2 aria-hidden="true" className="size-5" />
+                </span>
+                <div className="min-w-0">
+                  <h2 id="delete-backup-title" className={`text-lg font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Delete backup?</h2>
+                  <p className={`mt-1 break-words text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{deleteConfirmation.name}</p>
+                </div>
+              </div>
+              <p id="delete-backup-description" className={`mt-4 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                This backup file will be permanently deleted and can no longer be restored.
+              </p>
+              <footer className={`mt-6 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmation(null)}
+                  disabled={deletingBackup}
+                  className={`rounded-md border px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-slate-700 text-slate-200 hover:bg-slate-800" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                >
+                  Keep Backup
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteBackup}
+                  disabled={deletingBackup}
+                  className="inline-flex items-center justify-center gap-2 rounded-md bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {deletingBackup && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
+                  {deletingBackup ? "Deleting..." : "Delete Backup"}
+                </button>
+              </footer>
             </section>
           </div>}
         </main>

@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import Admin from "../models/Admin.js";
 
 /**
  * Authentication Middleware
@@ -23,15 +24,24 @@ export const authMiddleware = async (req, res, next) => {
       process.env.JWT_SECRET || "your-secret-key"
     );
 
-    if (decoded.role !== "admin") {
-      const user = await User.findById(decoded.id).select("session_version").lean();
-      if (!user || Number(decoded.session_version || 0) !== Number(user.session_version || 0)) {
-        return res.status(401).json({
-          success: false,
-          code: "SESSION_REVOKED",
-          message: "Your account role changed. Please sign in again.",
-        });
-      }
+    let account;
+    if (decoded.auth_source === "admin") {
+      account = await Admin.findById(decoded.id).select("session_version").lean();
+    } else if (decoded.auth_source === "user") {
+      account = await User.findById(decoded.id).select("session_version").lean();
+    } else if (decoded.role === "admin") {
+      account = await Admin.findById(decoded.id).select("session_version").lean()
+        || await User.findById(decoded.id).select("session_version").lean();
+    } else {
+      account = await User.findById(decoded.id).select("session_version").lean();
+    }
+
+    if (!account || Number(decoded.session_version || 0) !== Number(account.session_version || 0)) {
+      return res.status(401).json({
+        success: false,
+        code: "SESSION_REVOKED",
+        message: "Your session is no longer valid. Please sign in again.",
+      });
     }
 
     // Attach user info to request

@@ -1187,7 +1187,21 @@ function Transactions() {
             ]}
           />
 
-          <div className="flex gap-4 mt-6 flex-wrap">
+          <div className="mt-6 md:hidden">
+            <select
+              aria-label="Transaction category"
+              value={activeTable}
+              onChange={(event) => setActiveTable(event.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+            >
+              <option value="all">All</option>
+              <option value="projects">Completed Projects</option>
+              <option value="receipts">Contract &amp; Warranties</option>
+              <option value="feedback">Customer Feedbacks</option>
+            </select>
+          </div>
+
+          <div className="mt-6 hidden flex-wrap gap-4 md:flex">
 
             <button
               onClick={() => setActiveTable("all")}
@@ -1242,187 +1256,162 @@ function Transactions() {
           </div>
 
           <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden">
-
-            <div className="overflow-x-auto">
-
-              <table className="w-full">
-
-                <thead className="bg-gray-50">
-                  {activeTable === "feedback" ? (
-                    <tr>
-                      <th className="p-4 text-left">Customer</th>
-                      <th className="p-4 text-left">Product / Order</th>
-                      <th className="p-4 text-left">Rating</th>
-                      <th className="p-4 text-left">Photos</th>
-                      <th className="p-4 text-left">Submitted</th>
-                      <th className="p-4 text-center">Actions</th>
-                    </tr>
-                  ) : (
-                    <tr>
-                      <th className="p-4 text-left">Client</th>
-                      <th className="p-4 text-left">Product / Project</th>
-                      <th className="p-4 text-left">Paid / Total</th>
-                      <th className="p-4 text-left">Method</th>
-                      <th className="p-4 text-left">Customer Type</th>
-                      <th className="p-4 text-left">Install Date</th>
-                      <th className="p-4 text-left">Project Progress</th>
-                      <th className="p-4 text-left">Status</th>
-                      <th className="p-4 text-center">Actions</th>
-                    </tr>
-                  )}
-                </thead>
-
-                <tbody>
-
-                  {currentData.map((order, index) => {
-                    const customerName = order.customer_name || (order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : "N/A");
-                    const productLabel = Array.isArray(order.items) && order.items.length > 0
-                      ? (order.items.length > 1 ? "Batch Order" : (order.items[0].name || order.items[0].product_name || "Project"))
-                      : "N/A";
-                    const amountVal = order.contract_amount || order.total_amount || 0;
-                    const paidAmount = Number(order.payment_amount || order.downpayment_amount || (order.downpayment_received ? amountVal * 0.5 : 0));
-                    const amount = `₱${Number(amountVal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                    const inspectionLabel = productLabel;
-                    const orderType = order.order_type === "walk_in_customer" ? "Walk-in" : "Website Order";
-                    const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
-                    const installDate = order.estimated_installation_date ? formatDateToMMDDYYYY(order.estimated_installation_date) : "—";
-                    const projectCategory = isCompletedProject(order) ? "Completed" : "In Progress";
-                    const totalProjectAmount = Number(order.contract_amount || order.total_amount || 0);
-                    const paidAmountForStatus = Number(order.payment_proof_amount ?? order.payment_amount ?? order.downpayment_amount ?? 0);
-                    const proof = getCustomerPaymentProof(order);
-                    const hasProofSubmission = proof.submitted || (order.payment_status || "").toString().toLowerCase() === "paid" || (order.payment_status || "").toString().toLowerCase() === "pending_confirmation" || (order.payment_status || "").toString().toLowerCase() === "needs_confirmation";
-                    const isFullyPaid = totalProjectAmount > 0 ? paidAmountForStatus >= totalProjectAmount : false;
-                    const statusLabel = isFullyPaid ? "Fully Paid" : "Pending";
-                    const showNeedsConfirmation = !isFullyPaid && hasProofSubmission;
-
-                    return (
-                      <tr key={order._id || index} className="border-t hover:bg-gray-50">
-                        {activeTable === "feedback" ? (
-                          <>
-                            <td className="p-4">{renderClientCell(order, customerName)}</td>
-                            <td className="p-4">
-                              <div className="space-y-1">
-                                {(order.items || []).map((item, itemIndex) => (
-                                  <div key={`${item.product_id || item.name || itemIndex}`} className="font-semibold text-slate-900">
-                                    {item.name || item.product_name || "Product"}
-                                  </div>
-                                ))}
-                                <div className="text-xs text-slate-500">{order.tracking || "—"}</div>
-                              </div>
-                            </td>
-                            <td className="p-4">
-                              <div className="flex items-center gap-1" aria-label={`${Number(order.review?.rating || 0)} out of 5 stars`}>
-                                {Array.from({ length: 5 }, (_, starIndex) => (
-                                  <Star
-                                    key={starIndex}
-                                    size={15}
-                                    className={starIndex < Number(order.review?.rating || 0) ? "fill-amber-400 text-amber-400" : "text-slate-300"}
-                                  />
-                                ))}
-                                <span className="ml-1 text-sm font-semibold text-slate-700">{Number(order.review?.rating || 0)}/5</span>
-                              </div>
-                            </td>
-                            <td className="p-4">
-                              <div className="flex flex-wrap gap-2">
-                                {(order.review?.photos || []).map((photo, photoIndex) => (
-                                  <a key={`${photo}-${photoIndex}`} href={photo} target="_blank" rel="noreferrer" aria-label={`Open review photo ${photoIndex + 1}`}>
-                                    <img src={photo} alt={`Review attachment ${photoIndex + 1}`} className="h-12 w-12 rounded-md border border-slate-200 object-cover" />
-                                  </a>
-                                ))}
-                                {!(order.review?.photos || []).length && <span className="text-sm text-slate-400">None</span>}
-                              </div>
-                            </td>
-                            <td className="whitespace-nowrap p-4 text-sm text-slate-600">
-                              {order.review?.submittedAt ? formatDateToMMMDDYYYY(order.review.submittedAt) : "—"}
-                            </td>
-                            <td className="p-4 text-center">
-                              <div className="flex justify-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setFeedbackPreviewOrder(order)}
-                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${darkMode ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25" : "bg-blue-100 text-blue-600 hover:bg-blue-200"}`}
-                                  aria-label={`View feedback from ${customerName}`}
-                                  title="View feedback"
-                                >
-                                  <Eye size={17} aria-hidden="true" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setFeedbackDeleteOrder(order)}
-                                  className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-100 text-red-600 hover:bg-red-200"}`}
-                                  aria-label={`Delete feedback from ${customerName}`}
-                                  title="Delete Customer Feedback"
-                                >
-                                  <Trash2 size={17} aria-hidden="true" />
-                                </button>
-                              </div>
-                            </td>
-                          </>
-                        ) : (
-                          <>
-                            <td className="p-4">{renderClientCell(order, customerName)}</td>
-                            <td className="p-4">
-                              <div className="font-semibold text-slate-900">{inspectionLabel}</div>
-                              <div className="text-xs text-slate-500">{order.tracking || "—"}</div>
-                            </td>
-                            <td className="p-4">
-                              <div className="font-bold text-emerald-600">₱{paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                              <div className="text-xs text-slate-500">of {amount}</div>
-                            </td>
-                            <td className="p-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${paymentMethod === "Online" ? (darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-50 text-rose-700") : (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-50 text-emerald-700")}`}>{paymentMethod}</span></td>
-                            <td className="p-4"><span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{orderType}</span></td>
-                            <td className="p-4 text-sm text-slate-600">{installDate}</td>
-                            <td className="p-4"><span className={`inline-flex rounded-md px-3 py-1 text-xs font-semibold ${projectCategory === "Completed" ? "bg-rose-50 text-rose-700" : "bg-violet-50 text-violet-700"}`}>{projectCategory}</span></td>
-                            <td className="p-4">
-                              {isFullyPaid ? (
-                                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700"}`}>{statusLabel}</span>
-                              ) : (
-                                <div className="flex flex-col items-start gap-1.5">
-                                  <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700"}`}>{statusLabel}</span>
-                                  {showNeedsConfirmation && (
-                                    <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}>
-                                      <span aria-hidden="true">🔔</span>
-                                      Needs Confirmation
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                            <td className="p-4">
-                              <div className="flex flex-wrap justify-center gap-2">
-                                {activeTable === "projects" && canCreateWarranty(order) && (
-                                  <button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition">
-                                    <ShieldCheck size={20} />
-                                  </button>
-                                )}
-                                <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition">
-                                  <Eye size={18} />
-                                </button>
-                                {isPaymentProofConfirmed(order) ? (
-                                  <button type="button" title="Payment proof confirmed" aria-label="Payment proof confirmed" disabled className="p-2 rounded-lg bg-slate-100 text-slate-400 cursor-not-allowed">
-                                    <Lock size={18} />
-                                  </button>
-                                ) : (
-                                  <button type="button" title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition">
-                                    <Pencil size={18} />
-                                  </button>
-                                )}
-                                <button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition">
-                                  <FileText size={18} />
-                                </button>
-                              </div>
-                            </td>
-                          </>
-                        )}
-
+            <div className="hidden md:block">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    {activeTable === "feedback" ? (
+                      <tr>
+                        <th className="p-4 text-left">Customer</th>
+                        <th className="p-4 text-left">Product / Order</th>
+                        <th className="p-4 text-left">Rating</th>
+                        <th className="p-4 text-left">Photos</th>
+                        <th className="p-4 text-left">Submitted</th>
+                        <th className="p-4 text-center">Actions</th>
                       </tr>
-                    );
-                  })}
+                    ) : (
+                      <tr>
+                        <th className="p-4 text-left">Client</th>
+                        <th className="p-4 text-left">Product / Project</th>
+                        <th className="p-4 text-left">Paid / Total</th>
+                        <th className="p-4 text-left">Method</th>
+                        <th className="p-4 text-left">Customer Type</th>
+                        <th className="p-4 text-left">Install Date</th>
+                        <th className="p-4 text-left">Project Progress</th>
+                        <th className="p-4 text-left">Status</th>
+                        <th className="p-4 text-center">Actions</th>
+                      </tr>
+                    )}
+                  </thead>
+                  <tbody>
+                    {currentData.map((order, index) => {
+                      const customerName = order.customer_name || (order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : "N/A");
+                      const productLabel = Array.isArray(order.items) && order.items.length > 0
+                        ? (order.items.length > 1 ? "Batch Order" : (order.items[0].name || order.items[0].product_name || "Project"))
+                        : "N/A";
+                      const amountVal = order.contract_amount || order.total_amount || 0;
+                      const paidAmount = Number(order.payment_amount || order.downpayment_amount || (order.downpayment_received ? amountVal * 0.5 : 0));
+                      const amount = `₱${Number(amountVal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                      const inspectionLabel = productLabel;
+                      const orderType = order.order_type === "walk_in_customer" ? "Walk-in" : "Website Order";
+                      const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
+                      const installDate = order.estimated_installation_date ? formatDateToMMDDYYYY(order.estimated_installation_date) : "—";
+                      const projectCategory = isCompletedProject(order) ? "Completed" : "In Progress";
+                      const totalProjectAmount = Number(order.contract_amount || order.total_amount || 0);
+                      const paidAmountForStatus = Number(order.payment_proof_amount ?? order.payment_amount ?? order.downpayment_amount ?? 0);
+                      const proof = getCustomerPaymentProof(order);
+                      const hasProofSubmission = proof.submitted || (order.payment_status || "").toString().toLowerCase() === "paid" || (order.payment_status || "").toString().toLowerCase() === "pending_confirmation" || (order.payment_status || "").toString().toLowerCase() === "needs_confirmation";
+                      const isFullyPaid = totalProjectAmount > 0 ? paidAmountForStatus >= totalProjectAmount : false;
+                      const statusLabel = isFullyPaid ? "Fully Paid" : "Pending";
+                      const showNeedsConfirmation = !isFullyPaid && hasProofSubmission;
 
-                </tbody>
+                      return (
+                        <tr key={order._id || index} className="border-t hover:bg-gray-50">
+                          {activeTable === "feedback" ? (
+                            <>
+                              <td className="p-4">{renderClientCell(order, customerName)}</td>
+                              <td className="p-4">
+                                <div className="space-y-1">
+                                  {(order.items || []).map((item, itemIndex) => (
+                                    <div key={`${item.product_id || item.name || itemIndex}`} className="font-semibold text-slate-900">
+                                      {item.name || item.product_name || "Product"}
+                                    </div>
+                                  ))}
+                                  <div className="text-xs text-slate-500">{order.tracking || "—"}</div>
+                                </div>
+                              </td>
+                              <td className="p-4">
+                                <div className="flex items-center gap-1" aria-label={`${Number(order.review?.rating || 0)} out of 5 stars`}>
+                                  {Array.from({ length: 5 }, (_, starIndex) => (
+                                    <Star key={starIndex} size={15} className={starIndex < Number(order.review?.rating || 0) ? "fill-amber-400 text-amber-400" : "text-slate-300"} />
+                                  ))}
+                                  <span className="ml-1 text-sm font-semibold text-slate-700">{Number(order.review?.rating || 0)}/5</span>
+                                </div>
+                              </td>
+                              <td className="p-4">
+                                <div className="flex flex-wrap gap-2">
+                                  {(order.review?.photos || []).map((photo, photoIndex) => (
+                                    <a key={`${photo}-${photoIndex}`} href={photo} target="_blank" rel="noreferrer" aria-label={`Open review photo ${photoIndex + 1}`}>
+                                      <img src={photo} alt={`Review attachment ${photoIndex + 1}`} className="h-12 w-12 rounded-md border border-slate-200 object-cover" />
+                                    </a>
+                                  ))}
+                                  {!(order.review?.photos || []).length && <span className="text-sm text-slate-400">None</span>}
+                                </div>
+                              </td>
+                              <td className="whitespace-nowrap p-4 text-sm text-slate-600">
+                                {order.review?.submittedAt ? formatDateToMMMDDYYYY(order.review.submittedAt) : "—"}
+                              </td>
+                              <td className="p-4 text-center">
+                                <div className="flex justify-center gap-2">
+                                  <button type="button" onClick={() => setFeedbackPreviewOrder(order)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${darkMode ? "bg-blue-500/15 text-blue-300 hover:bg-blue-500/25" : "bg-blue-100 text-blue-600 hover:bg-blue-200"}`} aria-label={`View feedback from ${customerName}`} title="View feedback">
+                                    <Eye size={17} aria-hidden="true" />
+                                  </button>
+                                  <button type="button" onClick={() => setFeedbackDeleteOrder(order)} className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "bg-red-500/15 text-red-300 hover:bg-red-500/25" : "bg-red-100 text-red-600 hover:bg-red-200"}`} aria-label={`Delete feedback from ${customerName}`} title="Delete Customer Feedback">
+                                    <Trash2 size={17} aria-hidden="true" />
+                                  </button>
+                                </div>
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="p-4">{renderClientCell(order, customerName)}</td>
+                              <td className="p-4"><div className="font-semibold text-slate-900">{inspectionLabel}</div><div className="text-xs text-slate-500">{order.tracking || "—"}</div></td>
+                              <td className="p-4"><div className="font-bold text-emerald-600">₱{paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div><div className="text-xs text-slate-500">of {amount}</div></td>
+                              <td className="p-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${paymentMethod === "Online" ? (darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-50 text-rose-700") : (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-50 text-emerald-700")}`}>{paymentMethod}</span></td>
+                              <td className="p-4"><span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{orderType}</span></td>
+                              <td className="p-4 text-sm text-slate-600">{installDate}</td>
+                              <td className="p-4"><span className={`inline-flex rounded-md px-3 py-1 text-xs font-semibold ${projectCategory === "Completed" ? "bg-rose-50 text-rose-700" : "bg-violet-50 text-violet-700"}`}>{projectCategory}</span></td>
+                              <td className="p-4">{isFullyPaid ? (<span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700"}`}>{statusLabel}</span>) : (<div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700"}`}>{statusLabel}</span>{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div>)}</td>
+                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isPaymentProofConfirmed(order) ? (<button type="button" title="Payment proof confirmed" aria-label="Payment proof confirmed" disabled className="p-2 rounded-lg bg-slate-100 text-slate-400 cursor-not-allowed"><Lock size={18} /></button>) : (<button type="button" title="Edit Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
+                            </>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
-              </table>
+            <div className="space-y-3 p-3 md:hidden">
+              {currentData.map((order, index) => {
+                const customerName = order.customer_name || (order.customer ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() : "N/A");
+                const productLabel = Array.isArray(order.items) && order.items.length > 0 ? (order.items.length > 1 ? "Batch Order" : (order.items[0].name || order.items[0].product_name || "Project")) : "N/A";
+                const amountVal = order.contract_amount || order.total_amount || 0;
+                const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
+                const totalProjectAmount = Number(order.contract_amount || order.total_amount || 0);
+                const paidAmountForStatus = Number(order.payment_proof_amount ?? order.payment_amount ?? order.downpayment_amount ?? 0);
+                const isFullyPaid = totalProjectAmount > 0 ? paidAmountForStatus >= totalProjectAmount : false;
 
+                return (
+                  <div key={order._id || index} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-slate-900">{productLabel}</p>
+                        <p className="mt-1 text-xs text-slate-500">{customerName}</p>
+                      </div>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold ${isFullyPaid ? "bg-emerald-100 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                        {isFullyPaid ? "Fully Paid" : "Pending"}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-slate-400">Method</p>
+                        <p className="mt-1 font-medium text-slate-700">{paymentMethod}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-slate-400">Amount</p>
+                        <p className="mt-1 font-semibold text-slate-900">₱{Number(amountVal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
+                      {activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}
+                      <button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Pagination */}

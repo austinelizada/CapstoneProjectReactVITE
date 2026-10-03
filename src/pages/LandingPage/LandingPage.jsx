@@ -426,7 +426,7 @@ function LandingPage() {
     className="mb-5 text-left"
   >
 
-    <h2 className="text-5xl font-black leading-none tracking-[-0.05em]">
+    <h2 className="text-3xl font-black leading-tight sm:text-5xl sm:leading-none">
 
       Featured
 

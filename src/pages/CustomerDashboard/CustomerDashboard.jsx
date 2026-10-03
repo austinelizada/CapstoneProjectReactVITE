@@ -3,7 +3,9 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { createPortal } from "react-dom";
 import toast, { Toaster } from "react-hot-toast";
 import { toPng } from "html-to-image";
+import { Button } from "@/components/ui/button";
 import {
+  Home,
   ShoppingCart,
   Info,
   User,
@@ -70,6 +72,7 @@ import { getSystemSettings, getSystemSettingsEventsUrl } from "@/api/users";
 import { getCart, saveCart } from "@/api/cart";
 import { formatDateToMMMDDYYYY, formatDateTimeToMMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { buildDelayNotifications, sortCustomerNotificationsNewestFirst } from "@/lib/delayNotifications";
+import { getOrderStatusClasses, getOrderStatusLabel, normalizeOrderStatus, normalizeOrderStatusKey } from "./orderStatusUtils";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -378,15 +381,15 @@ function CustomerDashboard() {
   const [warrantyHistoryTab, setWarrantyHistoryTab] = useState(null);
 
   const customerContracts = orders.filter((order) => {
-    const status = String(order.status || "").toLowerCase();
-    const contractStatus = String(order.contract_status || "").toLowerCase();
+    const status = normalizeOrderStatusKey(order?.status);
+    const contractStatus = normalizeOrderStatusKey(order?.contract_status);
     return ["contract_sent", "contract_accepted"].includes(status) || ["sent", "accepted"].includes(contractStatus);
   });
-  const rejectedContracts = orders.filter(
-    (order) =>
-      order.status === "contract_declined" ||
-      order.contract_status?.toString().toLowerCase() === "declined"
-  );
+  const rejectedContracts = orders.filter((order) => {
+    const status = normalizeOrderStatusKey(order?.status);
+    const contractStatus = normalizeOrderStatusKey(order?.contract_status);
+    return status === "contract_declined" || contractStatus === "declined";
+  });
   const contractsInTab = contractHistoryTab === "rejected" ? rejectedContracts : customerContracts;
   const CONTRACT_PAGE_SIZE = 5;
   const contractPageCount = Math.max(1, Math.ceil(contractsInTab.length / CONTRACT_PAGE_SIZE));
@@ -436,7 +439,6 @@ function CustomerDashboard() {
   const [profileError, setProfileError] = useState("");
 
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationFilter, setNotificationFilter] = useState("all");
   const [readNotificationIds, setReadNotificationIds] = useState(() => {
@@ -447,6 +449,7 @@ function CustomerDashboard() {
     }
   });
   const [profileTab, setProfileTab] = useState("profile");
+  const [profileEditing, setProfileEditing] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
   const [permissionNotice, setPermissionNotice] = useState(null);
@@ -454,8 +457,8 @@ function CustomerDashboard() {
   const permissionNoticeTimer = useRef(null);
   const customerNotificationItems = orders.flatMap((order) => {
     const orderId = order._id || order.id || order.tracking;
-    const status = String(order.status || "").toLowerCase();
-    const contractStatus = String(order.contract_status || "").toLowerCase();
+    const status = normalizeOrderStatusKey(order?.status);
+    const contractStatus = normalizeOrderStatusKey(order?.contract_status);
     const hasPendingContractNotification = status === "contract_sent" || contractStatus === "sent";
     const contractVersion = order.contractVersion || order.currentContractVersion || order.contractId || order.contract_number || "current";
     const notifications = [{
@@ -530,7 +533,7 @@ function CustomerDashboard() {
       // EventSource automatically retries while the customer remains signed in.
     };
     return () => events.close();
-  }, [user]);
+  }, [user?.id]);
 
   const showPermissionNotice = (message, options = {}) => {
     if (permissionNoticeTimer.current) {
@@ -716,8 +719,8 @@ function CustomerDashboard() {
   function canShowContractForOrder(order) {
     if (!order) return false;
 
-    const status = String(order.status || "").toLowerCase();
-    const contractStatus = String(order.contract_status || "").toLowerCase();
+    const status = normalizeOrderStatusKey(order?.status);
+    const contractStatus = normalizeOrderStatusKey(order?.contract_status);
     const contractStageStatus = [
       "contract_sent",
       "contract_accepted",
@@ -741,8 +744,8 @@ function CustomerDashboard() {
     );
   }
 
-  const selectedOrderContractStatus = selectedOrderForModal?.contract_status?.toString().toLowerCase() || "";
-  const selectedOrderStatus = selectedOrderForModal?.status?.toString().toLowerCase() || "";
+  const selectedOrderContractStatus = normalizeOrderStatusKey(selectedOrderForModal?.contract_status);
+  const selectedOrderStatus = normalizeOrderStatusKey(selectedOrderForModal?.status);
   const selectedOrderHasContractSummary = Boolean(selectedOrderForModal) && canShowContractForOrder(selectedOrderForModal);
   const selectedOrderCanRespondToContract =
     selectedOrderHasContractSummary &&
@@ -752,17 +755,19 @@ function CustomerDashboard() {
 
   const isOrderCompletedAndReviewable = (order) => {
     if (!order) return false;
-    const completed = order.status === "completed" && Number(order.progress) >= 100;
+    const status = normalizeOrderStatusKey(order?.status);
+    const completed = status === "completed" && Number(order.progress) >= 100;
     if (!completed) return false;
     const lastStage = Array.isArray(order.progress_stages) ? order.progress_stages[order.progress_stages.length - 1] : null;
+    const lastStageStatus = normalizeOrderStatusKey(lastStage?.status);
     if (!lastStage) return true;
-    return Boolean(lastStage.completed || lastStage.status === "done" || lastStage.status === "completed");
+    return Boolean(lastStage.completed || lastStageStatus === "done" || lastStageStatus === "completed");
   };
 
   const isCustomerContractAccepted = (order) => {
     if (!order) return false;
-    const status = String(order.status || "").toLowerCase();
-    const contractStatus = String(order.contract_status || "").toLowerCase();
+    const status = normalizeOrderStatusKey(order?.status);
+    const contractStatus = normalizeOrderStatusKey(order?.contract_status);
     return Boolean(
       order.acceptedByCustomer === true ||
       status === "contract_accepted" ||
@@ -2079,11 +2084,15 @@ function CustomerDashboard() {
   };
 
   const handleCancelRequest = (order) => {
+    if (!order || String(order.status || "").toLowerCase() === "cancelled") return;
     setCancelRequestModal({ open: true, order });
   };
 
   const confirmCancelRequest = async () => {
-    if (!cancelRequestModal.order) return;
+    if (!cancelRequestModal.order || String(cancelRequestModal.order.status || "").toLowerCase() === "cancelled") {
+      setCancelRequestModal({ open: false, order: null });
+      return;
+    }
 
     const orderIdentifier = cancelRequestModal.order._id || cancelRequestModal.order.id || cancelRequestModal.order.tracking;
 
@@ -2408,7 +2417,13 @@ function CustomerDashboard() {
     let candidate = null;
     if (item.image_url) candidate = item.image_url;
     if (!candidate && item.image) candidate = item.image;
-    const product = item.product_id || item.product;
+    const productReference = item.product_id || item.product;
+    const productId = typeof productReference === "object"
+      ? productReference?._id || productReference?.id
+      : productReference;
+    const product = typeof productReference === "object"
+      ? productReference
+      : products.find((entry) => String(entry._id || entry.id) === String(productId));
     if (!candidate && product) candidate = getProductImage(product);
     return ensureAbsoluteUrl(candidate);
   }
@@ -2526,13 +2541,14 @@ function CustomerDashboard() {
     }));
 
     const contractStatusRaw = String(order.contract_status || "").trim();
+    const orderStatusKey = normalizeOrderStatusKey(order?.status);
     const contractStatus = contractStatusRaw
       ? contractStatusRaw.replace(/_/g, " ")
-      : (order.status === "contract_sent" || order.status === "contract_accepted" || order.status === "contract_declined")
+      : (["contract_sent", "contract_accepted", "contract_declined"].includes(orderStatusKey))
         ? String(order.status).replace(/_/g, " ")
         : "No contract yet";
 
-    const accepted = order.acceptedByCustomer === true || String(order.contract_status || "").toLowerCase() === "accepted" || order.status === "contract_accepted";
+    const accepted = order.acceptedByCustomer === true || normalizeOrderStatusKey(order?.contract_status) === "accepted" || orderStatusKey === "contract_accepted";
 
     return {
       orderNumber: order.tracking || order._id || "N/A",
@@ -2578,8 +2594,8 @@ function CustomerDashboard() {
   const contractPreviewData = contractPreviewOrder
     ? buildContractDataFromOrder(contractPreviewOrder)
     : null;
-  const isContractAccepted = contractPreviewOrder?.acceptedByCustomer === true || contractPreviewOrder?.status === "contract_accepted"
-    || String(contractPreviewOrder?.contract_status || "").toLowerCase() === "accepted";
+  const isContractAccepted = contractPreviewOrder?.acceptedByCustomer === true || normalizeOrderStatusKey(contractPreviewOrder?.status) === "contract_accepted"
+    || normalizeOrderStatusKey(contractPreviewOrder?.contract_status) === "accepted";
 
   const createContractExportClone = () => {
     const element = document.getElementById("contract-content");
@@ -2663,66 +2679,38 @@ function CustomerDashboard() {
     }
   };
 
-  const getOrderStatusLabel = (status) => {
-    switch (status) {
-      case "order_submitted": return "Order Submitted";
-      case "admin_review": return "Admin Review";
-      case "site_inspection": return "Site Inspection";
-      case "contract_sent": return "Contract Sent";
-      case "contract_accepted": return "Contract Accepted";
-      case "contract_declined": return "Contract Declined";
-      case "Cutting": return "Cutting";
-      case "Fabrication": return "Fabrication";
-      case "Installation": return "Installation";
-      case "completed": return "Completed";
-      case "cancelled": return "Cancelled";
-      default: return status?.replace(/_/g, " ") || "Unknown";
-    }
-  };
-
   const getContractStatusLabel = (order) => {
-    const contractStatus = String(order?.contract_status || "").toLowerCase();
-    const orderStatus = String(order?.status || "").toLowerCase();
+    const contractStatus = normalizeOrderStatusKey(order?.contract_status);
+    const orderStatus = normalizeOrderStatusKey(order?.status);
 
     if (contractStatus === "sent" || orderStatus === "contract_sent") return "Needs Your Response";
     if (contractStatus === "accepted" || orderStatus === "contract_accepted") return "Accepted";
     if (contractStatus === "declined" || orderStatus === "contract_declined") return "Declined";
-    return contractStatus.replace(/_/g, " ") || orderStatus.replace(/_/g, " ") || "Unknown";
-  };
-
-  const getOrderStatusClasses = (status) => {
-    switch (status) {
-      case "completed":
-        return "bg-red-50 text-red-700 border border-red-200";
-      case "contract_declined":
-      case "cancelled":
-        return "bg-red-100 text-red-800 border border-red-300";
-      case "order_submitted":
-      case "admin_review":
-      case "site_inspection":
-      case "contract_sent":
-      case "contract_accepted":
-      case "Cutting":
-      case "Assembly":
-      case "Fabrication":
-      case "Installation":
-        return "bg-red-50 text-red-700 border border-red-200";
-      default:
-        return "bg-slate-100 text-slate-700 border border-slate-200";
-    }
+    return normalizeOrderStatus(order?.contract_status) || normalizeOrderStatus(order?.status) || "Unknown";
   };
 
   const getOrderProgressPercent = (order) => {
-    if (!order || order.status === "cancelled") return 0;
+    if (!order || normalizeOrderStatusKey(order?.status) === "cancelled") return 0;
 
     const steps = buildOrderTimelineStages(order).filter((step) => step.key !== "installation_agreement");
     return calculateStageProgressPercent(steps);
   };
 
-  const activeOrdersCount = orders.filter((order) => order.status !== "completed" && order.status !== "cancelled").length;
-  const pendingContractsCount = orders.filter((order) => ["contract_sent", "contract_accepted"].includes(order.status)).length;
-  const completedProjectsCount = orders.filter((order) => order.status === "completed").length;
-  const cancelledProjectsCount = orders.filter((order) => order.status === "cancelled").length;
+  const activeOrdersCount = orders.filter((order) => {
+    const status = normalizeOrderStatus(order?.status);
+    return status !== "completed" && status !== "cancelled";
+  }).length;
+  const pendingContractsCount = orders.filter((order) => {
+    const status = normalizeOrderStatus(order?.status);
+    return ["contract sent", "contract accepted"].includes(status);
+  }).length;
+  const completedProjectsCount = orders.filter((order) => normalizeOrderStatus(order?.status) === "completed").length;
+  const cancelledProjectsCount = orders.filter((order) => normalizeOrderStatus(order?.status) === "cancelled").length;
+
+  const getOrderIdentifier = (order, fallback = "") => {
+    const id = order?._id ?? order?.id ?? order?.tracking ?? fallback;
+    return typeof id === "string" && id.trim() ? id : fallback || "unknown-order";
+  };
 
   const filteredOrders = orders.filter((order) => {
     // If tracking number is entered, filter by tracking ID only
@@ -2730,12 +2718,14 @@ function CustomerDashboard() {
       return order.tracking.toUpperCase().includes(trackingNumber.trim().toUpperCase());
     }
 
+    const status = normalizeOrderStatus(order?.status);
+
     // Otherwise, apply status filter
     if (orderFilter === "all") return true;
-    if (orderFilter === "order") return !["installation", "completed", "cancelled"].includes(order.status);
+    if (orderFilter === "order") return !["installation", "completed", "cancelled"].includes(status);
     if (orderFilter === "review") return isOrderCompletedAndReviewable(order) && !hasOrderReview(order);
-    if (orderFilter === "completed") return order.status === "completed" && (hasOrderReview(order) || !isOrderCompletedAndReviewable(order));
-    if (orderFilter === "cancel") return order.status === "cancelled";
+    if (orderFilter === "completed") return status === "completed" && (hasOrderReview(order) || !isOrderCompletedAndReviewable(order));
+    if (orderFilter === "cancel") return status === "cancelled";
     return true;
   });
 
@@ -2750,6 +2740,13 @@ function CustomerDashboard() {
     : orderViewMode === "view3"
       ? "grid gap-5 lg:grid-cols-3"
       : "space-y-6";
+  const orderFilterOptions = [
+    { value: "all", label: "All Orders" },
+    { value: "order", label: "My Orders" },
+    { value: "review", label: "To Review" },
+    { value: "completed", label: "Completed" },
+    { value: "cancel", label: "Cancelled" },
+  ];
 
   const estimateWidth = Number(estimateForm.width) || 0;
   const estimateHeight = Number(estimateForm.height) || 0;
@@ -2881,6 +2878,9 @@ function CustomerDashboard() {
         : "N/A"
     )
     : "N/A";
+  const profileDisplayName = `${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer";
+  const profileInitials = profileDisplayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "C";
+  const profileEmail = profileForm.email || user?.email || "";
 
   if (loading) {
     return (
@@ -2891,7 +2891,7 @@ function CustomerDashboard() {
   }
 
   return (
-    <div className={`admin-theme-shell relative flex min-h-screen flex-col overflow-x-clip ${darkMode
+    <div className={`admin-theme-shell relative flex min-h-screen flex-col overflow-x-clip pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-0 ${darkMode
       ? "admin-theme-dark"
       : "admin-theme-light"
     }`}>
@@ -2928,29 +2928,29 @@ function CustomerDashboard() {
         </div>
       )}
       <div className={`${darkMode ? "bg-slate-900/90 border-b border-slate-700 shadow-lg shadow-slate-950/20" : "bg-white/90 border-b border-slate-200 shadow-sm"} sticky top-0 z-50`}>
-        <div className="w-full px-4 py-2.5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex w-full items-center justify-between gap-2 px-3 py-2.5 sm:px-4 lg:gap-4">
           <button
             type="button"
             onClick={() => setActiveTab("home")}
-            className="flex items-center gap-3 px-1.5 py-0.5 text-left transition duration-200"
+            className="flex min-w-0 items-center gap-2 px-1 py-0.5 text-left transition duration-200 sm:gap-3 sm:px-1.5"
             aria-label="Go to ACGC Services home"
           >
-            <img src={logo} alt="ACGC Aluminum Services" className="w-14 h-14 object-contain" />
-            <div>
-              <h1 className="text-xl font-bold text-red-500">
+            <img src={logo} alt="ACGC Aluminum Services" className="h-8 w-8 shrink-0 object-contain sm:h-12 sm:w-12 lg:h-14 lg:w-14" />
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-bold text-red-500 sm:text-lg lg:text-xl">
                 ACGC Services
               </h1>
-              <p className={`text-sm font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+              <p className={`hidden truncate text-[10px] font-bold sm:block sm:text-xs lg:text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                 Aluminum & Glass Services
               </p>
             </div>
           </button>
 
-          <div className="flex flex-wrap items-center gap-1.5 md:gap-2">
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-1 lg:gap-2">
             {canRequestOrders && (
               <button
                 onClick={() => setActiveTab("cart")}
-                className={`order-1 relative p-2.5 text-sm font-semibold transition ${
+                className={`order-1 relative hidden p-2.5 text-sm font-semibold transition lg:inline-flex ${
                   activeTab === "cart" || cartQuantity > 0
                     ? darkMode
                       ? "text-white"
@@ -2962,7 +2962,7 @@ function CustomerDashboard() {
                 aria-label="Cart"
                 title="Cart"
               >
-                <ShoppingCart size={42} strokeWidth={2.2} />
+                <ShoppingCart className="h-6 w-6 lg:h-8 lg:w-8" strokeWidth={2.2} />
                 {cartQuantity > 0 && (
                   <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 animate-pulse items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white shadow-md shadow-red-500/40">
                     {cartQuantity}
@@ -2972,7 +2972,7 @@ function CustomerDashboard() {
             )}
             <button
               onClick={() => setActiveTab("products")}
-              className={`order-3 rounded-full px-4 py-2 text-base font-semibold transition ${
+                className={`order-3 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
                 activeTab === "products"
                   ? darkMode
                     ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
@@ -2986,7 +2986,7 @@ function CustomerDashboard() {
             </button>
             <button
               onClick={() => setActiveTab("orders")}
-              className={`order-4 rounded-full px-4 py-2 text-base font-semibold transition ${
+                className={`order-4 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
                 activeTab === "orders"
                   ? darkMode
                     ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
@@ -3000,7 +3000,7 @@ function CustomerDashboard() {
             </button>
             <button
               onClick={() => setActiveTab("about")}
-              className={`order-5 rounded-full px-4 py-2 text-base font-semibold transition ${
+                className={`order-5 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
                 activeTab === "about"
                   ? darkMode
                     ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
@@ -3015,7 +3015,7 @@ function CustomerDashboard() {
             <button
               type="button"
               onClick={toggleDarkMode}
-              className={`order-7 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition focus:outline-none focus:ring-2 focus:ring-red-500/40 ${
+                className={`order-7 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none focus:ring-2 focus:ring-red-500/40 sm:h-10 sm:w-10 ${
                 darkMode
                   ? "text-slate-200 hover:bg-slate-800"
                   : "text-slate-700 hover:bg-slate-100"
@@ -3039,7 +3039,7 @@ function CustomerDashboard() {
                 aria-label="Notifications"
                 title="Notifications"
               >
-                <Bell size={26} strokeWidth={2.2} />
+                <Bell size={22} strokeWidth={2.2} />
                 {unreadNotificationCount > 0 && (
                   <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 animate-pulse items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white shadow-md shadow-red-500/40">
                     {unreadNotificationCount}
@@ -3048,7 +3048,7 @@ function CustomerDashboard() {
               </button>
 
               {notificationsOpen && (
-                <div className={`absolute right-0 z-20 mt-2 w-96 overflow-hidden rounded-2xl border shadow-xl ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                <div className={`fixed inset-x-3 top-[calc(4.0625rem+env(safe-area-inset-top))] z-20 mt-1 max-h-[calc(100dvh-5.5rem)] w-auto overflow-y-auto overscroll-contain rounded-2xl border shadow-xl lg:absolute lg:inset-x-auto lg:right-0 lg:top-auto lg:mt-2 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
                   <div className={`flex items-center justify-between border-b px-4 py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
                     <div>
                       <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Project updates</p>
@@ -3107,8 +3107,8 @@ function CustomerDashboard() {
                         .slice(0, 5)
                         .map((order) => {
                           const product = order.items?.[0] || {};
-                          const status = String(order.status || "").toLowerCase();
-                          const contractStatus = String(order.contract_status || "").toLowerCase();
+                          const status = normalizeOrderStatusKey(order?.status);
+                          const contractStatus = normalizeOrderStatusKey(order?.contract_status);
                           const isPaymentNotification = order.notificationType === "payment";
                           const isDelayNotification = order.notificationType === "delay";
                           const isContractReady =
@@ -3226,59 +3226,25 @@ function CustomerDashboard() {
                 </div>
               )}
             </div>
-            <div className="relative order-8">
+            <div className="relative order-8 hidden lg:block">
               <button
-                onClick={() => setMenuOpen((s) => !s)}
-                className={`flex items-center gap-2 rounded-full px-4 py-2 text-base font-semibold transition ${
+                onClick={() => setActiveTab("profile")}
+                className={`flex h-9 w-9 items-center justify-center rounded-full p-2 text-base font-semibold transition sm:h-10 sm:w-auto sm:gap-2 sm:px-4 sm:py-2 ${
                   activeTab === "profile"
-                    ? "bg-red-600 text-white shadow-sm"
+                    ? darkMode
+                      ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
+                      : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
                     : darkMode
                       ? "text-slate-200 hover:bg-slate-800"
                       : "text-slate-700 hover:bg-slate-100"
                 }`}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
+                aria-current={activeTab === "profile" ? "page" : undefined}
+                aria-label="Profile"
+                title="Profile"
               >
-                <User size={24} />
-                <span>Profile</span>
+                <User size={20} className="sm:h-6 sm:w-6" />
+                <span className="sr-only sm:not-sr-only">Profile</span>
               </button>
-
-              {menuOpen && (
-                <div className={`absolute right-0 z-20 mt-2 w-44 rounded-xl border shadow-md ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setActiveTab("profile");
-                    }}
-                    className={`flex w-full items-center gap-2 px-4 py-2 text-left ${darkMode ? "text-slate-200 hover:bg-slate-700" : "text-slate-700 hover:bg-gray-50"}`}
-                  >
-                    <User size={16} />
-                    <span>My Profile</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setActiveTab("contracts");
-                    }}
-                    className={`flex w-full items-center gap-2 px-4 py-2 text-left ${darkMode ? "text-slate-200 hover:bg-slate-700" : "text-slate-700 hover:bg-gray-50"}`}
-                  >
-                    <FileText size={16} />
-                    <span>My Contracts</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      setConfirmOpen(true);
-                    }}
-                    className={`flex w-full items-center gap-2 px-4 py-2 text-left ${darkMode ? "text-red-300 hover:bg-slate-700" : "text-red-600 hover:bg-gray-50"}`}
-                  >
-                    <LogOut size={16} />
-                    <span>Logout</span>
-                  </button>
-                </div>
-              )}
 
               {confirmOpen && createPortal(
                 <div className="fixed inset-0 z-[100] flex min-h-screen items-center justify-center p-4">
@@ -3308,9 +3274,63 @@ function CustomerDashboard() {
                 document.body
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmOpen(true);
+              }}
+              className={`order-9 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition sm:h-10 sm:w-auto sm:gap-2 sm:px-3 ${darkMode ? "border-red-500/40 text-red-300 hover:bg-red-500/10" : "border-red-200 text-red-700 hover:bg-red-50"}`}
+              aria-label="Log out"
+              title="Log out"
+            >
+              <LogOut size={17} aria-hidden="true" />
+              <span className="sr-only sm:not-sr-only">Log out</span>
+            </button>
           </div>
         </div>
       </div>
+
+      <nav
+        aria-label="Customer navigation"
+        className={`fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[60] flex items-center justify-around rounded-[22px] border px-2 py-2 shadow-lg backdrop-blur-xl lg:hidden ${darkMode ? "border-slate-700 bg-slate-900/95 shadow-black/30" : "border-slate-200 bg-white/95 shadow-slate-900/15"}`}
+      >
+        {[
+          { label: "Home", tab: "home", Icon: Home },
+          { label: "Products", tab: "products", Icon: Package },
+          { label: "Orders", tab: "orders", Icon: ClipboardList },
+          ...(canRequestOrders ? [{ label: "Cart", tab: "cart", Icon: ShoppingCart }] : []),
+          { label: "Profile", tab: "profile", Icon: User },
+        ].map(({ label, tab, Icon }) => {
+          const isActive = activeTab === tab;
+          return (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => {
+                setNotificationsOpen(false);
+                setActiveTab(tab);
+              }}
+              aria-label={tab === "cart" && cartQuantity > 0 ? `Cart, ${cartQuantity} ${cartQuantity === 1 ? "item" : "items"}` : label}
+              aria-current={isActive ? "page" : undefined}
+              title={label}
+              className={`flex h-12 min-w-12 flex-1 flex-col items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isActive ? darkMode ? "text-red-300" : "text-red-700" : darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              <span className="relative inline-flex">
+                <Icon size={21} strokeWidth={isActive ? 2.3 : 1.8} aria-hidden="true" />
+                {tab === "cart" && cartQuantity > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className={`absolute -right-2 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[9px] font-bold leading-none ${darkMode ? "border-slate-900 bg-red-500 text-white" : "border-white bg-red-600 text-white"}`}
+                  >
+                    {cartQuantity > 99 ? "99+" : cartQuantity}
+                  </span>
+                )}
+              </span>
+              <span className={`mt-1 h-0.5 w-4 rounded-full ${isActive ? "bg-current" : "bg-transparent"}`} aria-hidden="true" />
+            </button>
+          );
+        })}
+      </nav>
 
       {activeTab === "home" && (
         <>
@@ -3369,10 +3389,10 @@ function CustomerDashboard() {
           <div className={`rounded-[24px] border p-5 shadow-[0_14px_35px_rgba(148,163,184,0.12)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"}`}>
             <div className="mb-5 flex items-center justify-between gap-4">
               <div className="text-left">
-                <h2 className={`text-5xl font-black leading-none tracking-[-0.05em] ${darkMode ? "text-white" : "text-slate-900"}`}>
+                <h2 className={`text-3xl font-black leading-tight sm:text-5xl sm:leading-none ${darkMode ? "text-white" : "text-slate-900"}`}>
                   Featured <span className="text-red-500">Products</span>
                 </h2>
-                <p className={`mt-6 max-w-3xl text-lg ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
+                <p className={`mt-3 max-w-3xl text-sm leading-6 sm:mt-6 sm:text-lg sm:leading-normal ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
                   Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
                 </p>
               </div>
@@ -5206,15 +5226,24 @@ function CustomerDashboard() {
                 <h2 className={`text-2xl font-black tracking-[-0.03em] ${darkMode ? "text-white" : "text-slate-900"}`}>My Orders</h2>
                 <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Track progress, payments, and completed projects.</p>
               </div>
-              <div className={`max-w-full overflow-x-auto rounded-xl border p-1 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
+              <div className="w-full sm:w-auto lg:hidden">
+                <select
+                  aria-label="Filter orders"
+                  value={orderFilter}
+                  onChange={(event) => {
+                    setOrderFilter(event.target.value);
+                    setOrderPage(1);
+                  }}
+                  className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-red-100 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100 focus:border-red-500" : "border-slate-200 bg-white text-slate-700 focus:border-red-500"}`}
+                >
+                  {orderFilterOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className={`hidden max-w-full overflow-x-auto rounded-xl border p-1 lg:block ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
                 <div className="flex w-max items-center gap-1" role="group" aria-label="Filter orders">
-                {[
-                  { value: "all", label: "All Orders" },
-                  { value: "order", label: "My Orders" },
-                  { value: "review", label: "To Review" },
-                  { value: "completed", label: "Completed" },
-                  { value: "cancel", label: "Cancelled" },
-                ].map((tab) => (
+                {orderFilterOptions.map((tab) => (
                   <button
                     key={tab.value}
                     type="button"
@@ -5258,8 +5287,8 @@ function CustomerDashboard() {
               </div>
             ) : (
               <div className="space-y-4">
-                {pagedFilteredOrders.map((order) => {
-                  const orderId = order._id || order.id || order.tracking;
+                {pagedFilteredOrders.map((order, index) => {
+                  const orderId = getOrderIdentifier(order, `order-${index}`);
                   const product = order.items?.[0] || {};
                   const orderItems = Array.isArray(order.items) ? order.items : [];
                   const isOrderExpanded = expandedOrderId === orderId;
@@ -5283,19 +5312,22 @@ function CustomerDashboard() {
                   const isBatchOrder = orderItems.length > 1;
                   const orderDisplayName = isBatchOrder ? "Batch Order" : product.name || product.product_name || "Project item";
                   const orderDisplayQuantity = isBatchOrder ? `${orderItems.length} items` : product.quantity ? `Qty ${product.quantity}` : "Qty 1";
-                  const orderPreviewItems = isBatchOrder ? orderItems.slice(0, 3) : [product];
+                  const orderPreviewItem = isBatchOrder
+                    ? orderItems.find((item) => getOrderItemImage(item) !== PRODUCT_IMAGE_PLACEHOLDER) || product
+                    : product;
                   const orderDate = formatDateToMMMDDYYYY(order.updatedAt || order.createdAt) || "—";
                   const orderStatusLabel = getOrderStatusLabel(order.status);
                   const hasContractBeenSent =
-                    order.status === "contract_sent" ||
-                    order.contract_status === "sent" ||
-                    (order.status === "site_inspection" && order.contract_status === "sent");
+                    normalizeOrderStatusKey(order?.status) === "contract_sent" ||
+                    normalizeOrderStatusKey(order?.contract_status) === "sent" ||
+                    (normalizeOrderStatusKey(order?.status) === "site_inspection" && normalizeOrderStatusKey(order?.contract_status) === "sent");
                   const isContractWaitingForCustomer =
                     hasContractBeenSent &&
                     order.order_type !== "walk_in_customer";
                   const isCustomerAcceptedContract = isCustomerContractAccepted(order);
                   const isOnlineContractAccepted = order.acceptedByCustomer === true || (order.contract_status === "accepted" && order.acceptance_method === "online");
                   const isProjectFinished = String(order.status || "").toLowerCase() === "completed";
+                  const isOrderCancelled = String(order.status || "").toLowerCase() === "cancelled";
                   const paymentProofSubmission = paymentProofSuccessByOrder[orderId];
                   const lastPaymentProofUrl = paymentProofSubmission?.fileUrl || order.payment_proof_file_url || order.proof_file_url || "";
 
@@ -5307,29 +5339,22 @@ function CustomerDashboard() {
                       <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-4">
                         <div className="flex min-w-0 items-center gap-3">
                           {isBatchOrder ? (
-                            <div className="relative flex h-12 w-14 shrink-0 items-center">
-                              {orderPreviewItems.map((item, index) => (
-                                <div
-                                  key={`${orderId}-thumb-${index}`}
-                                  className="absolute overflow-hidden rounded-[10px] border border-white bg-white shadow-sm"
-                                  style={{
-                                    width: "2.1rem",
-                                    height: "2.1rem",
-                                    left: `${index * 0.9}rem`,
-                                    zIndex: 10 + index,
-                                  }}
-                                >
-                                  <img
-                                    src={getOrderItemImage(item)}
-                                    alt={item.name || item.product_name || "Product image"}
-                                    className="h-full w-full object-cover"
-                                    onError={(e) => {
-                                      e.currentTarget.onerror = null;
-                                      e.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
-                                    }}
-                                  />
-                                </div>
-                              ))}
+                            <div className={`relative h-12 w-14 shrink-0 overflow-hidden rounded-[10px] border shadow-sm ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-100"}`}>
+                              <img
+                                src={getOrderItemImage(orderPreviewItem)}
+                                alt={orderPreviewItem.name || orderPreviewItem.product_name || "Batch order preview"}
+                                className="h-full w-full object-cover"
+                                onError={(event) => {
+                                  event.currentTarget.onerror = null;
+                                  event.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+                                }}
+                              />
+                              <span
+                                aria-label={`${orderItems.length} items in this batch order`}
+                                className="absolute bottom-0.5 right-0.5 flex h-5 min-w-5 items-center justify-center rounded-full border border-white bg-red-700 px-1 text-[10px] font-bold leading-none text-white shadow-sm"
+                              >
+                                {orderItems.length}
+                              </span>
                             </div>
                           ) : (
                             <div className={`h-11 w-11 shrink-0 overflow-hidden rounded-[12px] border shadow-sm sm:h-12 sm:w-12 ${darkMode ? "border-slate-600 bg-slate-700" : "border-red-100 bg-red-50"}`}>
@@ -5385,9 +5410,9 @@ function CustomerDashboard() {
                               )}
                               <button
                                 type="button"
-                                onClick={() => setExpandedOrderId(isOrderExpanded ? null : orderId)}
+                                onClick={() => setExpandedOrderId((prev) => (prev === orderId ? null : orderId))}
                                 aria-expanded={isOrderExpanded}
-                                className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition ${darkMode ? "bg-red-600 text-white hover:bg-red-500" : "bg-red-700 text-white hover:bg-red-800"}`}
+                                className={`inline-flex w-[7.25rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition ${darkMode ? "bg-red-600 text-white hover:bg-red-500" : "bg-red-700 text-white hover:bg-red-800"}`}
                               >
                                 {isOrderExpanded ? "Hide details" : "View details"}
                                 {isOrderExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -5506,7 +5531,11 @@ function CustomerDashboard() {
                             </div>
                           </div>
 
-                          {!isProjectFinished && <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                          {isOrderCancelled ? (
+                            <div className={`mt-6 rounded-xl border px-4 py-3 text-sm font-semibold ${darkMode ? "border-red-900/60 bg-red-950/30 text-red-200" : "border-red-200 bg-red-50 text-red-700"}`}>
+                              This order was cancelled. Payment and cancellation actions are unavailable.
+                            </div>
+                          ) : !isProjectFinished ? <div className="mt-6 grid gap-3 sm:grid-cols-2">
                             {isFullyPaid ? (
                               <div className={`rounded-xl border px-4 py-3 text-sm font-bold sm:col-span-2 ${darkMode ? "border-emerald-800 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
                                 <p>Payment is fully paid. No additional payment submission is needed.</p>
@@ -5628,7 +5657,7 @@ function CustomerDashboard() {
                                 Cancel request
                               </button>
                             )}
-                          </div>}
+                          </div> : null}
 
                         </div>
                       )}
@@ -6096,8 +6125,8 @@ function CustomerDashboard() {
                 </button>
               </div>
             ) : (<>
-              <div className="mt-5 grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_280px] xl:gap-6">
-                <section className="flex min-h-0 min-w-0 flex-col">
+              <div className="mt-5 grid gap-5 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_280px] xl:gap-6">
+                <section className="flex min-w-0 flex-col lg:min-h-0">
                   <div className={`flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-center sm:justify-between ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                     <label className={`inline-flex items-center gap-3 text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                       <input
@@ -6114,7 +6143,7 @@ function CustomerDashboard() {
                   </div>
 
                   <div
-                    className={`mt-1 h-[min(560px,60dvh)] flex-none divide-y overflow-y-auto overflow-x-hidden pr-2 ${darkMode ? "divide-slate-700" : "divide-slate-200"} [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-400 hover:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:[&::-webkit-scrollbar-track]:bg-slate-700 dark:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:hover:[&::-webkit-scrollbar-thumb]:bg-slate-400`}
+                    className={`mt-1 divide-y overflow-x-hidden ${darkMode ? "divide-slate-700" : "divide-slate-200"} lg:h-[min(560px,60dvh)] lg:flex-none lg:overflow-y-auto lg:pr-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-slate-200 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-400 hover:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:[&::-webkit-scrollbar-track]:bg-slate-700 dark:[&::-webkit-scrollbar-thumb]:bg-slate-500 dark:hover:[&::-webkit-scrollbar-thumb]:bg-slate-400`}
                     style={{ scrollbarWidth: "thin", scrollbarColor: darkMode ? "#64748b #334155" : "#94a3b8 #e2e8f0" }}
                   >
                     {cartItems.map((item) => (
@@ -6197,7 +6226,7 @@ function CustomerDashboard() {
                   </div>
                 </section>
 
-                <aside className={`sticky bottom-3 z-20 self-start rounded-2xl border p-4 shadow-lg sm:p-5 lg:top-24 lg:bottom-auto lg:shadow-none ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                <aside className={`self-start rounded-2xl border p-4 shadow-lg sm:p-5 lg:sticky lg:top-24 lg:shadow-none ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
                   <h3 className={`text-lg font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Order Summary</h3>
 
                   <div className={`mt-4 flex items-center justify-between gap-4 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
@@ -6364,8 +6393,8 @@ function CustomerDashboard() {
                   .sort(sortCustomerNotificationsNewestFirst)
                   .map((order) => {
                     const product = order.items?.[0] || {};
-                    const status = String(order.status || "").toLowerCase();
-                    const contractStatus = String(order.contract_status || "").toLowerCase();
+                    const status = normalizeOrderStatusKey(order?.status);
+                    const contractStatus = normalizeOrderStatusKey(order?.contract_status);
                     const isPaymentNotification = order.notificationType === "payment";
                     const isDelayNotification = order.notificationType === "delay";
                     const isContractReady =
@@ -6411,8 +6440,8 @@ function CustomerDashboard() {
 
                     const notificationIcon = () => {
                       if (isPaymentNotification) return "text-emerald-600";
-                      if (order.status === "completed") return "text-emerald-600";
-                      if (order.status === "cancelled") return "text-red-600";
+                      if (normalizeOrderStatusKey(order?.status) === "completed") return "text-emerald-600";
+                      if (normalizeOrderStatusKey(order?.status) === "cancelled") return "text-red-600";
                       if (isContractReady || ["contract_sent", "contract_accepted"].includes(status) || ["sent", "accepted"].includes(contractStatus)) return "text-blue-600";
                       return "text-amber-600";
                     };
@@ -6477,58 +6506,140 @@ function CustomerDashboard() {
         )}
 
         {activeTab === "profile" && (
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div className={`rounded-3xl shadow p-8 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+          <>
+          <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:py-8">
+            <section className={`overflow-hidden rounded-[18px] border ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-950"}`}>
+              <div
+                aria-hidden="true"
+                className={`h-[84px] border-b ${darkMode ? "border-slate-700 bg-brand-dark-fill/10" : "border-slate-200 bg-brand/[0.07]"}`}
+              />
+              <div className="flex flex-wrap items-end justify-between gap-4 px-6 pb-5.5">
+                <div className="flex min-w-0 flex-1 items-end gap-4">
+                  <div className={`-mt-[42px] flex size-[84px] shrink-0 items-center justify-center rounded-full border-4 text-[26px] font-medium text-white ${darkMode ? "border-slate-800 bg-brand-dark-fill" : "border-white bg-brand"}`} aria-hidden="true">
+                    {profileInitials}
+                  </div>
+                  <div className="min-w-0 pb-1">
+                    <h1 className="truncate text-2xl font-medium">{profileDisplayName}</h1>
+                    <p className={`truncate text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{profileEmail || "Email not set"}</p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => setProfileEditing(true)}
+                  variant="outline"
+                  size="lg"
+                  className={`h-10 shrink-0 gap-2 rounded-[10px] border px-4 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${darkMode ? "border-slate-600 text-slate-200 hover:border-brand-dark-text hover:text-brand-dark-text" : "border-slate-300 text-slate-700 hover:border-brand hover:text-brand"}`}
+                >
+                  <User size={16} aria-hidden="true" />
+                  Edit profile
+                </Button>
+              </div>
+            </section>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 min-[640px]:grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
+            <button
+              type="button"
+              onClick={() => {
+                setContractHistoryTab("accepted");
+                setWarrantyHistoryTab(null);
+                setActiveTab("contracts");
+              }}
+              className={`group flex w-full min-w-0 items-center gap-4 rounded-2xl border px-5 py-4.5 text-left transition-all motion-reduce:transition-none hover:-translate-y-0.5 hover:border-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+            >
+              <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-brand-dark-fill/15 text-brand-dark-text" : "bg-brand/[0.08] text-brand"}`}>
+                <FileText size={22} aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[17px] font-medium">Contracts</span>
+                <span className={`mt-0.5 block text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{customerContracts.length} active</span>
+              </span>
+              <span className={`flex size-[34px] shrink-0 items-center justify-center rounded-full border transition-colors motion-reduce:transition-none group-hover:border-brand group-hover:bg-brand group-hover:text-white ${darkMode ? "border-slate-600 text-slate-400" : "border-slate-200 text-slate-500"}`}>
+                <ArrowRight size={16} aria-hidden="true" />
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab("about")}
+              className={`group flex w-full min-w-0 items-center gap-4 rounded-2xl border px-5 py-4.5 text-left transition-all motion-reduce:transition-none hover:-translate-y-0.5 hover:border-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+            >
+              <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-brand-dark-fill/15 text-brand-dark-text" : "bg-brand/[0.08] text-brand"}`}>
+                <Info size={22} aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[17px] font-medium">About Us</span>
+                <span className={`mt-0.5 block text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>About ACGC Glass &amp; Aluminum Services</span>
+              </span>
+              <span className={`flex size-[34px] shrink-0 items-center justify-center rounded-full border transition-colors motion-reduce:transition-none group-hover:border-brand group-hover:bg-brand group-hover:text-white ${darkMode ? "border-slate-600 text-slate-400" : "border-slate-200 text-slate-500"}`}>
+                <ArrowRight size={16} aria-hidden="true" />
+              </span>
+            </button>
+            </div>
+          </div>
+
+          {profileEditing && (
+          createPortal(
+          <div className="fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8">
+          <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mx-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl overflow-y-auto overscroll-contain">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div className={`rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
               <div className="flex flex-col items-center">
                 <div className="relative">
                   <img
                     src="https://i.pravatar.cc/300"
                     alt="User avatar"
-                    className="w-36 h-36 rounded-full object-cover border-4 border-red-100"
+                    className="h-28 w-28 rounded-full object-cover border-4 border-red-100"
                   />
-                  <button className="absolute bottom-2 right-2 bg-red-600 text-white p-3 rounded-full shadow-lg hover:bg-red-700">
-                    <Camera size={18} />
+                  <button className="absolute bottom-2 right-2 bg-red-600 p-2.5 text-white rounded-full shadow-lg hover:bg-red-700">
+                    <Camera size={16} />
                   </button>
                 </div>
 
-                <h2 className={`text-2xl font-bold mt-5 ${darkMode ? "text-white" : "text-slate-900"}`}>{`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer"}</h2>
-                <p className={darkMode ? "text-slate-300 capitalize" : "text-gray-500 capitalize"}>{user?.role || "customer"}</p>
+                <h2 className={`mt-4 text-xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer"}</h2>
+                <p className={darkMode ? "text-sm text-slate-300 capitalize" : "text-sm text-gray-500 capitalize"}>{user?.role || "customer"}</p>
 
-                <div className="mt-6 w-full space-y-4">
-                  <div className={`rounded-2xl p-4 flex items-center gap-4 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
-                    <Mail className="text-red-600" />
+                <div className="mt-5 w-full space-y-3">
+                  <div className={`rounded-xl p-3.5 flex items-center gap-3 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
+                    <Mail className="text-red-600" size={18} />
                     <div>
-                      <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Email</p>
-                      <p className={`font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.email}</p>
+                      <p className={darkMode ? "text-xs text-slate-400" : "text-xs text-gray-500"}>Email</p>
+                      <p className={`text-sm font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.email}</p>
                     </div>
                   </div>
 
-                  <div className={`rounded-2xl p-4 flex items-center gap-4 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
-                    <Phone className="text-red-600" />
+                  <div className={`rounded-xl p-3.5 flex items-center gap-3 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
+                    <Phone className="text-red-600" size={18} />
                     <div>
-                      <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Phone</p>
-                      <p className={`font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.phone || "Not set"}</p>
+                      <p className={darkMode ? "text-xs text-slate-400" : "text-xs text-gray-500"}>Phone</p>
+                      <p className={`text-sm font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.phone || "Not set"}</p>
                     </div>
                   </div>
 
-                  <div className={`rounded-2xl p-4 flex items-center gap-4 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
-                    <ShieldCheck className="text-red-600" />
+                  <div className={`rounded-xl p-3.5 flex items-center gap-3 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
+                    <ShieldCheck className="text-red-600" size={18} />
                     <div>
-                      <p className={darkMode ? "text-sm text-slate-400" : "text-sm text-gray-500"}>Role</p>
-                      <p className={`font-medium capitalize ${darkMode ? "text-white" : "text-slate-900"}`}>{user?.role || "customer"}</p>
+                      <p className={darkMode ? "text-xs text-slate-400" : "text-xs text-gray-500"}>Role</p>
+                      <p className={`text-sm font-medium capitalize ${darkMode ? "text-white" : "text-slate-900"}`}>{user?.role || "customer"}</p>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className={`xl:col-span-2 rounded-3xl shadow p-8 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
-              <div className="flex items-center gap-3 mb-6">
-                <User size={28} className="text-red-600" />
+            <div className={`flex min-h-0 flex-col xl:col-span-2 rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <User size={24} className="text-red-600" />
                 <div>
-                  <h2 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Profile Settings</h2>
-                  <p className={darkMode ? "text-slate-300" : "text-gray-500"}>Update your account and password settings.</p>
+                  <h2 id="customer-profile-settings-title" className={`text-xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Profile Settings</h2>
+                  <p className={darkMode ? "text-sm text-slate-300" : "text-sm text-gray-500"}>Update your account and password settings.</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setProfileEditing(false)}
+                  className={`ml-auto rounded-lg border px-3 py-2 text-xs font-semibold ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                >
+                  Back to profile
+                </button>
               </div>
 
               {profileError && (
@@ -6543,13 +6654,13 @@ function CustomerDashboard() {
                 </div>
               )}
 
-              <div className="mt-8">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className={`rounded-3xl border p-2 flex overflow-hidden ${darkMode ? "bg-slate-900 border-slate-700" : "bg-gray-100 border-gray-200"}`}>
+              <div className="mt-3 flex min-h-0 flex-1 flex-col">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className={`rounded-2xl border p-1.5 flex overflow-hidden ${darkMode ? "bg-slate-900 border-slate-700" : "bg-gray-100 border-gray-200"}`}>
                     <button
                       type="button"
                       onClick={() => setProfileTab("profile")}
-                      className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
+                      className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
                         profileTab === "profile"
                           ? darkMode ? "bg-slate-700 text-red-400 shadow-sm" : "bg-white text-red-600 shadow-sm"
                           : darkMode ? "text-slate-300 hover:text-red-300" : "text-gray-600 hover:text-red-600"
@@ -6560,7 +6671,7 @@ function CustomerDashboard() {
                     <button
                       type="button"
                       onClick={() => setProfileTab("security")}
-                      className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
+                      className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
                         profileTab === "security"
                           ? darkMode ? "bg-slate-700 text-red-400 shadow-sm" : "bg-white text-red-600 shadow-sm"
                           : darkMode ? "text-slate-300 hover:text-red-300" : "text-gray-600 hover:text-red-600"
@@ -6571,118 +6682,118 @@ function CustomerDashboard() {
                   </div>
                 </div>
 
-                <div className="mt-6">
+                <div className="mt-3 max-h-[min(42dvh,26rem)] overflow-y-auto overscroll-contain lg:max-h-[min(48dvh,30rem)]">
                   {profileTab === "profile" ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>First Name</label>
-                        <div className="relative mt-2">
-                          <User size={18} className="absolute left-4 top-4 text-gray-400" />
+                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>First Name</label>
+                        <div className="relative mt-1.5">
+                          <User size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
                           <input
                             type="text"
                             name="first_name"
                             value={profileForm.first_name}
                             onChange={handleProfileChange}
                             placeholder="First Name"
-                            className={`w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
+                            className={`w-full pl-10 pr-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Last Name</label>
-                        <div className="relative mt-2">
-                          <User size={18} className="absolute left-4 top-4 text-gray-400" />
+                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Last Name</label>
+                        <div className="relative mt-1.5">
+                          <User size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
                           <input
                             type="text"
                             name="last_name"
                             value={profileForm.last_name}
                             onChange={handleProfileChange}
                             placeholder="Last Name"
-                            className={`w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
+                            className={`w-full pl-10 pr-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Phone Number</label>
-                        <div className="relative mt-2">
-                          <Phone size={18} className="absolute left-4 top-4 text-gray-400" />
+                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Phone Number</label>
+                        <div className="relative mt-1.5">
+                          <Phone size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
                           <input
                             type="text"
                             name="phone"
                             value={profileForm.phone}
                             onChange={handleProfileChange}
                             placeholder="Phone Number"
-                            className={`w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
+                            className={`w-full pl-10 pr-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Email Address</label>
-                        <div className="relative mt-2">
-                          <Mail size={18} className="absolute left-4 top-4 text-gray-400" />
+                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Email Address</label>
+                        <div className="relative mt-1.5">
+                          <Mail size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
                           <input
                             type="email"
                             name="email"
                             value={profileForm.email}
                             disabled
-                            className={`w-full pl-12 pr-4 py-3 border rounded-2xl ${darkMode ? "bg-slate-900 border-slate-700 text-slate-400" : "bg-gray-100 text-gray-500 border-slate-200"}`}
+                            className={`w-full pl-10 pr-3 py-2.5 border rounded-xl ${darkMode ? "bg-slate-900 border-slate-700 text-slate-400" : "bg-gray-100 text-gray-500 border-slate-200"}`}
                           />
                         </div>
                       </div>
 
                       <div className="md:col-span-2">
-                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Street Address</label>
+                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Street Address</label>
                         <input
                           type="text"
                           name="street_address"
                           value={profileForm.street_address}
                           onChange={handleProfileChange}
                           placeholder="Street address"
-                          className={`w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
+                          className={`w-full mt-1.5 px-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
 
                       <div>
-                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>City</label>
+                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>City</label>
                         <input
                           type="text"
                           name="city"
                           value={profileForm.city}
                           onChange={handleProfileChange}
                           placeholder="City"
-                          className={`w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
+                          className={`w-full mt-1.5 px-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
 
                       <div>
-                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Province</label>
+                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Province</label>
                         <input
                           type="text"
                           name="province"
                           value={profileForm.province}
                           onChange={handleProfileChange}
                           placeholder="Province"
-                          className={`w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
+                          className={`w-full mt-1.5 px-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
 
                       <div className="md:col-span-2">
-                        <label className={darkMode ? "text-sm font-medium text-slate-300" : "text-sm font-medium text-gray-600"}>Zip Code</label>
+                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Zip Code</label>
                         <input
                           type="text"
                           name="zip_code"
                           value={profileForm.zip_code}
                           onChange={handleProfileChange}
                           placeholder="Zip Code"
-                          className={`w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
+                          className={`w-full mt-1.5 px-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="md:col-span-3">
                         <label className="text-sm font-medium text-gray-600">Current Password</label>
                         <input
@@ -6723,13 +6834,13 @@ function CustomerDashboard() {
                 </div>
               </div>
 
-              <div className="mt-8 flex justify-end">
+              <div className={`sticky bottom-0 z-10 -mx-4 -mb-4 mt-3 flex justify-end border-t px-4 py-2.5 sm:-mx-5 sm:-mb-5 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
                 <button
                   onClick={handleProfileSave}
                   disabled={profileSaving}
-                  className="bg-red-600 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-60"
+                  className="bg-red-600 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 text-sm font-semibold hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <Save size={18} />
+                  <Save size={16} />
                   {profileSaving ? "Saving..." : "Save Changes"}
                 </button>
               </div>
@@ -6788,6 +6899,12 @@ function CustomerDashboard() {
               )}
             </div>
           </div>
+          </div>
+          </div>,
+          document.body
+          )
+          )}
+          </>
         )}
 
         {activeTab === "contracts" && (
@@ -6839,7 +6956,8 @@ function CustomerDashboard() {
                   <p className={darkMode ? "text-slate-300" : "text-gray-600"}>No {warrantyHistoryTab === "active" ? "active" : "expired"} warranties found.</p>
                 </div>
               ) : (
-                <div className={`overflow-hidden rounded-[28px] border shadow-[0_18px_45px_rgba(127,29,29,0.08)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
+                <>
+                <div className={`hidden overflow-hidden rounded-[28px] border shadow-[0_18px_45px_rgba(127,29,29,0.08)] md:block ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
                   <table className="min-w-full table-fixed border-separate border-spacing-0 text-left">
                     <thead className="bg-gradient-to-r from-red-700 via-red-600 to-red-500">
                       <tr>
@@ -6892,6 +7010,51 @@ function CustomerDashboard() {
                     </tbody>
                   </table>
                 </div>
+                <div className="space-y-3 md:hidden">
+                  {warrantiesInTab.map((order) => {
+                    const product = order.items?.[0] || {};
+                    const warrantyStartDate = formatDateToMMMDDYYYY(order.warranty_start_date) || "—";
+                    const warrantyExpiryDate = formatDateToMMMDDYYYY(order.warranty_expiry_date) || "—";
+                    const isActive = warrantyHistoryTab === "active";
+                    const statusClass = isActive
+                      ? darkMode ? "bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700"
+                      : darkMode ? "bg-orange-500/15 text-orange-300" : "bg-orange-100 text-orange-700";
+
+                    return (
+                      <article key={order._id || order.tracking} className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h3 className={`break-words text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Product"}</h3>
+                            <p className="mt-1 break-all font-mono text-xs text-slate-500">{order.tracking || order._id || "—"}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${statusClass}`}>{isActive ? "Active" : "Expired"}</span>
+                        </div>
+                        <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3">
+                          <div className="min-w-0">
+                            <dt className={`text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Warranty</dt>
+                            <dd className={`mt-1 text-sm ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{order.warranty_period || "—"}</dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className={`text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Start date</dt>
+                            <dd className={`mt-1 text-sm ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{warrantyStartDate}</dd>
+                          </div>
+                          <div className="col-span-2 min-w-0">
+                            <dt className={`text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Expiry date</dt>
+                            <dd className={`mt-1 text-sm ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{warrantyExpiryDate}</dd>
+                          </div>
+                        </dl>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOrderForModal(order)}
+                          className={`mt-4 w-full rounded-xl px-3 py-2.5 text-sm font-semibold ${darkMode ? "bg-slate-700 text-white hover:bg-slate-600" : "bg-slate-900 text-white hover:bg-slate-800"}`}
+                        >
+                          View Details
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
+                </>
               )
             ) : contractsInTab.length === 0 ? (
               <div className={`rounded-[28px] border p-10 text-center shadow-sm ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-200 bg-white"}`}>
@@ -6903,7 +7066,7 @@ function CustomerDashboard() {
                 {paginatedContracts.map((order) => {
                   const product = order.items?.[0] || {};
                   const statusLabel = getContractStatusLabel(order);
-                  const statusClass = order.contract_status === "accepted" || order.status === "contract_accepted"
+                  const statusClass = normalizeOrderStatusKey(order?.contract_status) === "accepted" || normalizeOrderStatusKey(order?.status) === "contract_accepted"
                     ? darkMode
                       ? "border border-emerald-400/30 bg-emerald-500/15 text-emerald-300"
                       : "bg-emerald-100 text-emerald-700"
@@ -6989,40 +7152,40 @@ function CustomerDashboard() {
           </>
         )}
 
-        <footer className={`relative left-1/2 -mb-6 ${activeTab === "orders" ? "mt-0" : "mt-auto"} w-screen -translate-x-1/2 border-t ${darkMode ? "border-slate-700 bg-slate-950/90" : "border-slate-200 bg-slate-900/90"}`}>
-          <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-            <div className="grid gap-6 md:gap-8 lg:grid-cols-3">
-              <div>
+        <footer className={`relative left-1/2 -mb-6 ${activeTab === "orders" ? "mt-0" : "mt-8"} w-screen -translate-x-1/2 overflow-hidden bg-[#232b3d] text-white`}>
+          <div className="mx-auto max-w-7xl px-8 pt-8 pb-5">
+            <div className="grid grid-cols-1 gap-8 sm:grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
+              <div className="min-w-0">
                 <div className="flex items-center gap-3">
-                  <img src={logo} alt="logo" className="h-10 w-14 object-contain" />
+                  <img src={logo} alt="logo" className="size-12 shrink-0 object-contain" />
                   <div>
-                    <h3 className={`text-base font-bold ${darkMode ? "text-white" : "text-white"}`}>ACGC Aluminum Services</h3>
-                    <p className="text-xs text-slate-300">Premium Glass &amp; Aluminum Solutions</p>
+                    <h3 className="text-[17px] font-medium text-white">ACGC Aluminum Services</h3>
+                    <p className="text-sm text-slate-300">Premium Glass &amp; Aluminum Solutions</p>
                   </div>
                 </div>
               </div>
 
-              <div>
-                <h4 className="mb-3 text-sm font-bold text-white">Quick Links</h4>
-                <div className="space-y-2 text-xs text-slate-300">
-                  <p>Home</p>
-                  <p>Browse Products</p>
-                  <p>Track Order</p>
-                  <p>About Us</p>
+              <div className="min-w-0">
+                <h4 className="mb-3 text-[15px] font-medium text-white">Quick Links</h4>
+                <div className="flex flex-col gap-2.5 text-sm text-slate-300">
+                  <p className="w-fit transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px]">Home</p>
+                  <p className="w-fit transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px]">Browse Products</p>
+                  <p className="w-fit transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px]">Track Order</p>
+                  <p className="w-fit transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px]">About Us</p>
                 </div>
               </div>
 
-              <div>
-                <h4 className="mb-3 text-sm font-bold text-white">Contact</h4>
-                <div className="space-y-2 text-xs text-slate-300">
-                  <p>Email: acgc.services00@email.com</p>
-                  <p>Phone: +63 900 000 0000</p>
-                  <p>Philippines</p>
+              <div className="min-w-0">
+                <h4 className="mb-3 text-[15px] font-medium text-white">Contact</h4>
+                <div className="flex flex-col gap-2.5 text-sm text-slate-300">
+                  <p className="flex min-w-0 items-start gap-3"><Mail size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span className="break-words">Email: acgc.services00@email.com</span></p>
+                  <p className="flex min-w-0 items-start gap-3"><Phone size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Phone: +63 900 000 0000</span></p>
+                  <p className="flex min-w-0 items-start gap-3"><MapPin size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Philippines</span></p>
                 </div>
               </div>
             </div>
 
-            <div className="mt-6 border-t border-white/20 pt-4 text-center text-[11px] text-slate-300">
+            <div className="mt-7 border-t border-white/15 pt-4.5 text-center text-[13px] text-slate-300">
               © 2026 ACGC Aluminum Services — All Rights Reserved.
             </div>
           </div>

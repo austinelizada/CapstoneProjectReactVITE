@@ -111,6 +111,21 @@ const getSafeUploadPath = (root, relativePath) => {
   return absolutePath;
 };
 
+const copyDirectoryContents = async (source, destination) => {
+  await fs.mkdir(destination, { recursive: true });
+  const entries = await fs.readdir(source, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(source, entry.name);
+    const destinationPath = path.join(destination, entry.name);
+    if (entry.isDirectory()) {
+      await copyDirectoryContents(sourcePath, destinationPath);
+    } else if (entry.isFile()) {
+      await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+      await fs.copyFile(sourcePath, destinationPath);
+    }
+  }
+};
+
 const restoreUploadFiles = async (files) => {
   const uploadsDirectory = getUploadsDirectory();
   const stagingDirectory = `${uploadsDirectory}.restore-${randomUUID()}`;
@@ -133,9 +148,18 @@ const restoreUploadFiles = async (files) => {
     }
 
     try {
-      await fs.rename(stagingDirectory, uploadsDirectory);
+      try {
+        await fs.rename(stagingDirectory, uploadsDirectory);
+      } catch (error) {
+        if (!["EPERM", "EACCES", "EBUSY", "EEXIST", "ENOTEMPTY"].includes(error.code)) throw error;
+        await copyDirectoryContents(stagingDirectory, uploadsDirectory);
+        await fs.rm(stagingDirectory, { recursive: true, force: true });
+      }
     } catch (error) {
-      if (movedPrevious) await fs.rename(previousDirectory, uploadsDirectory);
+      if (movedPrevious) {
+        await fs.rm(uploadsDirectory, { recursive: true, force: true });
+        await fs.rename(previousDirectory, uploadsDirectory);
+      }
       throw error;
     }
 
@@ -253,6 +277,9 @@ export const restoreSystemBackup = async (backupId) => {
   const rollbackSnapshot = await parseSnapshot(recoveryBuffer);
   try {
     await applySnapshot(snapshot);
+    const database = mongoose.connection.db;
+    await database.collection("users").updateMany({}, { $inc: { session_version: 1 } });
+    await database.collection("admins").updateMany({}, { $inc: { session_version: 1 } });
   } catch (restoreError) {
     try {
       await applySnapshot(rollbackSnapshot);
@@ -330,6 +357,7 @@ export const restoreSystemBackup = async (backupId) => {
     last_backup_at: updatedSettings.last_backup_at || restoredAt,
     backup_history: updatedSettings.backup_history || history,
     restored_backup: backup,
+    logout_required: true,
   };
 };
 

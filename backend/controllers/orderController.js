@@ -1480,6 +1480,10 @@ export const generateContract = async (req, res) => {
     order.contractHistory = history;
     order.contract_status = "pending";
     order.contractSentAt = null;
+    order.contract_email_status = "not_sent";
+    order.contract_email_queued_at = null;
+    order.contract_email_sent_at = null;
+    order.contract_email_error = "";
     order.contract_terms = contract_terms || "";
     order.contract_amount = Number(contract_amount) || order.total_amount;
     order.downpayment_amount = order.payment_terms === "full_payment" ? order.contract_amount : order.contract_amount * 0.5;
@@ -1515,7 +1519,7 @@ export const sendWalkInApprovalEmail = async (req, res) => {
     const customerEmailValue = (customerEmail || order.customer_email || "").trim();
     const isWalkInCustomer = String(order.order_type || "") === "walk_in_customer";
 
-    if (!isWalkInCustomer && !customerEmailValue) {
+    if (!customerEmailValue) {
       return res.status(400).json({ success: false, message: "Customer email is required" });
     }
 
@@ -1573,41 +1577,58 @@ ACGC Site Inspection Team
       attachments.push(uploadedContractAttachment);
     }
 
-    try {
-      if (customerEmailValue) {
-        await sendMail({
-          from: fromAddress,
-          to: customerEmailValue,
-          subject: "ACGC Site Inspection Contract Details",
-          text: textBody,
-          html: htmlBody,
-          attachments: attachments.length > 0 ? attachments : undefined,
-        });
-      }
+    const emailOptions = {
+      from: fromAddress,
+      to: customerEmailValue,
+      subject: "ACGC Site Inspection Contract Details",
+      text: textBody,
+      html: htmlBody,
+      attachments,
+    };
 
-      order.contract_status = "sent";
-      order.contractStatus = "Sent";
-      order.contractSentAt = new Date();
-      order.status = "site_inspection";
-      await order.save();
+    order.contract_status = "sent";
+    order.contractStatus = "Sent";
+    order.contractSentAt = new Date();
+    order.contract_email_status = "queued";
+    order.contract_email_queued_at = new Date();
+    order.contract_email_sent_at = null;
+    order.contract_email_error = "";
+    order.status = "site_inspection";
+    await order.save();
 
-      res.json({
-        success: true,
-        message: isWalkInCustomer
-          ? "Walk-in approval processed successfully"
-          : "Approval email sent successfully",
+    res.once("finish", () => {
+      setImmediate(async () => {
+        try {
+          await sendMail(emailOptions);
+          await Order.updateOne(
+            { _id: order._id },
+            { $set: { contract_email_status: "sent", contract_email_sent_at: new Date(), contract_email_error: "" } }
+          );
+          console.info(`[contract-email] Delivered contract for order ${order.tracking || order._id}.`);
+        } catch (emailError) {
+          console.error("Approval email send failed:", emailError);
+          const errorMessage = emailError?.code === "EAUTH"
+            ? "Email service authentication failed."
+            : "Unable to deliver email.";
+          try {
+            await Order.updateOne(
+              { _id: order._id },
+              { $set: { contract_email_status: "failed", contract_email_error: errorMessage } }
+            );
+          } catch (statusError) {
+            console.error("Unable to record contract email failure:", statusError);
+          }
+        }
       });
-    } catch (emailError) {
-      console.error("Approval email send failed:", emailError);
-      const message = emailError?.code === "EAUTH"
-        ? "Email service authentication failed. Update the SMTP credentials or Gmail app password."
-        : "Unable to send email";
-      return res.status(500).json({
-        success: false,
-        message,
-        code: emailError?.code,
-      });
-    }
+    });
+
+    return res.status(202).json({
+      success: true,
+      email_status: "queued",
+      message: isWalkInCustomer
+        ? "Contract saved to the customer account; approval email queued."
+        : "Contract saved to the customer account; email queued.",
+    });
   } catch (error) {
     console.error("Send approval email error:", error);
     res.status(500).json({ success: false, message: "Unable to send email", error: error.message });

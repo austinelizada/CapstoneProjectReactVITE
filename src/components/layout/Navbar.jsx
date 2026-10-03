@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send } from "lucide-react";
+import { Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send, LogOut } from "lucide-react";
 import { getAdminOrders } from "@/api/orders";
 import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
@@ -10,47 +10,97 @@ const ADMIN_READ_NOTIFICATIONS_KEY = "acgc-admin-read-notifications";
 
 function Navbar() {
   const { darkMode, toggleDarkMode } = useAdminTheme();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
 
   return (
-    <header className={`admin-navbar px-6 py-4 flex items-center justify-between shadow ${darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}>
+    <>
+      <header className={`admin-navbar px-6 py-4 flex items-center justify-between shadow ${darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}>
 
-      <div className="flex items-center gap-4">
-        <div>
-          <h1 className="text-xl font-bold">
-            {user?.role === "skilled_worker" ? "Welcome Staff" : "Welcome Administrator"}
-          </h1>
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-xl font-bold">
+              {user?.role === "skilled_worker" ? "Welcome Staff" : "Welcome Administrator"}
+            </h1>
+          </div>
+
         </div>
 
-      </div>
+        <div className="flex items-center gap-3 relative">
+          <button
+            type="button"
+            onClick={toggleDarkMode}
+            className={`relative inline-flex h-10 w-[128px] shrink-0 items-center rounded-full border p-1 transition-all duration-500 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500/40 ${
+              darkMode
+                ? "border-black bg-black text-white hover:bg-slate-950"
+                : "border-slate-300 bg-slate-200 text-slate-950 hover:bg-slate-300"
+            }`}
+            aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
+            aria-pressed={darkMode}
+          >
+            <span className={`absolute inset-y-1 flex w-[84px] items-center justify-center gap-1 text-[8px] font-black uppercase tracking-[0.06em] transition-all duration-500 ease-in-out ${
+              darkMode ? "left-[40px] text-white" : "left-1 text-slate-950"
+            }`}>
+              {darkMode ? "Night Mode" : "Day Mode"}
+            </span>
+            <span className={`relative z-10 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-white text-black shadow-sm transition-all duration-500 ease-in-out ${
+              darkMode ? "translate-x-0 border-slate-300" : "translate-x-[86px] border-slate-200"
+            }`}>
+              {darkMode ? <Moon size={18} strokeWidth={1.8} /> : <Sun size={18} strokeWidth={1.8} />}
+            </span>
+          </button>
 
-      <div className="flex items-center gap-4 relative">
-        <button
-          type="button"
-          onClick={toggleDarkMode}
-          className={`relative inline-flex h-10 w-[128px] shrink-0 items-center rounded-full border p-1 transition-all duration-500 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500/40 ${
-            darkMode
-              ? "border-black bg-black text-white hover:bg-slate-950"
-              : "border-slate-300 bg-slate-200 text-slate-950 hover:bg-slate-300"
-          }`}
-          aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
-          aria-pressed={darkMode}
-        >
-          <span className={`absolute inset-y-1 flex w-[84px] items-center justify-center gap-1 text-[8px] font-black uppercase tracking-[0.06em] transition-all duration-500 ease-in-out ${
-            darkMode ? "left-[40px] text-white" : "left-1 text-slate-950"
-          }`}>
-            {darkMode ? "Night Mode" : "Day Mode"}
-          </span>
-          <span className={`relative z-10 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-white text-black shadow-sm transition-all duration-500 ease-in-out ${
-            darkMode ? "translate-x-0 border-slate-300" : "translate-x-[86px] border-slate-200"
-          }`}>
-            {darkMode ? <Moon size={18} strokeWidth={1.8} /> : <Sun size={18} strokeWidth={1.8} />}
-          </span>
-        </button>
-        <NotificationMenu />
-      </div>
+          <div className="flex items-center gap-2">
+            <NotificationMenu />
+            <button
+              type="button"
+              onClick={() => setLogoutConfirmOpen(true)}
+              className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border transition ${darkMode ? "border-red-500/40 text-red-300 hover:bg-red-500/10" : "border-red-200 text-red-700 hover:bg-red-50"}`}
+              aria-label="Log out"
+              title="Log out"
+            >
+              <LogOut size={18} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
 
-    </header>
+      </header>
+
+      {logoutConfirmOpen && (
+        <div className="fixed inset-0 z-[100] flex min-h-screen items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/45 backdrop-blur-md"
+            onClick={() => setLogoutConfirmOpen(false)}
+          />
+          <div className={`relative z-40 w-full max-w-sm rounded-2xl p-6 text-center shadow-2xl ${darkMode ? "bg-slate-800 text-white" : "bg-white text-slate-900"}`}>
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
+              <LogOut size={22} />
+            </div>
+            <h3 className="mt-4 text-lg font-semibold">Confirm Logout</h3>
+            <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
+              Are you sure you want to log out?
+            </p>
+            <div className="mt-5 flex justify-center gap-2">
+              <button
+                onClick={() => setLogoutConfirmOpen(false)}
+                className={`rounded-lg px-3 py-1 ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-gray-100 hover:bg-gray-200"}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setLogoutConfirmOpen(false);
+                  logout();
+                }}
+                className="rounded-lg bg-red-600 px-3 py-1 text-white hover:bg-red-700"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -245,7 +295,7 @@ function NotificationMenu() {
       </button>
 
       {open && (
-        <div className={`absolute right-0 mt-2 w-96 overflow-hidden rounded-2xl border shadow-xl z-20 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200"}`}>
+        <div className={`fixed inset-x-3 top-[calc(5.25rem+env(safe-area-inset-top))] z-[70] mt-1 max-h-[calc(100dvh-11rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] w-auto overflow-y-auto overscroll-contain rounded-2xl border shadow-xl lg:absolute lg:inset-x-auto lg:right-0 lg:top-auto lg:z-20 lg:mt-2 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 lg:overflow-hidden ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200"}`}>
           <div className={`flex items-center justify-between border-b px-4 py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
             <div>
               <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Admin activity</p>
@@ -300,7 +350,7 @@ function NotificationMenu() {
               <p>{notificationFilter === "all" ? "No action items right now" : `No ${notificationFilter} notifications`}</p>
             </div>
           ) : (
-            <div className="max-h-96 divide-y overflow-y-auto">
+            <div className="divide-y overflow-y-auto max-h-none lg:max-h-96">
               {filteredNotifications.map((n) => (
                 <button
                   key={n.id}

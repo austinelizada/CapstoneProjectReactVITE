@@ -47,25 +47,25 @@ function TrackOrder() {
         className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-white/95 backdrop-blur-2xl shadow-sm"
       >
 
-        <div className="w-full px-6 py-5 flex justify-between items-center">
+        <div className="flex w-full items-center justify-between gap-2 px-3 py-2.5 sm:px-4 sm:py-5">
 
-          <Link to="/" className="flex items-center gap-4 text-left" aria-label="Go to ACGC Services home">
+          <Link to="/" className="flex min-w-0 items-center gap-2 text-left sm:gap-4" aria-label="Go to ACGC Services home">
 
             <motion.img
               animate={{ rotate: [0, 3, -3, 0] }}
               transition={{ duration: 6, repeat: Infinity }}
               src={logo}
               alt="logo"
-              className="w-16 h-16 object-contain sm:w-20 sm:h-20"
+              className="h-10 w-10 shrink-0 object-contain sm:h-20 sm:w-20"
             />
 
-            <div>
+            <div className="min-w-0">
 
-              <h1 className="font-black text-2xl text-red-600 tracking-tight">
+              <h1 className="truncate text-base font-black text-red-600 sm:text-2xl">
                 ACGC Services
               </h1>
 
-              <p className="text-2xl text-gray-700 font-bold tracking-tight sm:text-2xl">
+              <p className="hidden truncate text-sm font-bold text-gray-700 sm:block sm:text-xl">
                 Aluminum & Glass Services
               </p>
 
@@ -122,11 +122,11 @@ function TrackOrder() {
 
       {/* TRACK FORM */}
 
-      <main className="flex-grow px-6 pb-16 pt-36">
+      <main className="flex-grow px-4 pb-12 pt-24 sm:px-6 sm:pb-16 sm:pt-36">
 
         <div className="mx-auto max-w-7xl">
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:rounded-3xl sm:p-8 lg:p-10">
 
             <div className="mb-6 flex items-center gap-3">
               <Truck size={30} className="text-red-600" />
@@ -174,43 +174,43 @@ function TrackOrder() {
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
 
-                <div className="flex justify-between mb-4">
+                <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:justify-between">
 
                   <span className="font-medium">
                     Order ID:
                   </span>
 
-                  <span>
+                  <span className="break-all sm:max-w-[70%] sm:text-right">
                     {trackingResult.tracking || trackingResult._id || "—"}
                   </span>
 
                 </div>
 
-                <div className="flex justify-between mb-4">
+                <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:justify-between">
 
                   <span className="font-medium">
                     Customer:
                   </span>
 
-                  <span>
+                  <span className="break-words sm:max-w-[70%] sm:text-right">
                     {trackingResult.customer_name || `${trackingResult.customer?.first_name || ""} ${trackingResult.customer?.last_name || ""}`.trim() || "—"}
                   </span>
 
                 </div>
 
-                <div className="flex justify-between mb-4">
+                <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:justify-between">
 
                   <span className="font-medium">
                     Product:
                   </span>
 
-                  <span>
+                  <span className="break-words sm:max-w-[70%] sm:text-right">
                     {trackingResult.items?.[0]?.name || trackingResult.items?.[0]?.product_name || "—"}
                   </span>
 
                 </div>
 
-                <div className="flex justify-between">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
 
                   <span className="font-medium">
                     Status:

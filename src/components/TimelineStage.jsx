@@ -100,8 +100,8 @@ export default function TimelineStage({
           : <StageIcon size={12} />}
       </span>
       <div className="min-w-0 pt-0.5">
-        <p className={`text-sm font-semibold leading-5 ${labelClass}`}>{stage?.label || stage?.name || "Project stage"}</p>
-        <p className={`mt-0.5 text-xs leading-5 ${statusTextClass}`}>{statusText}</p>
+        <p className={`break-words text-sm font-semibold leading-5 ${labelClass}`}>{stage?.label || stage?.name || "Project stage"}</p>
+        <p className={`mt-0.5 break-words text-xs leading-5 ${statusTextClass}`}>{statusText}</p>
         {isDelayed && (
           <dl className={`mt-1 grid gap-x-4 gap-y-0.5 text-[11px] leading-4 sm:grid-cols-2 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
             <div className="flex flex-wrap gap-x-1">
@@ -165,8 +165,8 @@ export default function TimelineStage({
                     {subStatus === "done" ? <Check size={11} strokeWidth={2.5} /> : <StageIcon size={10} />}
                   </span>
                   <div className="min-w-0">
-                    <p className={`text-xs font-medium leading-5 ${darkMode ? "text-slate-200" : "text-slate-800"}`}>{subName}</p>
-                    <p className={`text-[11px] leading-4 ${isSubDelayed ? darkMode ? "text-rose-300" : "text-rose-700" : darkMode ? "text-slate-400" : "text-slate-500"}`}>{subStatusText}</p>
+                    <p className={`break-words text-xs font-medium leading-5 ${darkMode ? "text-slate-200" : "text-slate-800"}`}>{subName}</p>
+                    <p className={`break-words text-[11px] leading-4 ${isSubDelayed ? darkMode ? "text-rose-300" : "text-rose-700" : darkMode ? "text-slate-400" : "text-slate-500"}`}>{subStatusText}</p>
                     {isSubDelayed && (
                       <dl className={`mt-1 grid gap-y-0.5 text-[10px] leading-4 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                         <div className="flex flex-wrap gap-x-1"><dt>Date reported</dt><dd>{subDateReported || "Not recorded"}</dd></div>
