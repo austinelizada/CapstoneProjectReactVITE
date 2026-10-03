@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ForgotPassword from "./pages/ForgotPassword/ForgotPassword";
 import LandingPage from "./pages/LandingPage/LandingPage";
@@ -19,7 +20,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { AdminThemeProvider, useAdminTheme } from "@/contexts/AdminThemeContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, RefreshCw } from "lucide-react";
 import logo from "./assets/images/ACGCLOGO1.png";
 
 
@@ -60,6 +61,114 @@ function AppRoutes() {
   const { logoutLoading, user } = useAuth();
   const { darkMode } = useAdminTheme();
   const usesAdminTheme = user?.role === "admin" || user?.role === "skilled_worker";
+  const [pullDistance, setPullDistance] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const pullDistanceRef = useRef(0);
+  const touchStartY = useRef(null);
+  const touchStartX = useRef(null);
+  const refreshTriggered = useRef(false);
+
+  useEffect(() => {
+    const isBlockedTarget = (target) =>
+      target instanceof Element &&
+      target.closest(
+        'input, textarea, select, button, a, [contenteditable="true"], [role="dialog"], dialog, [data-no-pull-refresh]',
+      );
+
+    const isAtTop = (target) => {
+      let element = target instanceof Element ? target : null;
+
+      while (element && element !== document.body) {
+        const styles = window.getComputedStyle(element);
+        const isScrollable =
+          /(auto|scroll)/.test(styles.overflowY) &&
+          element.scrollHeight > element.clientHeight;
+
+        if (isScrollable) {
+          return element.scrollTop <= 0;
+        }
+
+        element = element.parentElement;
+      }
+
+      return (
+        document.scrollingElement?.scrollTop <= 0 &&
+        window.scrollY <= 0
+      );
+    };
+
+    const handleTouchStart = (event) => {
+      if (
+        event.touches.length !== 1 ||
+        isBlockedTarget(event.target) ||
+        !isAtTop(event.target)
+      ) {
+        touchStartY.current = null;
+        touchStartX.current = null;
+        return;
+      }
+
+      touchStartY.current = event.touches[0].clientY;
+      touchStartX.current = event.touches[0].clientX;
+    };
+
+    const handleTouchMove = (event) => {
+      if (touchStartY.current === null || event.touches.length !== 1) return;
+
+      const distance = event.touches[0].clientY - touchStartY.current;
+      const horizontalDistance =
+        event.touches[0].clientX - touchStartX.current;
+      if (
+        distance <= 0 ||
+        Math.abs(horizontalDistance) >= distance ||
+        !isAtTop(event.target)
+      ) {
+        touchStartY.current = null;
+        touchStartX.current = null;
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+        return;
+      }
+
+      if (event.cancelable) event.preventDefault();
+      const nextDistance = Math.min(distance, 84);
+      pullDistanceRef.current = nextDistance;
+      setPullDistance(nextDistance);
+    };
+
+    const handleTouchEnd = () => {
+      if (pullDistanceRef.current >= 72 && !refreshTriggered.current) {
+        refreshTriggered.current = true;
+        setRefreshing(true);
+        window.setTimeout(() => window.location.reload(), 180);
+      } else {
+        pullDistanceRef.current = 0;
+        setPullDistance(0);
+      }
+
+      touchStartY.current = null;
+      touchStartX.current = null;
+    };
+
+    const handleTouchCancel = () => {
+      touchStartY.current = null;
+      touchStartX.current = null;
+      pullDistanceRef.current = 0;
+      setPullDistance(0);
+    };
+
+    window.addEventListener("touchstart", handleTouchStart, { passive: true });
+    window.addEventListener("touchmove", handleTouchMove, { passive: false });
+    window.addEventListener("touchend", handleTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", handleTouchCancel, { passive: true });
+
+    return () => {
+      window.removeEventListener("touchstart", handleTouchStart);
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("touchend", handleTouchEnd);
+      window.removeEventListener("touchcancel", handleTouchCancel);
+    };
+  }, []);
 
   if (logoutLoading) {
     return <LogoutLoadingScreen />;
@@ -67,6 +176,23 @@ function AppRoutes() {
 
   return (
     <div className={`admin-theme-shell relative ${usesAdminTheme ? (darkMode ? "admin-theme-dark" : "admin-theme-light") : ""}`}>
+      {(pullDistance > 0 || refreshing) && (
+        <div
+          aria-live="polite"
+          className="pointer-events-none fixed left-1/2 top-0 z-[10000] flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-lg transition-transform"
+          style={{
+            opacity: refreshing ? 1 : Math.min(pullDistance / 32, 1),
+            transform: `translate(-50%, ${refreshing ? 12 : Math.min(pullDistance - 40, 12)}px)`,
+          }}
+        >
+          <RefreshCw size={16} className={refreshing ? "animate-spin" : ""} />
+          {refreshing
+            ? "Refreshing..."
+            : pullDistance >= 72
+              ? "Release to refresh"
+              : "Pull to refresh"}
+        </div>
+      )}
       {user?.role === "admin" && (
         <div className="admin-shell-drawing" aria-hidden="true">
           <div className="admin-shell-circle admin-shell-circle-top" />
