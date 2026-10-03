@@ -11,7 +11,7 @@ import SystemSetting from "../models/SystemSetting.js";
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 const BACKUP_FORMAT = "acgc-system-backup-v1";
-const VALID_TYPES = new Set(["Weekly", "Monthly", "Yearly", "Full System"]);
+const VALID_TYPES = new Set(["Weekly", "Monthly", "Yearly", "Full System", "Pre-Restore"]);
 const SCHEDULED_BACKUP_TYPES = { weekly: "Weekly", monthly: "Monthly", yearly: "Yearly" };
 let scheduledBackupTimer;
 
@@ -139,7 +139,13 @@ const restoreUploadFiles = async (files) => {
       throw error;
     }
 
-    if (movedPrevious) await fs.rm(previousDirectory, { recursive: true, force: true });
+    if (movedPrevious) {
+      try {
+        await fs.rm(previousDirectory, { recursive: true, force: true });
+      } catch (error) {
+        console.warn(`[backup] Restored uploads, but could not remove the previous upload directory ${previousDirectory}:`, error);
+      }
+    }
   } catch (error) {
     await fs.rm(stagingDirectory, { recursive: true, force: true });
     throw error;
@@ -241,28 +247,77 @@ export const restoreSystemBackup = async (backupId) => {
   }
 
   const snapshot = await parseSnapshot(backupBuffer);
-  const rollbackSnapshot = await createSnapshotBuffer();
+  const recoveryBackupResult = await createSystemBackup("Pre-Restore");
+  const recoveryBackupPath = getBackupFilePath(recoveryBackupResult.backup.id);
+  const recoveryBuffer = await fs.readFile(recoveryBackupPath);
+  const rollbackSnapshot = await parseSnapshot(recoveryBuffer);
   try {
     await applySnapshot(snapshot);
   } catch (restoreError) {
     try {
-      await applySnapshot(await parseSnapshot(rollbackSnapshot));
+      await applySnapshot(rollbackSnapshot);
     } catch (rollbackError) {
       console.error("Backup restore rollback failed:", rollbackError);
-      throw backupError("Restore failed and automatic rollback also failed. Database recovery is required.", 500);
+      try {
+        const latestSettings = await SystemSetting.findOne({ key: "global" }).lean();
+        const backupHistory = Array.isArray(latestSettings?.backup_history)
+          ? latestSettings.backup_history.filter((item) => item.id !== recoveryBackupResult.backup.id)
+          : [];
+        await SystemSetting.findOneAndUpdate(
+          { key: "global" },
+          {
+            $set: {
+              backup_schedule: recoveryBackupResult.backup_schedule || settings?.backup_schedule || "weekly",
+              backup_status: "Recovery Required",
+              last_backup_at: recoveryBackupResult.last_backup_at || settings?.last_backup_at || null,
+              backup_history: [recoveryBackupResult.backup, ...backupHistory],
+            },
+          },
+          { returnDocument: "after", upsert: true, setDefaultsOnInsert: true }
+        );
+      } catch (metadataError) {
+        console.error("Unable to expose the pre-restore recovery snapshot in backup history:", metadataError);
+      }
+      throw backupError(
+        `Restore failed: ${restoreError.message}. Automatic rollback also failed: ${rollbackError.message}. Pre-restore recovery snapshot ${recoveryBackupResult.backup.name} (${recoveryBackupResult.backup.id}) is retained at ${recoveryBackupPath}.`,
+        500
+      );
     }
-    throw restoreError;
+    try {
+      await SystemSetting.findOneAndUpdate(
+        { key: "global" },
+        {
+          $set: {
+            backup_schedule: recoveryBackupResult.backup_schedule || settings?.backup_schedule || "weekly",
+            backup_status: "Restore Failed - Recovered",
+            last_backup_at: recoveryBackupResult.last_backup_at || settings?.last_backup_at || null,
+            backup_history: recoveryBackupResult.backup_history || settings?.backup_history || [],
+          },
+        },
+        { returnDocument: "after", upsert: true, setDefaultsOnInsert: true }
+      );
+    } catch (metadataError) {
+      console.error("Unable to update backup history after successful rollback:", metadataError);
+    }
+    throw backupError(
+      `Restore failed: ${restoreError.message}. The pre-restore database and uploads were recovered. Recovery snapshot ${recoveryBackupResult.backup.name} (${recoveryBackupResult.backup.id}) is retained at ${recoveryBackupPath}.`,
+      restoreError.status || 500
+    );
   }
 
-  const history = Array.isArray(settings?.backup_history) ? settings.backup_history : [];
+  const history = Array.isArray(recoveryBackupResult.backup_history)
+    ? recoveryBackupResult.backup_history
+    : Array.isArray(settings?.backup_history)
+      ? settings.backup_history
+      : [];
   const restoredAt = snapshot.createdAt ? new Date(snapshot.createdAt) : new Date(backup.date);
   const updatedSettings = await SystemSetting.findOneAndUpdate(
     { key: "global" },
     {
       $set: {
-        backup_schedule: settings?.backup_schedule || "weekly",
+        backup_schedule: recoveryBackupResult.backup_schedule || settings?.backup_schedule || "weekly",
         backup_status: "Restored",
-        last_backup_at: restoredAt,
+        last_backup_at: recoveryBackupResult.last_backup_at || restoredAt,
         backup_history: history,
       },
     },
